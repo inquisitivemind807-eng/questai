@@ -106,7 +106,7 @@ export interface ResumeData {
     right: number;
   };
   
-  // Font Customization (user overrides)
+  // Font Customization (user overrides) - no longer exposed in UI, kept for backward compatibility
   fontSettings?: {
     headerFont: string;           // Font family for headers
     bodyFont: string;             // Font family for body text
@@ -114,11 +114,11 @@ export interface ResumeData {
     
     headerFontSize: number;       // Size in points (14-16)
     bodyFontSize: number;         // Size in points (10-12)
-    contactFontSize: number;     // Size in points (9-11)
-    nameFontSize: number;        // Size in points (16-18)
+    contactFontSize: number;      // Size in points (9-11)
+    nameFontSize: number;         // Size in points (16-18)
     
     letterSpacing: 'normal' | 'tight' | 'loose';
-    lineSpacing: number;        // 1.0 = single spacing
+    lineSpacing: number;          // 1.0 = single spacing
     
     sectionSpacing: 'compact' | 'normal' | 'spacious';
     
@@ -173,6 +173,7 @@ export interface TemplateStyle {
   // Section Grouping (for column layouts)
   sidebarSections?: string[];  // Sections to show in sidebar (e.g., ['skills', 'languages'])
   mainSections?: string[];     // Sections to show in main area
+  contactPlacement?: 'header' | 'sidebar' | 'both';
   
   // Special Features
   headerStyle: 'plain' | 'underline' | 'background' | 'border';

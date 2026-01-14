@@ -291,6 +291,53 @@ export const businessBlueStyle: TemplateStyle = {
 };
 
 /**
+ * P4: Professional Split (Professional) - Two-Column Split with Sidebar Contact/Photo
+ */
+export const professionalSplitStyle: TemplateStyle = {
+  primaryColor: '#1f2937',        // Slate
+  secondaryColor: '#2563eb',      // Accent Blue
+  dividerColor: '#d1d5db',       // Soft Gray
+  textColor: '#111827',
+  backgroundColor: '#ffffff',
+  
+  headerFont: 'Source Sans Pro, sans-serif',
+  bodyFont: 'Inter, sans-serif',
+  contactFont: 'Inter, sans-serif',
+  docxHeaderFont: 'Calibri',
+  docxBodyFont: 'Calibri',
+  docxContactFont: 'Calibri',
+  
+  headerFontSize: 34,
+  bodyFontSize: 22,
+  contactFontSize: 20,
+  headerFontWeight: '700',
+  
+  headerAlignment: 'left',
+  contentAlignment: 'left',
+  sectionSpacing: 240,
+  
+  layoutType: 'two-column-split',
+  leftColumnWidth: 30,
+  rightColumnWidth: 70,
+  sidebarSections: ['skills', 'languages', 'certifications'],
+  mainSections: ['summary', 'experience', 'projects', 'education'],
+  
+  contactPlacement: 'sidebar',
+  
+  dateFormat: 'month-year',
+  dateSeparator: ' - ',
+  showPresent: true,
+  
+  bulletStyle: 'round',
+  bulletColor: '#2563eb',
+  bulletCharacter: '•',
+  
+  headerStyle: 'background',
+  dividerStyle: 'line',
+  showAccentBars: false,
+};
+
+/**
  * C2: Modern Minimal (Clean)
  */
 export const modernMinimalStyle: TemplateStyle = {
@@ -366,15 +413,13 @@ export const cleanSerifStyle: TemplateStyle = {
   showAccentBars: false,
 };
 
-/**
- * M2: Creative Bold (Modern) - 2-Column Sidebar Layout
- */
 export const creativeBoldStyle: TemplateStyle = {
-  primaryColor: '#dc2626',        // Coral Red
-  secondaryColor: '#f97316',      // Orange
-  dividerColor: '#fb923c',       // Bold colored
-  textColor: '#000000',
-  backgroundColor: '#ffffff',
+  // Creative bold layout inspired by "My Resume 279", adapted for WHITE background
+  primaryColor: '#ef4444',        // Bright red for name and section headers
+  secondaryColor: '#f97316',      // Orange accent (for lines / highlights)
+  dividerColor: '#e5e7eb',        // Light gray for inner borders / column divider
+  textColor: '#111827',           // Dark text for readability on white
+  backgroundColor: '#ffffff',     // White background (printer & ATS friendly)
   
   headerFont: 'Bebas Neue, sans-serif',
   bodyFont: 'Roboto Condensed, sans-serif',
@@ -390,7 +435,7 @@ export const creativeBoldStyle: TemplateStyle = {
   
   headerAlignment: 'left',
   contentAlignment: 'left',
-  sectionSpacing: 240,
+  sectionSpacing: 220,
   
   layoutType: 'two-column-sidebar',
   leftColumnWidth: 30,
@@ -403,12 +448,12 @@ export const creativeBoldStyle: TemplateStyle = {
   showPresent: true,
   
   bulletStyle: 'custom',
-  bulletColor: '#dc2626',
-  bulletCharacter: '●',
+  bulletColor: '#ef4444',
+  bulletCharacter: '•',
   
-  headerStyle: 'border',
+  headerStyle: 'plain',
   dividerStyle: 'line',
-  showAccentBars: true,
+  showAccentBars: false,
 };
 
 /**

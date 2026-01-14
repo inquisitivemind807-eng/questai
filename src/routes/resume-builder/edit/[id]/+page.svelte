@@ -1,26 +1,31 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { resumesStore, activeResume, createExperience, createEducation, createSkill, createCertification, createProject, createLanguage, autoSave } from '$lib/resume/store';
-  import { downloadDocx } from '$lib/resume/generator';
-  import { getTemplateById } from '$lib/resume/templates';
-  import type { ResumeData } from '$lib/resume/types';
-  import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacing } from '$lib/resume/utils/font-helpers';
-  import { getFontFamily } from '$lib/resume/fonts';
-  import FontControls from '$lib/resume/components/FontControls.svelte';
+import { resumesStore, activeResume, createExperience, createEducation, createSkill, createCertification, createProject, createLanguage, autoSave, loadResumes } from '$lib/resume/store';
+import { downloadDocx } from '$lib/resume/generator';
+import { getTemplateById } from '$lib/resume/templates';
+import type { ResumeData } from '$lib/resume/types';
+import { getEffectiveFont, getEffectiveFontSize, getLetterSpacing, getLineSpacing } from '$lib/resume/utils/font-helpers';
   
   let resume: ResumeData | null = null;
   let saving = false;
   let downloading = false;
   let editingField: string | null = null;
-  let showLiveView = false;
   
   // Get resume ID from URL
   $: resumeId = ($page.params as any).id || '';
   
   // Get template info
   $: template = resume ? getTemplateById(resume.templateId) : null;
+
+  // Layout info (for matching template layouts in edit view)
+  $: layoutType = template?.style.layoutType || 'single-column';
+  $: isTwoColumnLayout =
+    layoutType === 'two-column-split' || layoutType === 'two-column-sidebar';
+  $: sidebarSections = template?.style.sidebarSections || [];
+  $: mainSections = template?.style.mainSections || [];
   
   // Load resume reactively when ID changes
   $: if (resumeId && !resume) {
@@ -34,13 +39,21 @@
     }
   }
   
-  onMount(() => {
-    // Trigger reactive load if needed
+  onMount(async () => {
+    // If store is empty (e.g. fresh page load), hydrate from localStorage
+    if (get(resumesStore).length === 0) {
+      await loadResumes();
+    }
+
+    // After hydration, try to load the resume for this ID
     if (resumeId && !resume) {
       const loadedResume = resumesStore.getById(resumeId);
       if (loadedResume) {
         resume = loadedResume;
         activeResume.set(loadedResume);
+      } else {
+        // If still not found, go back to template picker
+        goto('/resume-builder');
       }
     }
   });
@@ -179,7 +192,7 @@
   }
 </script>
 
-  <div class="container mx-auto p-6">
+  <div class="w-full min-h-screen px-4 lg:px-8 py-6">
     {#if resume}
     <!-- Header -->
     <div class="mb-6 flex items-center justify-between">
@@ -193,13 +206,6 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
           </svg>
           Back
-        </button>
-        <button class="btn btn-info" on:click={() => showLiveView = true}>
-          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-          </svg>
-          Live View
         </button>
         <button class="btn btn-primary" disabled={saving} on:click={handleSave}>
           {#if saving}
@@ -226,19 +232,18 @@
       </div>
     </div>
     
-    <!-- Font Controls - Draggable panel on left -->
-    <FontControls {resume} />
-
-    <!-- WYSIWYG Resume Editor -->
+    <!-- WYSIWYG Editor -->
     <div class="card bg-white shadow-2xl">
-      <div class="card-body p-12" 
+      <div class="card-body p-6 lg:p-10" 
            style:font-family={resume && template ? getEffectiveFont(resume, template.style, 'body') : 'Arial, sans-serif'}
            style:line-height={resume ? getLineSpacing(resume) : 1.0}
            style:letter-spacing={resume ? getLetterSpacing(resume) : 'normal'}>
         <!-- Resume Header -->
         <div class="mb-8 pb-6" 
              style:text-align={template?.style.headerAlignment || 'center'}
-             style:border-bottom={template?.style.headerStyle === 'underline' ? `2px solid ${template.style.primaryColor}` : template?.style.headerStyle === 'background' ? `2px solid ${template.style.secondaryColor}` : '2px solid #e5e7eb'}>
+             style:border-bottom={template?.style.headerStyle === 'underline' && template ? `2px solid ${template.style.primaryColor}` 
+               : template?.style.headerStyle === 'background' && template ? `2px solid ${template.style.secondaryColor}` 
+               : '2px solid #e5e7eb'}>
           <div class="mb-4 cursor-text hover:bg-gray-50 p-2 rounded transition-colors" on:click={() => startEditing('fullName')}>
             {#if editingField === 'fullName'}
               <input 
@@ -345,8 +350,15 @@
             {/if}
           </div>
         </div>
+        
+        <!-- Main Content Sections (Summary, Experience, Education, Skills, Certifications, Projects, Languages) -->
+        <div class={isTwoColumnLayout ? 'edit-two-column' : ''}>
+
+        <!-- RIGHT COLUMN (Main content in two-column layouts) rendered first for better order -->
+        <div class={isTwoColumnLayout ? 'edit-main' : ''}>
 
         <!-- Summary Section -->
+        {#if !isTwoColumnLayout || mainSections.length === 0 || mainSections.includes('summary')}
         <div class="mb-6">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-bold uppercase tracking-wide"
@@ -354,7 +366,7 @@
                 style:font-family={resume && template ? getEffectiveFont(resume, template.style, 'header') : 'Arial, sans-serif'}
                 style:font-size="{resume && template ? getEffectiveFontSize(resume, template.style, 'header') : 14}pt"
                 style:font-weight={template?.style.headerFontWeight || 'bold'}
-                style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:border-bottom={template && template.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
                 style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
               Summary
             </h3>
@@ -383,15 +395,17 @@
             {/if}
           </div>
         </div>
+        {/if}
 
         <!-- Experience Section -->
+        {#if !isTwoColumnLayout || mainSections.length === 0 || mainSections.includes('experience')}
         <div class="mb-6">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-bold uppercase tracking-wide"
                 style:color={template?.style.primaryColor || '#000000'}
                 style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
                 style:font-weight={template?.style.headerFontWeight || 'bold'}
-                style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:border-bottom={template && template.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
                 style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
               Experience
             </h3>
@@ -466,15 +480,17 @@
             {/each}
           {/if}
         </div>
+        {/if}
 
         <!-- Education Section -->
+        {#if !isTwoColumnLayout || mainSections.length === 0 || mainSections.includes('education')}
         <div class="mb-6">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-lg font-bold uppercase tracking-wide"
                 style:color={template?.style.primaryColor || '#000000'}
                 style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
                 style:font-weight={template?.style.headerFontWeight || 'bold'}
-                style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:border-bottom={template && template.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
                 style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
               Education
             </h3>
@@ -530,109 +546,17 @@
             {/each}
           {/if}
         </div>
-
-        <!-- Skills Section -->
-        <div class="mb-6">
-          <div class="flex items-center justify-between mb-3">
-            <h3 class="text-lg font-bold uppercase tracking-wide"
-                style:color={template?.style.primaryColor || '#000000'}
-                style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
-                style:font-weight={template?.style.headerFontWeight || 'bold'}
-                style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
-                style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
-              Skills
-            </h3>
-            <button class="btn btn-xs btn-primary font-bold" on:click={addSkill}>
-              + Add
-            </button>
-          </div>
-          
-          {#if resume.skills.length === 0}
-            <div class="border border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors" on:click={addSkill}>
-              <p class="text-sm text-black">Click to add your skills</p>
-            </div>
-          {:else}
-            <div class="space-y-2">
-              {#each resume.skills as skill, skillIndex}
-                <div class="flex items-center gap-2">
-                  <input 
-                    type="text" 
-                    class="flex-1 text-sm border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
-                    bind:value={skill.name}
-                    placeholder="Skill name"
-                  />
-                  <input 
-                    type="text" 
-                    class="max-w-[150px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
-                    bind:value={skill.category}
-                    placeholder="Category"
-                  />
-                  <button class="btn btn-xs btn-error font-bold" on:click={() => removeSkill(skillIndex)}>
-                    ×
-                  </button>
-                </div>
-              {/each}
-            </div>
-          {/if}
-        </div>
-
-        <!-- Certifications Section -->
-        {#if resume.certifications && resume.certifications.length > 0}
-          <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-bold uppercase tracking-wide"
-                  style:color={template?.style.primaryColor || '#000000'}
-                  style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
-                  style:font-weight={template?.style.headerFontWeight || 'bold'}
-                  style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
-                  style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
-                Certifications
-              </h3>
-              <button class="btn btn-xs btn-primary font-bold" on:click={addCertification}>
-                + Add
-              </button>
-            </div>
-            
-            {#each resume.certifications as cert, certIndex}
-              <div class="mb-2 flex items-center gap-2">
-                <span class="text-black">•</span>
-                <input 
-                  type="text" 
-                  class="flex-1 text-sm border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
-                  bind:value={cert.name}
-                  placeholder="Certification name"
-                />
-                <span class="text-xs text-gray-500">|</span>
-                <input 
-                  type="text" 
-                  class="max-w-[150px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
-                  bind:value={cert.issuer}
-                  placeholder="Issuer"
-                />
-                <span class="text-xs text-gray-500">|</span>
-                <input 
-                  type="text" 
-                  class="max-w-[80px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
-                  bind:value={cert.date}
-                  placeholder="Date"
-                />
-                <button class="btn btn-xs btn-error font-bold" on:click={() => removeCertification(certIndex)}>
-                  ×
-                </button>
-              </div>
-            {/each}
-          </div>
         {/if}
 
         <!-- Projects Section -->
-        {#if resume.projects && resume.projects.length > 0}
+        {#if (!isTwoColumnLayout || mainSections.length === 0 || mainSections.includes('projects')) && resume.projects && resume.projects.length > 0}
           <div class="mb-6">
             <div class="flex items-center justify-between mb-3">
               <h3 class="text-lg font-bold uppercase tracking-wide"
                   style:color={template?.style.primaryColor || '#000000'}
                   style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
                   style:font-weight={template?.style.headerFontWeight || 'bold'}
-                  style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                  style:border-bottom={template && template.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
                   style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
                 Projects
               </h3>
@@ -680,23 +604,190 @@
           </div>
         {/if}
 
-        <!-- Languages Section -->
-        {#if resume.languages && resume.languages.length > 0}
-          <div class="mb-6">
-            <div class="flex items-center justify-between mb-3">
-              <h3 class="text-lg font-bold uppercase tracking-wide"
-                  style:color={template?.style.primaryColor || '#000000'}
-                  style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
-                  style:font-weight={template?.style.headerFontWeight || 'bold'}
-                  style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
-                  style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
-                Languages
-              </h3>
-              <button class="btn btn-xs btn-primary font-bold" on:click={addLanguage}>
-                + Add
-              </button>
+        <!-- Certifications Section for templates that place it in main column (e.g. Creative Bold) -->
+        {#if isTwoColumnLayout && mainSections.includes('certifications')}
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold uppercase tracking-wide"
+                style:color={template?.style.primaryColor || '#000000'}
+                style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
+                style:font-weight={template?.style.headerFontWeight || 'bold'}
+                style:border-bottom={template && template.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
+              Certifications
+            </h3>
+            <button class="btn btn-xs btn-primary font-bold" on:click={addCertification}>
+              + Add
+            </button>
+          </div>
+          
+          {#if !resume.certifications || resume.certifications.length === 0}
+            <div class="border border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors" on:click={addCertification}>
+              <p class="text-sm text-black">Click to add your certifications</p>
             </div>
-            
+          {:else}
+            {#each resume.certifications as cert, certIndex}
+              <div class="mb-2 flex items-center gap-2">
+                <span class="text-black">•</span>
+                <input 
+                  type="text" 
+                  class="flex-1 text-sm border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                  bind:value={cert.name}
+                  placeholder="Certification name"
+                />
+                <span class="text-xs text-gray-500">|</span>
+                <input 
+                  type="text" 
+                  class="max-w-[150px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                  bind:value={cert.issuer}
+                  placeholder="Issuer"
+                />
+                <span class="text-xs text-gray-500">|</span>
+                <input 
+                  type="text" 
+                  class="max-w-[80px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                  bind:value={cert.date}
+                  placeholder="Date"
+                />
+                <button class="btn btn-xs btn-error font-bold" on:click={() => removeCertification(certIndex)}>
+                  ×
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+        {/if}
+
+        <!-- Languages Section (already rendered in sidebar above for some templates) -->
+
+        </div> <!-- end RIGHT column -->
+
+        <!-- LEFT COLUMN (Sidebar in two-column layouts) -->
+        <div class={isTwoColumnLayout ? 'edit-sidebar' : ''}>
+
+        <!-- Skills Section (only in sidebar when template specifies it there, otherwise used in main/single-column flows) -->
+        {#if !isTwoColumnLayout || sidebarSections.length === 0 || sidebarSections.includes('skills')}
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold uppercase tracking-wide"
+                style:color={template?.style.primaryColor || '#000000'}
+                style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
+                style:font-weight={template?.style.headerFontWeight || 'bold'}
+                style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
+              Skills
+            </h3>
+            <button class="btn btn-xs btn-primary font-bold" on:click={addSkill}>
+              + Add
+            </button>
+          </div>
+          
+          {#if resume.skills.length === 0}
+            <div class="border border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors" on:click={addSkill}>
+              <p class="text-sm text-black">Click to add your skills</p>
+            </div>
+          {:else}
+            <div class="space-y-2">
+              {#each resume.skills as skill, skillIndex}
+                <div class="flex items-center gap-2">
+                  <input 
+                    type="text" 
+                    class="flex-1 text-sm border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                    bind:value={skill.name}
+                    placeholder="Skill name"
+                  />
+                  <input 
+                    type="text" 
+                    class="max-w-[150px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                    bind:value={skill.category}
+                    placeholder="Category"
+                  />
+                  <button class="btn btn-xs btn-error font-bold" on:click={() => removeSkill(skillIndex)}>
+                    ×
+                  </button>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </div>
+        {/if}
+
+        <!-- Certifications Section (shown in sidebar only for templates that place it there, e.g. Professional Split) -->
+        {#if !isTwoColumnLayout || sidebarSections.length === 0 || sidebarSections.includes('certifications')}
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold uppercase tracking-wide"
+                style:color={template?.style.primaryColor || '#000000'}
+                style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
+                style:font-weight={template?.style.headerFontWeight || 'bold'}
+                style:border-bottom={template && template.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
+              Certifications
+            </h3>
+            <button class="btn btn-xs btn-primary font-bold" on:click={addCertification}>
+              + Add
+            </button>
+          </div>
+          
+          {#if !resume.certifications || resume.certifications.length === 0}
+            <div class="border border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors" on:click={addCertification}>
+              <p class="text-sm text-black">Click to add your certifications</p>
+            </div>
+          {:else}
+            {#each resume.certifications as cert, certIndex}
+              <div class="mb-2 flex items-center gap-2">
+                <span class="text-black">•</span>
+                <input 
+                  type="text" 
+                  class="flex-1 text-sm border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                  bind:value={cert.name}
+                  placeholder="Certification name"
+                />
+                <span class="text-xs text-gray-500">|</span>
+                <input 
+                  type="text" 
+                  class="max-w-[150px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                  bind:value={cert.issuer}
+                  placeholder="Issuer"
+                />
+                <span class="text-xs text-gray-500">|</span>
+                <input 
+                  type="text" 
+                  class="max-w-[80px] text-xs border-none outline-none bg-transparent cursor-text hover:bg-gray-50 p-2 rounded text-black"
+                  bind:value={cert.date}
+                  placeholder="Date"
+                />
+                <button class="btn btn-xs btn-error font-bold" on:click={() => removeCertification(certIndex)}>
+                  ×
+                </button>
+              </div>
+            {/each}
+          {/if}
+        </div>
+        {/if}
+
+        <!-- Languages Section (shown in sidebar when template specifies it there) -->
+        {#if !isTwoColumnLayout || sidebarSections.length === 0 || sidebarSections.includes('languages')}
+        <div class="mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-lg font-bold uppercase tracking-wide"
+                style:color={template?.style.primaryColor || '#000000'}
+                style:font-family={template?.style.headerFont || 'Arial, sans-serif'}
+                style:font-weight={template?.style.headerFontWeight || 'bold'}
+                style:border-bottom={template?.style.dividerStyle === 'line' ? `1px solid ${template.style.dividerColor}` : 'none'}
+                style:padding-bottom={template?.style.dividerStyle === 'line' ? '4px' : '0'}>
+              Languages
+            </h3>
+            <button class="btn btn-xs btn-primary font-bold" on:click={addLanguage}>
+              + Add
+            </button>
+          </div>
+          
+          {#if !resume.languages || resume.languages.length === 0}
+            <div class="border border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:bg-gray-50 transition-colors" on:click={addLanguage}>
+              <p class="text-sm text-black">Click to add your languages</p>
+            </div>
+          {:else}
             <div class="space-y-2">
               {#each resume.languages as language, langIndex}
                 <div class="flex items-center gap-2">
@@ -719,208 +810,22 @@
                 </div>
               {/each}
             </div>
-          </div>
+          {/if}
+        </div>
         {/if}
+        </div> <!-- end LEFT column -->
+
+        </div> <!-- end two-column wrapper -->
       </div>
     </div>
     
     {:else}
-      <!-- Font Controls - Always visible even when loading -->
-      <div class="mb-6">
-        <FontControls {resume} />
-      </div>
       <div class="text-center py-20">
         <span class="loading loading-spinner loading-lg"></span>
         <p class="mt-4">Loading resume...</p>
       </div>
     {/if}
   </div>
-
-<!-- Live View Modal -->
-{#if showLiveView && resume}
-  <div class="modal modal-open">
-    <div class="modal-box w-full max-w-none h-screen" style="max-height: 100vh;">
-      <h3 class="font-bold text-lg mb-4">Live Resume Preview</h3>
-      
-      <!-- Scrollable resume preview -->
-      <div class="overflow-y-auto" style="max-height: 85vh;">
-        <!-- Resume Preview Content -->
-        <div class="card bg-white shadow-xl">
-          <div class="card-body p-12">
-            <!-- Resume Header -->
-            <div class="text-center mb-8 border-b-2 border-gray-300 pb-6">
-              <h1 class="text-3xl font-bold text-black mb-2">{resume.personalInfo.fullName}</h1>
-              <h2 class="text-xl italic text-black mb-4">{resume.personalInfo.title}</h2>
-              <div class="text-sm text-black flex flex-wrap justify-center gap-3">
-                {resume.personalInfo.email}
-                {#if resume.personalInfo.phone}
-                  <span>|</span>
-                  {resume.personalInfo.phone}
-                {/if}
-                {#if resume.personalInfo.linkedin}
-                  <span>|</span>
-                  LinkedIn: {resume.personalInfo.linkedin}
-                {/if}
-                {#if resume.personalInfo.github}
-                  <span>|</span>
-                  GitHub: {resume.personalInfo.github}
-                {/if}
-              </div>
-            </div>
-
-            <!-- Summary -->
-            {#if resume.summary}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Summary</h3>
-                <p class="text-sm text-black leading-relaxed">{resume.summary}</p>
-              </div>
-            {/if}
-
-            <!-- Experience -->
-            {#if resume.experience.length > 0}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Experience</h3>
-                {#each resume.experience as exp}
-                  <div class="mb-4 pb-4 border-b border-gray-200 last:border-0">
-                    <div class="flex items-start justify-between mb-2">
-                      <div class="flex-1">
-                        <h4 class="text-base font-bold text-black">{exp.jobTitle}</h4>
-                        <p class="text-sm text-black">{exp.company}</p>
-                        <div class="text-xs text-black mt-1">
-                          {exp.startDate} - {exp.endDate || 'Present'}
-                        </div>
-                      </div>
-                    </div>
-                    {#if exp.achievements.length > 0}
-                      <div class="mt-2 ml-0">
-                        {#each exp.achievements as achievement}
-                          <div class="flex items-start gap-2 mb-1">
-                            <span class="text-black">•</span>
-                            <p class="text-sm text-black flex-1">{achievement}</p>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <!-- Education -->
-            {#if resume.education.length > 0}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Education</h3>
-                {#each resume.education as edu}
-                  <div class="mb-4 pb-4 border-b border-gray-200 last:border-0">
-                    <div class="flex-1">
-                      <h4 class="text-base font-bold text-black">{edu.degree}</h4>
-                      <p class="text-sm text-black">{edu.institution}</p>
-                      <div class="text-xs text-black mt-1">
-                        {edu.graduationDate}
-                        {#if edu.gpa}
-                          | GPA: {edu.gpa}
-                        {/if}
-                      </div>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <!-- Skills -->
-            {#if resume.skills.length > 0}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Skills</h3>
-                <div class="space-y-2">
-                  {#each resume.skills as skill}
-                    <div class="flex items-center gap-2">
-                      <span class="text-sm text-black">{skill.name}</span>
-                      {#if skill.category}
-                        <span class="text-xs text-black">({skill.category})</span>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-
-            <!-- Certifications -->
-            {#if resume.certifications && resume.certifications.length > 0}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Certifications</h3>
-                {#each resume.certifications as cert}
-                  <div class="mb-2 flex items-center gap-2">
-                    <span class="text-black">•</span>
-                    <span class="text-sm text-black flex-1">{cert.name}</span>
-                    <span class="text-xs text-black">| {cert.issuer} | {cert.date}</span>
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <!-- Projects -->
-            {#if resume.projects && resume.projects.length > 0}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Projects</h3>
-                {#each resume.projects as project}
-                  <div class="mb-4 pb-4 border-b border-gray-200 last:border-0">
-                    <h4 class="text-base font-bold text-black mb-2">{project.title}</h4>
-                    {#if project.description.length > 0}
-                      <div class="mt-2 ml-0">
-                        {#each project.description as desc}
-                          <div class="flex items-start gap-2 mb-1">
-                            <span class="text-black">•</span>
-                            <p class="text-sm text-black flex-1">{desc}</p>
-                          </div>
-                        {/each}
-                      </div>
-                    {/if}
-                  </div>
-                {/each}
-              </div>
-            {/if}
-
-            <!-- Languages -->
-            {#if resume.languages && resume.languages.length > 0}
-              <div class="mb-6">
-                <h3 class="text-lg font-bold uppercase tracking-wide text-black mb-3">Languages</h3>
-                <div class="space-y-2">
-                  {#each resume.languages as language}
-                    <div class="flex items-center gap-2">
-                      <span class="text-sm text-black">{language.name}</span>
-                      <span class="text-xs text-black">({language.proficiency})</span>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
-        </div>
-      </div>
-
-      <!-- Modal Actions -->
-      <div class="modal-action">
-        <button class="btn" on:click={() => showLiveView = false}>
-          Close
-        </button>
-        <button class="btn btn-success" disabled={downloading} on:click={async () => { 
-          await handleDownload();
-          showLiveView = false;
-        }}>
-          {#if downloading}
-            <span class="loading loading-spinner loading-sm"></span>
-            Downloading...
-          {:else}
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-            </svg>
-            Download .docx
-          {/if}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
 
 <style>
   /* Ensure print-friendly styling */
@@ -933,5 +838,32 @@
   /* Fix button text readability - override DaisyUI's purple color */
   .btn-primary, .btn-error, .btn-outline {
     color: rgb(133, 132, 189) !important;
+  }
+  
+  /* Two-column edit layout matching professional split template */
+  .edit-two-column {
+    display: grid;
+    grid-template-columns: 30% 70%;
+    gap: 24px;
+    align-items: flex-start;
+  }
+
+  .edit-sidebar {
+    grid-column: 1;
+  }
+
+  .edit-main {
+    grid-column: 2;
+  }
+
+  @media (max-width: 1024px) {
+    .edit-two-column {
+      grid-template-columns: 1fr;
+    }
+
+    .edit-sidebar,
+    .edit-main {
+      grid-column: 1;
+    }
   }
 </style>

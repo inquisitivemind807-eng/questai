@@ -7,6 +7,13 @@
   
   let { template }: Props = $props();
   
+  // Layout helpers
+  const layoutType = template.style.layoutType || 'single-column';
+  const isTwoColumn =
+    layoutType === 'two-column-split' || layoutType === 'two-column-sidebar';
+  const leftColumnWidth = template.style.leftColumnWidth ?? 30;
+  const rightColumnWidth = template.style.rightColumnWidth ?? 70;
+  
   // Sample data for full resume preview
   const sampleData = {
     name: 'John Doe',
@@ -80,101 +87,247 @@
     {/if}
   </div>
   
-  <!-- Summary Section -->
-  <div class="preview-section">
-    <div class="preview-section-header"
-         style:color={template.style.primaryColor}
-         style:font-family={template.style.headerFont}
-         style:font-weight={template.style.headerFontWeight}
-         style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted' ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}` : 'none'}>
-      SUMMARY
+  {#if isTwoColumn}
+    <!-- Two-column layout preview -->
+    <div class="preview-two-column">
+      <!-- Left sidebar: contact + skills + certifications -->
+      <div class="preview-column sidebar" style:width={`${leftColumnWidth}%`}>
+        <!-- Sidebar contact block -->
+        <div class="preview-section">
+          <div class="preview-section-header"
+               style:color={template.style.primaryColor}
+               style:font-family={template.style.headerFont}
+               style:font-weight={template.style.headerFontWeight}>
+            CONTACT
+          </div>
+          <div class="preview-content"
+               style:font-family={template.style.bodyFont}
+               style:font-size="{template.style.bodyFontSize}px"
+               style:color={template.style.textColor}>
+            <div>{sampleData.email}</div>
+            <div>{sampleData.phone}</div>
+            <div>{sampleData.linkedin}</div>
+          </div>
+        </div>
+
+        <!-- Skills in sidebar -->
+        <div class="preview-section">
+          <div class="preview-section-header"
+               style:color={template.style.primaryColor}
+               style:font-family={template.style.headerFont}
+               style:font-weight={template.style.headerFontWeight}
+               style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+                 ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+                 : 'none'}>
+            SKILLS
+          </div>
+          <div class="preview-skills"
+               style:font-family={template.style.bodyFont}
+               style:font-size="{template.style.bodyFontSize}px"
+               style:color={template.style.textColor}>
+            {sampleData.skills.join(' • ')}
+          </div>
+        </div>
+
+        <!-- Certifications in sidebar -->
+        <div class="preview-section">
+          <div class="preview-section-header"
+               style:color={template.style.primaryColor}
+               style:font-family={template.style.headerFont}
+               style:font-weight={template.style.headerFontWeight}
+               style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+                 ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+                 : 'none'}>
+            CERTIFICATIONS
+          </div>
+          {#each sampleData.certifications as cert}
+            <div class="preview-content"
+                 style:font-family={template.style.bodyFont}
+                 style:font-size="{template.style.bodyFontSize}px"
+                 style:color={template.style.textColor}>
+              <div>{cert.name} | {cert.issuer} | {cert.year}</div>
+            </div>
+          {/each}
+        </div>
+      </div>
+
+      <!-- Right main column: summary + experience + education -->
+      <div class="preview-column main" style:width={`${rightColumnWidth}%`}>
+        <!-- Summary Section -->
+        <div class="preview-section">
+          <div class="preview-section-header"
+               style:color={template.style.primaryColor}
+               style:font-family={template.style.headerFont}
+               style:font-weight={template.style.headerFontWeight}
+               style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+                 ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+                 : 'none'}>
+            SUMMARY
+          </div>
+          <div class="preview-content"
+               style:font-family={template.style.bodyFont}
+               style:font-size="{template.style.bodyFontSize}px"
+               style:color={template.style.textColor}
+               style:text-align={template.style.contentAlignment}>
+            {sampleData.summary}
+          </div>
+        </div>
+
+        <!-- Experience Section -->
+        <div class="preview-section">
+          <div class="preview-section-header"
+               style:color={template.style.primaryColor}
+               style:font-family={template.style.headerFont}
+               style:font-weight={template.style.headerFontWeight}
+               style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+                 ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+                 : 'none'}>
+            EXPERIENCE
+          </div>
+          {#each sampleData.experience as exp}
+            <div class="preview-content"
+                 style:font-family={template.style.bodyFont}
+                 style:font-size="{template.style.bodyFontSize}px"
+                 style:color={template.style.textColor}
+                 style:margin-bottom="8px">
+              <div class="preview-job-title">{exp.jobTitle} | {exp.company} | {exp.location} | {exp.period}</div>
+              {#each exp.achievements as achievement}
+                <div class="preview-bullet">• {achievement}</div>
+              {/each}
+            </div>
+          {/each}
+        </div>
+
+        <!-- Education Section -->
+        <div class="preview-section">
+          <div class="preview-section-header"
+               style:color={template.style.primaryColor}
+               style:font-family={template.style.headerFont}
+               style:font-weight={template.style.headerFontWeight}
+               style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+                 ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+                 : 'none'}>
+            EDUCATION
+          </div>
+          {#each sampleData.education as edu}
+            <div class="preview-content"
+                 style:font-family={template.style.bodyFont}
+                 style:font-size="{template.style.bodyFontSize}px"
+                 style:color={template.style.textColor}>
+              <div class="preview-job-title">{edu.degree} | {edu.institution} | {edu.location} | {edu.year}</div>
+            </div>
+          {/each}
+        </div>
+      </div>
     </div>
-    <div class="preview-content"
-         style:font-family={template.style.bodyFont}
-         style:font-size="{template.style.bodyFontSize}px"
-         style:color={template.style.textColor}
-         style:text-align={template.style.contentAlignment}>
-      {sampleData.summary}
-    </div>
-  </div>
-  
-  <!-- Experience Section -->
-  <div class="preview-section">
-    <div class="preview-section-header"
-         style:color={template.style.primaryColor}
-         style:font-family={template.style.headerFont}
-         style:font-weight={template.style.headerFontWeight}
-         style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted' ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}` : 'none'}>
-      EXPERIENCE
-    </div>
-    {#each sampleData.experience as exp}
+  {:else}
+    <!-- Default single-column layout -->
+    <!-- Summary Section -->
+    <div class="preview-section">
+      <div class="preview-section-header"
+           style:color={template.style.primaryColor}
+           style:font-family={template.style.headerFont}
+           style:font-weight={template.style.headerFontWeight}
+           style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+             ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+             : 'none'}>
+        SUMMARY
+      </div>
       <div class="preview-content"
            style:font-family={template.style.bodyFont}
            style:font-size="{template.style.bodyFontSize}px"
            style:color={template.style.textColor}
-           style:margin-bottom="8px">
-        <div class="preview-job-title">{exp.jobTitle} | {exp.company} | {exp.location} | {exp.period}</div>
-        {#each exp.achievements as achievement}
-          <div class="preview-bullet">• {achievement}</div>
-        {/each}
+           style:text-align={template.style.contentAlignment}>
+        {sampleData.summary}
       </div>
-    {/each}
-  </div>
-  
-  <!-- Education Section -->
-  <div class="preview-section">
-    <div class="preview-section-header"
-         style:color={template.style.primaryColor}
-         style:font-family={template.style.headerFont}
-         style:font-weight={template.style.headerFontWeight}
-         style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted' ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}` : 'none'}>
-      EDUCATION
     </div>
-    {#each sampleData.education as edu}
-      <div class="preview-content"
+
+    <!-- Experience Section -->
+    <div class="preview-section">
+      <div class="preview-section-header"
+           style:color={template.style.primaryColor}
+           style:font-family={template.style.headerFont}
+           style:font-weight={template.style.headerFontWeight}
+           style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+             ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+             : 'none'}>
+        EXPERIENCE
+      </div>
+      {#each sampleData.experience as exp}
+        <div class="preview-content"
+             style:font-family={template.style.bodyFont}
+             style:font-size="{template.style.bodyFontSize}px"
+             style:color={template.style.textColor}
+             style:margin-bottom="8px">
+          <div class="preview-job-title">{exp.jobTitle} | {exp.company} | {exp.location} | {exp.period}</div>
+          {#each exp.achievements as achievement}
+            <div class="preview-bullet">• {achievement}</div>
+          {/each}
+        </div>
+      {/each}
+    </div>
+
+    <!-- Education Section -->
+    <div class="preview-section">
+      <div class="preview-section-header"
+           style:color={template.style.primaryColor}
+           style:font-family={template.style.headerFont}
+           style:font-weight={template.style.headerFontWeight}
+           style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+             ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+             : 'none'}>
+        EDUCATION
+      </div>
+      {#each sampleData.education as edu}
+        <div class="preview-content"
+             style:font-family={template.style.bodyFont}
+             style:font-size="{template.style.bodyFontSize}px"
+             style:color={template.style.textColor}>
+          <div class="preview-job-title">{edu.degree} | {edu.institution} | {edu.location} | {edu.year}</div>
+        </div>
+      {/each}
+    </div>
+
+    <!-- Skills Section -->
+    <div class="preview-section">
+      <div class="preview-section-header"
+           style:color={template.style.primaryColor}
+           style:font-family={template.style.headerFont}
+           style:font-weight={template.style.headerFontWeight}
+           style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+             ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+             : 'none'}>
+        SKILLS
+      </div>
+      <div class="preview-skills"
            style:font-family={template.style.bodyFont}
            style:font-size="{template.style.bodyFontSize}px"
            style:color={template.style.textColor}>
-        <div class="preview-job-title">{edu.degree} | {edu.institution} | {edu.location} | {edu.year}</div>
+        {sampleData.skills.join(' • ')}
       </div>
-    {/each}
-  </div>
-  
-  <!-- Skills Section -->
-  <div class="preview-section">
-    <div class="preview-section-header"
-         style:color={template.style.primaryColor}
-         style:font-family={template.style.headerFont}
-         style:font-weight={template.style.headerFontWeight}
-         style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted' ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}` : 'none'}>
-      SKILLS
     </div>
-    <div class="preview-skills"
-         style:font-family={template.style.bodyFont}
-         style:font-size="{template.style.bodyFontSize}px"
-         style:color={template.style.textColor}>
-      {sampleData.skills.join(' • ')}
-    </div>
-  </div>
-  
-  <!-- Certifications Section -->
-  <div class="preview-section">
-    <div class="preview-section-header"
-         style:color={template.style.primaryColor}
-         style:font-family={template.style.headerFont}
-         style:font-weight={template.style.headerFontWeight}
-         style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted' ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}` : 'none'}>
-      CERTIFICATIONS
-    </div>
-    {#each sampleData.certifications as cert}
-      <div class="preview-content"
-           style:font-family={template.style.bodyFont}
-           style:font-size="{template.style.bodyFontSize}px"
-           style:color={template.style.textColor}>
-        <div>{cert.name} | {cert.issuer} | {cert.year}</div>
+
+    <!-- Certifications Section -->
+    <div class="preview-section">
+      <div class="preview-section-header"
+           style:color={template.style.primaryColor}
+           style:font-family={template.style.headerFont}
+           style:font-weight={template.style.headerFontWeight}
+           style:border-bottom={template.style.dividerStyle === 'line' || template.style.dividerStyle === 'dotted'
+             ? `1px ${template.style.dividerStyle === 'dotted' ? 'dotted' : 'solid'} ${template.style.dividerColor}`
+             : 'none'}>
+        CERTIFICATIONS
       </div>
-    {/each}
-  </div>
+      {#each sampleData.certifications as cert}
+        <div class="preview-content"
+             style:font-family={template.style.bodyFont}
+             style:font-size="{template.style.bodyFontSize}px"
+             style:color={template.style.textColor}>
+          <div>{cert.name} | {cert.issuer} | {cert.year}</div>
+        </div>
+      {/each}
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -231,6 +384,26 @@
   .preview-section {
     margin-top: 16px;
     margin-bottom: 16px;
+  }
+  
+  .preview-two-column {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  
+  .preview-column {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .preview-column.sidebar {
+    border-right: 1px solid #e5e7eb;
+    padding-right: 12px;
+  }
+  
+  .preview-column.main {
+    padding-left: 12px;
   }
   
   .preview-section-header {
