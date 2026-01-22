@@ -15,16 +15,15 @@
     "test:watch": "vitest --watch",
     "tauri": "tauri",
     "tauri:dev": "set -a && . .env && tauri dev"
-
   },
   "license": "MIT",
   "dependencies": {
     "@auth/core": "^0.40.0",
     "@auth/sveltekit": "^1.10.0",
     "@tailwindcss/typography": "^0.5.19",
-    "@tauri-apps/api": "^2.4.0",
-    "@tauri-apps/plugin-fs": "^2.4.0",
-    "@tauri-apps/plugin-opener": "^2.4.0",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-fs": "^2.4.5",
+    "@tauri-apps/plugin-opener": "^2.5.3",
     "@types/js-yaml": "^4.0.9",
     "@types/selenium-webdriver": "^4.1.28",
     "autoprefixer": "^10.4.21",
@@ -46,7 +45,7 @@
     "@sveltejs/adapter-static": "^3.0.6",
     "@sveltejs/kit": "^2.9.0",
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
-    "@tauri-apps/cli": "^2.4.0",
+    "@tauri-apps/cli": "^2.4",
     "@testing-library/jest-dom": "^6.8.0",
     "@testing-library/svelte": "^5.2.8",
     "@testing-library/user-event": "^14.6.1",

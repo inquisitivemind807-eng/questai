@@ -5,7 +5,7 @@
   "identifier": "com.wagle.heyguiye",
   "build": {
     "devUrl": "http://localhost:1420",
-    "beforeDevCommand": "npm run dev"
+    "beforeDevCommand": "bun run dev"
   },
   "app": {
     "withGlobalTauri": true,
