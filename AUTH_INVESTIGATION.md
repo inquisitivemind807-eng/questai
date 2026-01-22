@@ -10,7 +10,7 @@ The seek bot failed with error:
 
 ### 1. Authentication Flow
 The bot uses **corpus-rag** API server for AI-powered cover letter generation:
-- **Server Location**: `http://170.64.136.184:3000` (deployed remotely)
+- **Server Location**: `http://[SERVER_IP]:3000` (deployed remotely)
 - **Auth System**: Session-based authentication via MongoDB
 - **Token Storage**: `.cache/api_token.txt` and `.cache/jwt_tokens.json`
 
@@ -44,18 +44,18 @@ This happens when:
 
 ### ✅ Server Status
 ```bash
-$ curl -s http://170.64.136.184:3000/
+$ curl -s http://[SERVER_IP]:3000/
 ```
 **Result**: Server is UP and running
 
 ### ✅ Session Token Found
 **Location**: `/home/wagle/inquisitive_mind/finalboss/.cache/api_token.txt`
-**Value**: `b90c225e89229de251a8f7a66a2474ba6d58d4b87e0db8415da3e6ad2d2e326a`
+**Value**: `[REDACTED_SESSION_TOKEN]`
 
 ### ✅ Session Token Validity
 ```bash
-$ curl -X GET "http://170.64.136.184:3000/api/jobs/hierarchy" \
-  -H "Authorization: Bearer b90c225e89229de251a8f7a66a2474ba6d58d4b87e0db8415da3e6ad2d2e326a"
+$ curl -X GET "http://[SERVER_IP]:3000/api/jobs/hierarchy" \
+  -H "Authorization: Bearer [YOUR_SESSION_TOKEN]"
 ```
 **Result**: `{"success":true,...}` ✅ **Token is VALID**
 
@@ -87,13 +87,13 @@ Ensure the bot uses the production server:
 
 ```bash
 # In finalboss directory
-export API_BASE=http://170.64.136.184:3000
+export API_BASE=http://[SERVER_IP]:3000
 bun bot_starter.ts seek
 ```
 
 Or add to finalboss/.env:
 ```env
-API_BASE=http://170.64.136.184:3000
+API_BASE=http://[SERVER_IP]:3000
 ```
 
 ### Option 3: Get Fresh Session Token (If needed)
@@ -176,24 +176,24 @@ Content-Type: application/json
 
 ### finalboss/.env
 ```env
-API_BASE=http://170.64.136.184:3000
-PUBLIC_API_BASE=http://170.64.136.184:3000
-VITE_API_BASE=http://170.64.136.184:3000
+API_BASE=http://[SERVER_IP]:3000
+PUBLIC_API_BASE=http://[SERVER_IP]:3000
+VITE_API_BASE=http://[SERVER_IP]:3000
 ```
 
 ### corpus-rag/.env
 ```env
 # MongoDB (shared with bot)
-MONGODB_URI=mongodb://170.64.136.184:27017
-MONGODB_DB_NAME=inquisitive_mind
+MONGODB_URI=mongodb://[SERVER_IP]:27017
+MONGODB_DB_NAME=[DATABASE_NAME]
 
 # AI Provider Keys
-DEEPSEEK_API_KEY=sk-40082e7dc3df459da42463b92d53a0ec
-CLAUDE_API_KEY=sk-ant-api03-...
-GEMINI_API_KEY=AIzaSy...
+DEEPSEEK_API_KEY=[YOUR_DEEPSEEK_API_KEY]
+CLAUDE_API_KEY=[YOUR_CLAUDE_API_KEY]
+GEMINI_API_KEY=[YOUR_GEMINI_API_KEY]
 
 # JWT Config
-JWT_SECRET=4pKyyk3Q9u+00uZTuUqRjZKJWfUrHQHP6BYj9xxXN0U=
+JWT_SECRET=[YOUR_JWT_SECRET_MIN_32_CHARS]
 JWT_ACCESS_EXPIRY=15m
 JWT_REFRESH_EXPIRY=30d
 ```
@@ -202,14 +202,14 @@ JWT_REFRESH_EXPIRY=30d
 
 ### 1. Test Session Token
 ```bash
-curl -X GET "http://170.64.136.184:3000/api/jobs/hierarchy" \
-  -H "Authorization: Bearer b90c225e89229de251a8f7a66a2474ba6d58d4b87e0db8415da3e6ad2d2e326a"
+curl -X GET "http://[SERVER_IP]:3000/api/jobs/hierarchy" \
+  -H "Authorization: Bearer [YOUR_SESSION_TOKEN]"
 ```
 
 ### 2. Test Cover Letter Generation
 ```bash
-curl -X POST "http://170.64.136.184:3000/api/cover_letter" \
-  -H "Authorization: Bearer b90c225e89229de251a8f7a66a2474ba6d58d4b87e0db8415da3e6ad2d2e326a" \
+curl -X POST "http://[SERVER_IP]:3000/api/cover_letter" \
+  -H "Authorization: Bearer [YOUR_SESSION_TOKEN]" \
   -H "Content-Type: application/json" \
   -d '{
     "job_id": "test_job_1",
@@ -226,7 +226,7 @@ curl -X POST "http://170.64.136.184:3000/api/cover_letter" \
 ```bash
 cd /home/wagle/inquisitive_mind/finalboss
 rm .cache/jwt_tokens.json  # Force JWT refresh
-export API_BASE=http://170.64.136.184:3000
+export API_BASE=http://[SERVER_IP]:3000
 bun bot_starter.ts seek
 ```
 
@@ -237,7 +237,7 @@ bun bot_starter.ts seek
 ```bash
 cd /home/wagle/inquisitive_mind/finalboss
 rm .cache/jwt_tokens.json
-echo "export API_BASE=http://170.64.136.184:3000" >> ~/.bashrc
+echo "export API_BASE=http://[SERVER_IP]:3000" >> ~/.bashrc
 bun bot_starter.ts seek
 ```
 
@@ -251,8 +251,8 @@ The bot will:
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Corpus-RAG Server | ✅ Running | http://170.64.136.184:3000 |
-| Session Token | ✅ Valid | b90c225e89...2e326a |
+| Corpus-RAG Server | ✅ Running | http://[SERVER_IP]:3000 |
+| Session Token | ✅ Valid | [REDACTED] |
 | JWT Token | ❌ Expired | Oct 30, 2025 |
 | API Connectivity | ✅ Working | Successfully tested |
 | Cover Letter Endpoint | ✅ Working | Successfully tested |

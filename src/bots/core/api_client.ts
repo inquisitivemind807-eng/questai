@@ -21,7 +21,7 @@ interface JwtTokens {
  */
 function getApiConfig(): ApiConfig {
   return {
-    baseUrl: process.env.API_BASE || 'http://170.64.136.184:3000',
+    baseUrl: process.env.API_BASE || 'http://localhost:3000',
   };
 }
 

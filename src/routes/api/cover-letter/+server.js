@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 
-const API_BASE = env.API_BASE || 'http://170.64.136.184:3000';
+const API_BASE = env.API_BASE || process.env.API_BASE || 'http://localhost:3000';
 
 export async function POST({ request }) {
   try {

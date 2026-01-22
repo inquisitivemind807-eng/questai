@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
+import { env } from '$env/dynamic/private';
 
-const CORPUS_RAG_API = 'http://170.64.136.184:3000';
+const CORPUS_RAG_API = env.API_BASE || process.env.API_BASE || 'http://localhost:3000';
 
 export async function POST({ request }) {
 	try {

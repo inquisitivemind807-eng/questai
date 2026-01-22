@@ -8,7 +8,7 @@ import { browser } from '$app/environment';
 import { env } from '$env/dynamic/public';
 
 // Use environment variable for API base URL
-const API_BASE_URL = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://170.64.136.184:3000';
+const API_BASE_URL = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
 
 export class CorpusRagAuth {
   /**

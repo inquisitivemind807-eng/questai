@@ -2,8 +2,8 @@
 const { MongoClient, ObjectId } = require('mongodb');
 const crypto = require('crypto');
 
-const MONGODB_URI = 'mongodb://170.64.136.184:27017';
-const DB_NAME = 'inquisitive_mind';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017';
+const DB_NAME = process.env.MONGODB_DB_NAME || 'inquisitive_mind';
 
 async function createTestSession() {
   const client = new MongoClient(MONGODB_URI);
