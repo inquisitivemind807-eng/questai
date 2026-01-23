@@ -7,12 +7,23 @@ const CORPUS_RAG_API = env.API_BASE || process.env.API_BASE || 'http://localhost
 export async function POST({ request }) {
 	try {
 		const body = await request.json();
+		
+		// Get Authorization header from request
+		const authHeader = request.headers.get('Authorization');
+		
+		// Build headers for corpus-rag API
+		const headers = {
+			'Content-Type': 'application/json'
+		};
+		
+		// Forward Authorization header if present
+		if (authHeader) {
+			headers['Authorization'] = authHeader;
+		}
 
 		const response = await fetch(`${CORPUS_RAG_API}/api/resume`, {
 			method: 'POST',
-			headers: {
-				'Content-Type': 'application/json'
-			},
+			headers,
 			body: JSON.stringify(body)
 		});
 

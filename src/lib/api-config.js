@@ -53,7 +53,20 @@ export const API_CONFIG = {
 
     // System
     SYSTEM_STATUS: '/api/system/status',
-    SYSTEM_STATS: '/api/system/stats'
+    SYSTEM_STATS: '/api/system/stats',
+
+    // Token Management
+    TOKENS_BALANCE: '/api/tokens/balance',
+    TOKENS_TRANSACTIONS: '/api/tokens/transactions',
+    TOKENS_CHECK: '/api/tokens/check',
+
+    // Plans & E-Commerce
+    PLANS: '/api/plans',
+    PLANS_CHECKOUT: '/api/plans/checkout',
+
+    // Orders
+    ORDERS: '/api/orders',
+    ORDER_DETAILS: '/api/orders' // Use with orderId
   },
 
   // External APIs

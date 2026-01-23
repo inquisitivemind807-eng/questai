@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { authService } from '$lib/authService.js';
   import { invoke } from '@tauri-apps/api/core';
+  import { env } from '$env/dynamic/public';
   import '$styles/shared.css';
   import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
   import jsPDF from 'jspdf';
@@ -35,6 +36,9 @@
   let showJobForm: boolean = false;
   let newJob = { company: '', title: '', location: '', description: '' };
   let isSavingPrompt: boolean = false;
+  let jwtToken: string = '';
+
+  const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
 
   onMount(async () => {
     // Check authentication
@@ -44,8 +48,104 @@
     }
 
     user = $authService.user;
+    await getJwtToken();
     loadJobs();
+    loadAvailableResumes();
   });
+
+  async function getJwtToken() {
+    try {
+      const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      if (!sessionToken) {
+        console.error('No session token found');
+        return;
+      }
+
+      const res = await fetch(`${CORPUS_RAG_API}/api/auth/session-to-jwt`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.accessToken) {
+          jwtToken = data.accessToken;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to get JWT token:', err);
+    }
+  }
+
+  async function loadAvailableResumes() {
+    isLoadingResume = true;
+    try {
+      // Try to load resumes from corpus-rag uploads
+      const resumeFiles = await invoke('list_files', { path: 'data/uploads' });
+      availableResumes = resumeFiles
+        .filter((file: string) => file.endsWith('.txt') || file.endsWith('.pdf.txt'))
+        .map((file: string) => ({
+          name: file,
+          type: file.endsWith('.pdf.txt') ? 'pdf' : 'txt'
+        }));
+
+      // If no resumes found, try default location
+      if (availableResumes.length === 0) {
+        try {
+          const defaultResumes = await invoke('list_files', { path: 'src/bots/all-resumes' });
+          availableResumes = defaultResumes
+            .filter((file: string) => file.endsWith('.txt'))
+            .map((file: string) => ({
+              name: file,
+              type: 'txt'
+            }));
+        } catch (err) {
+          console.log('No default resumes found');
+        }
+      }
+
+      if (availableResumes.length > 0 && !selectedResumeFile) {
+        selectedResumeFile = availableResumes[0].name;
+        await onResumeFileChange();
+      }
+    } catch (error: any) {
+      console.error('Failed to load resumes:', error);
+    } finally {
+      isLoadingResume = false;
+    }
+  }
+
+  async function onResumeFileChange() {
+    if (!selectedResumeFile) return;
+
+    try {
+      // Try to load from corpus-rag uploads first
+      let resumePath = `data/uploads/${user?.email || 'default'}/${selectedResumeFile}`;
+      let resumeText = '';
+
+      try {
+        resumeText = await invoke('read_file_async', { filename: resumePath });
+      } catch (err) {
+        // Try default location
+        try {
+          resumePath = `src/bots/all-resumes/${selectedResumeFile}`;
+          resumeText = await invoke('read_file_async', { filename: resumePath });
+        } catch (err2) {
+          console.error('Failed to load resume:', err2);
+          alert('Failed to load resume file');
+          return;
+        }
+      }
+
+      originalResume = resumeText;
+    } catch (error: any) {
+      console.error('Failed to load resume:', error);
+      alert('Failed to load resume: ' + error.message);
+    }
+  }
 
 
   function toggleJobForm() {
@@ -90,30 +190,30 @@
 
     isLoading = true;
     try {
-      // Read job directories directly using Tauri
-      const jobDirs = await invoke('list_files', { path: 'src/bots/jobs/linkedinjobs' });
-
-      jobs = [];
-      for (const jobDir of jobDirs) {
-        try {
-          const jobFilePath = `src/bots/jobs/linkedinjobs/${jobDir}/job_details.json`;
-          const jobDataStr = await invoke('read_file_async', { filename: jobFilePath });
-          const jobData = JSON.parse(jobDataStr);
-
-          if (jobData.description) {
-            jobs.push({
-              filename: jobFilePath,
-              company: jobData.company || 'Unknown',
-              title: jobData.title || 'No title',
-              location: jobData.location || '',
-              jobId: jobData.job_id,
-              hasJobDetails: true,
-              size: jobDataStr.length
-            });
-          }
-        } catch (err) {
-          console.error(`Failed to load job ${jobDir}:`, err);
+      // Load jobs from corpus-rag API
+      const response = await fetch(`${CORPUS_RAG_API}/api/jobs`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
         }
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        // Filter to only jobs with descriptions
+        jobs = (data.data?.jobs || data.jobs || []).filter((job: any) => job.hasJobDetails).map((job: any) => ({
+          filename: job.filename,
+          company: job.company || 'Unknown',
+          title: job.title || 'No title',
+          location: job.location || '',
+          jobId: job.jobId || job.job_id || '',
+          hasJobDetails: true,
+          size: job.size || 0
+        }));
+      } else {
+        console.error('Failed to load jobs:', data.error);
+        alert('Failed to load jobs: ' + (data.error || 'Unknown error'));
       }
     } catch (error: any) {
       console.error('Failed to load jobs:', error);
@@ -130,22 +230,34 @@
     isEditingJob = false;
 
     try {
-      // Read job file directly using Tauri
-      const jobDataStr = await invoke('read_file_async', { filename: job.filename });
-      const content = JSON.parse(jobDataStr);
-      jobContent = content;
+      // Load job details from corpus-rag API
+      const response = await fetch(`${CORPUS_RAG_API}/api/jobs/${encodeURIComponent(job.filename)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
 
-      let description = '';
-      if (content.description) {
-        description = content.description;
-      } else if (content.details) {
-        description = content.details;
+      const data = await response.json();
+
+      if (data.success) {
+        const content = data.data?.content || data.content || data.data;
+        jobContent = content;
+
+        let description = '';
+        if (content.description) {
+          description = content.description;
+        } else if (content.details) {
+          description = content.details;
+        } else {
+          description = JSON.stringify(content, null, 2);
+        }
+
+        jobDescription = description;
+        editedJobDescription = description;
       } else {
-        description = JSON.stringify(content, null, 2);
+        throw new Error(data.error || 'Failed to load job details');
       }
-
-      jobDescription = description;
-      editedJobDescription = description;
     } catch (error: any) {
       console.error('Failed to load job details:', error);
       alert('Failed to load job details: ' + error.message);
@@ -216,26 +328,44 @@
       return;
     }
 
+    if (!originalResume.trim()) {
+      alert('Please select a resume file first');
+      return;
+    }
+
     isGenerating = true;
     enhancedResume = null;
     analysisResult = null;
 
     try {
+      // Ensure we have JWT token
+      if (!jwtToken) {
+        await getJwtToken();
+        if (!jwtToken) {
+          alert('Please login first');
+          goto('/login');
+          return;
+        }
+      }
+
       console.log('=== ENHANCEMENT REQUEST ===');
       console.log('✓ Job description:', jobDescription.length, 'characters');
       console.log('✓ Enhancement focus:', enhancementFocus);
       console.log('✓ User email:', user.email);
+      console.log('✓ Resume length:', originalResume.length, 'characters');
       console.log('========================');
 
       const response = await fetch('/api/resume', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${jwtToken}`
         },
         body: JSON.stringify({
           userId: user.email,
           jobDescription: jobDescription,
-          enhancementFocus: enhancementFocus
+          enhancementFocus: enhancementFocus,
+          resumeText: originalResume
         })
       });
 
@@ -245,8 +375,8 @@
 
       if (data.success) {
         enhancedResume = data.enhancedResume;
-        fitScore = data.originalFitScore;
-        enhancedFitScore = data.enhancedFitScore;
+        fitScore = data.originalFitScore || 0;
+        enhancedFitScore = data.enhancedFitScore || 0;
 
         await analyzeEnhancement();
       } else {

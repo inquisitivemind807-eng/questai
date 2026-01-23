@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { authService } from '$lib/authService.js';
-  import { invoke } from '@tauri-apps/api/core';
+  import { env } from '$env/dynamic/public';
   import '$styles/shared.css';
 
   // all variables
@@ -14,6 +14,7 @@
   let isGenerating = false;
   let generatedCoverLetter = '';
   let coverLetterPrompt = '';
+  let jwtToken = '';
 
   let lastSavedPrompt = '';
   let initialLoaded = false;
@@ -33,6 +34,8 @@
   let isEditingJob = false;
   let editedJobData = null;
 
+  const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+
   onMount(async () => {
     // Check authentication
     if (!$authService.isLoggedIn) {
@@ -41,44 +44,71 @@
     }
 
     user = $authService.user;
+    await getJwtToken();
     loadJobs();
   });
 
+  async function getJwtToken() {
+    try {
+      const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      if (!sessionToken) {
+        console.error('No session token found');
+        return;
+      }
+
+      const res = await fetch(`${CORPUS_RAG_API}/api/auth/session-to-jwt`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${sessionToken}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.accessToken) {
+          jwtToken = data.accessToken;
+        }
+      }
+    } catch (err) {
+      console.error('Failed to get JWT token:', err);
+    }
+  }
 
   async function loadJobs() {
     if (!user) return;
 
     isLoading = true;
     try {
-      // Read job directories directly using Tauri
-      const jobDirs = await invoke('list_files', { path: 'src/bots/jobs/linkedinjobs' });
-
-      jobs = [];
-      for (const jobDir of jobDirs) {
-        try {
-          const jobFilePath = `src/bots/jobs/linkedinjobs/${jobDir}/job_details.json`;
-          const jobDataStr = await invoke('read_file_async', { filename: jobFilePath });
-          const jobData = JSON.parse(jobDataStr);
-
-          if (jobData.description) {
-            jobs.push({
-              filename: jobFilePath,
-              company: jobData.company || 'Unknown',
-              title: jobData.title || 'No title',
-              location: jobData.location || '',
-              jobId: jobData.job_id,
-              hasJobDetails: true,
-              size: jobDataStr.length
-            });
-          }
-        } catch (err) {
-          console.error(`Failed to load job ${jobDir}:`, err);
+      // Load jobs from corpus-rag API
+      const response = await fetch(`${CORPUS_RAG_API}/api/jobs`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
         }
-      }
+      });
 
-      // Auto-load first job
-      if (jobs.length > 0 && !selectedJob) {
-        await selectJob(jobs[0]);
+      const data = await response.json();
+
+      if (data.success) {
+        // Filter to only jobs with descriptions (for cover letters)
+        jobs = (data.data?.jobs || data.jobs || []).filter(job => job.hasJobDetails).map(job => ({
+          filename: job.filename,
+          company: job.company || 'Unknown',
+          title: job.title || 'No title',
+          location: job.location || '',
+          jobId: job.jobId || job.job_id || '',
+          hasJobDetails: true,
+          size: job.size || 0
+        }));
+
+        // Auto-load first job
+        if (jobs.length > 0 && !selectedJob) {
+          await selectJob(jobs[0]);
+        }
+      } else {
+        console.error('Failed to load jobs:', data.error);
+        alert('Failed to load jobs: ' + (data.error || 'Unknown error'));
       }
     } catch (error) {
       console.error('Failed to load jobs:', error);
@@ -98,9 +128,21 @@
     isEditingJob = false;
 
     try {
-      // Read job file directly using Tauri
-      const jobDataStr = await invoke('read_file_async', { filename: job.filename });
-      jobContent = JSON.parse(jobDataStr);
+      // Load job details from corpus-rag API
+      const response = await fetch(`${CORPUS_RAG_API}/api/jobs/${encodeURIComponent(job.filename)}`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        jobContent = data.data?.content || data.content || data.data;
+      } else {
+        throw new Error(data.error || 'Failed to load job details');
+      }
     } catch (error) {
       console.error('Failed to load job details:', error);
       alert('Failed to load job details: ' + error.message);
@@ -162,23 +204,29 @@
     generatedCoverLetter = '';
 
     try {
-      // Get auth token from authService
-      const token = await authService.getAccessToken();
-      if (!token) {
-        alert('Please login first');
-        goto('/login');
-        return;
+      // Ensure we have JWT token
+      if (!jwtToken) {
+        await getJwtToken();
+        if (!jwtToken) {
+          alert('Please login first');
+          goto('/login');
+          return;
+        }
       }
+
+      const jobDescription = jobContent.description || jobContent.details || jobContent.text || JSON.stringify(jobContent);
+      const jobId = jobContent.jobId || jobContent.job_id || selectedJob.jobId || `job_${Date.now()}`;
 
       const response = await fetch('/api/cover-letter', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Authorization': `Bearer ${jwtToken}`
         },
         body: JSON.stringify({
           userId: user.email,
-          jobDescription: jobContent.description || jobContent.text || JSON.stringify(jobContent)
+          jobDescription: jobDescription,
+          jobId: jobId
         })
       });
 

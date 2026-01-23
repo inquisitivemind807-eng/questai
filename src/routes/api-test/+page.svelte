@@ -1,8 +1,10 @@
 <script>
 	import { onMount } from 'svelte';
+	import { env } from '$env/dynamic/public';
 
 	// Use local proxy to avoid CORS
 	const API_BASE = '/api-test/proxy';
+	const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
 
 	// State
 	let selectedJob = '';
@@ -11,11 +13,58 @@
 	let loading = false;
 	let response = '';
 	let error = '';
+	let jwtToken = '';
+	let authStatus = 'checking'; // checking, authenticated, unauthenticated
 
 	onMount(async () => {
+		// Get JWT token first
+		await getJwtToken();
 		// Load available jobs
 		await loadJobs();
 	});
+
+	async function getJwtToken() {
+		authStatus = 'checking';
+		try {
+			// Get session token from localStorage
+			const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+			
+			if (!sessionToken) {
+				authStatus = 'unauthenticated';
+				error = 'No session token found. Please login first.';
+				return;
+			}
+
+			// Convert session token to JWT
+			const res = await fetch(`${CORPUS_RAG_API}/api/auth/session-to-jwt`, {
+				method: 'POST',
+				headers: {
+					'Authorization': `Bearer ${sessionToken}`,
+					'Content-Type': 'application/json'
+				}
+			});
+
+			if (!res.ok) {
+				const data = await res.json();
+				authStatus = 'unauthenticated';
+				error = `Failed to get JWT token: ${data.error || 'Authentication failed'}`;
+				return;
+			}
+
+			const data = await res.json();
+			if (data.success && data.accessToken) {
+				jwtToken = data.accessToken;
+				authStatus = 'authenticated';
+				error = '';
+			} else {
+				authStatus = 'unauthenticated';
+				error = 'Failed to get JWT token';
+			}
+		} catch (err) {
+			authStatus = 'unauthenticated';
+			error = `Error getting JWT token: ${err.message}`;
+		}
+	}
 
 	async function loadJobs() {
 		try {
@@ -52,6 +101,10 @@
 
 	async function testCoverLetter() {
 		if (!jobData) return;
+		if (!jwtToken) {
+			error = 'No JWT token available. Please login first.';
+			return;
+		}
 		loading = true;
 		error = '';
 		response = '';
@@ -60,7 +113,8 @@
 			const res = await fetch(`${API_BASE}/cover-letter`, {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json'
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${jwtToken}`
 				},
 				body: JSON.stringify({
 					job_id: jobData.job_id,
@@ -89,6 +143,10 @@
 
 	async function testResume() {
 		if (!jobData) return;
+		if (!jwtToken) {
+			error = 'No JWT token available. Please login first.';
+			return;
+		}
 		loading = true;
 		error = '';
 		response = '';
@@ -97,7 +155,8 @@
 			const res = await fetch(`${API_BASE}/resume`, {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json'
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${jwtToken}`
 				},
 				body: JSON.stringify({
 					job_id: jobData.job_id,
@@ -126,6 +185,10 @@
 
 	async function testQnA() {
 		if (!jobData || !jobData.questions) return;
+		if (!jwtToken) {
+			error = 'No JWT token available. Please login first.';
+			return;
+		}
 		loading = true;
 		error = '';
 		response = '';
@@ -134,7 +197,8 @@
 			const res = await fetch(`${API_BASE}/qna`, {
 				method: 'POST',
 				headers: {
-					'Content-Type': 'application/json'
+					'Content-Type': 'application/json',
+					'Authorization': `Bearer ${jwtToken}`
 				},
 				body: JSON.stringify({
 					job_id: jobData.job_id,
@@ -169,14 +233,40 @@
 			<h1 class="text-xl font-bold px-4">Corpus-RAG API Tester</h1>
 		</div>
 		<div class="flex-none gap-2">
-			<div class="badge badge-warning gap-2">
-				<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-4 h-4 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
-				Auth Disabled (Test Mode)
-			</div>
+			{#if authStatus === 'checking'}
+				<div class="badge badge-info gap-2">
+					<span class="loading loading-spinner loading-xs"></span>
+					Checking Auth...
+				</div>
+			{:else if authStatus === 'authenticated'}
+				<div class="badge badge-success gap-2">
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-4 h-4 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+					Authenticated
+				</div>
+			{:else}
+				<div class="badge badge-error gap-2">
+					<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" class="inline-block w-4 h-4 stroke-current"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+					Not Authenticated
+				</div>
+			{/if}
 		</div>
 	</div>
 
 	<div class="p-6 max-w-4xl mx-auto">
+		<!-- Auth Status -->
+		{#if authStatus === 'unauthenticated'}
+			<div class="alert alert-error shadow-lg mb-6">
+				<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+				<div>
+					<h3 class="font-bold">Authentication Required</h3>
+					<div class="text-sm">{error || 'Please login to use the API tester.'}</div>
+					<div class="mt-2">
+						<button class="btn btn-sm btn-primary" on:click={getJwtToken}>Retry Authentication</button>
+					</div>
+				</div>
+			</div>
+		{/if}
+
 		<!-- Job Selection -->
 		<div class="card bg-base-100 shadow-xl mb-6">
 			<div class="card-body">

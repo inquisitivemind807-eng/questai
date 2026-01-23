@@ -8,7 +8,16 @@ export async function POST({ request }) {
     const body = await request.json();
 
     // Extract data from request
-    const { jobDescription, userId, enhancementFocus = 'general' } = body;
+    const { jobDescription, userId, enhancementFocus = 'general', resumeText: providedResumeText } = body;
+
+    // Get auth token from request header
+    const authHeader = request.headers.get('authorization');
+    if (!authHeader) {
+      return json({
+        success: false,
+        error: 'Authentication required'
+      }, { status: 401 });
+    }
 
     if (!jobDescription) {
       return json({
@@ -17,16 +26,25 @@ export async function POST({ request }) {
       }, { status: 400 });
     }
 
-    // Read resume from default location
-    const fs = await import('fs');
-    const path = await import('path');
-    const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-    const resumeText = fs.existsSync(resumePath)
-      ? fs.readFileSync(resumePath, 'utf8')
-      : "Experienced software developer";
+    // Use provided resume text or read from default location
+    let resumeText = providedResumeText;
+    
+    if (!resumeText) {
+      // Read resume from default location
+      const fs = await import('fs');
+      const path = await import('path');
+      const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
+      resumeText = fs.existsSync(resumePath)
+        ? fs.readFileSync(resumePath, 'utf8')
+        : "Experienced software developer";
+    }
+
+    // Generate a job_id if not provided (required by corpus-rag API)
+    const jobId = body.jobId || `job_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
     // Prepare request for corpus-rag API
     const requestBody = {
+      job_id: jobId,
       job_details: jobDescription,
       resume_text: resumeText,
       useAi: "deepseek-chat",
@@ -58,11 +76,12 @@ Format your response clearly showing:
 
     console.log('🔄 Calling corpus-rag API for resume enhancement...');
 
-    // Call corpus-rag API
+    // Call corpus-rag API with authentication
     const response = await fetch(`${API_BASE}/api/resume`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': authHeader  // Forward auth token
       },
       body: JSON.stringify(requestBody)
     });
@@ -81,13 +100,13 @@ Format your response clearly showing:
       console.log('✅ Resume enhanced successfully');
 
       // Parse fit scores from the response
-      const resumeText = data.resume;
-      const originalFitMatch = resumeText.match(/Original Fit Score:\s*(\d+)%/i);
-      const enhancedFitMatch = resumeText.match(/Enhanced Fit Score:\s*(\d+)%/i);
+      const enhancedResumeText = data.resume;
+      const originalFitMatch = enhancedResumeText.match(/Original Fit Score:\s*(\d+)%/i);
+      const enhancedFitMatch = enhancedResumeText.match(/Enhanced Fit Score:\s*(\d+)%/i);
 
       return json({
         success: true,
-        enhancedResume: resumeText,
+        enhancedResume: enhancedResumeText,
         originalFitScore: originalFitMatch ? parseInt(originalFitMatch[1]) : null,
         enhancedFitScore: enhancedFitMatch ? parseInt(enhancedFitMatch[1]) : null,
         metadata: {
