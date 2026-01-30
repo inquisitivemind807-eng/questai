@@ -22,6 +22,15 @@ const printLog = (message: string) => {
   console.log(message);
 };
 
+/** Log current job from context so you always know which job the bot is applying to. */
+function logCurrentJob(ctx: WorkflowContext): void {
+  const title = ctx.currentJobTitle ?? ctx.currentJobTitlePreview;
+  const company = ctx.currentJobCompany ?? ctx.currentJobCompanyPreview;
+  if (title || company) {
+    printLog(`🎯 Current job: ${title || '?'} at ${company || '?'}`);
+  }
+}
+
 function slugify(text: string): string {
   if (!text) return "";
   text = text.trim().toLowerCase();
@@ -272,6 +281,7 @@ export async function* collectJobCards(ctx: WorkflowContext): AsyncGenerator<str
 export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const cards = ctx.job_cards || [];
   const index = ctx.job_index || 0;
+  const total = cards.length;
 
   if (!cards.length || index >= cards.length) {
     yield "job_cards_finished";
@@ -279,6 +289,13 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
   }
 
   try {
+    // Log which job card we're opening (snippet from card text)
+    const snippet = (await ctx.driver.executeScript(
+      "const t = (arguments[0].textContent || '').trim(); return t.length > 70 ? t.substring(0, 70) + '...' : t;",
+      cards[index]
+    )) as string;
+    printLog(`\n📌 Opening job card ${index + 1}/${total}: ${snippet || '(no text)'}`);
+
     await ctx.driver.executeScript("arguments[0].scrollIntoView(true);", cards[index]);
     await cards[index].click();
     await ctx.driver.sleep(2000); // Wait for details panel to load
@@ -293,8 +310,14 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
 // Detect Apply Button Type
 export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    const result = await ctx.driver.executeScript(`
+    const result = (await ctx.driver.executeScript(`
       const container = document.querySelector('[data-automation="jobDetailsPage"]') || document.body;
+
+      // Snapshot job title/company for logging (before we return apply result)
+      const titleEl = container.querySelector('[data-automation="job-detail-title"]') || container.querySelector('h1[data-automation="jobTitle"]') || container.querySelector('h1');
+      const companyEl = container.querySelector('[data-automation="advertiser-name"]') || container.querySelector('[data-automation="jobCompany"]');
+      const jobTitle = titleEl ? (titleEl.textContent || '').trim() : '';
+      const companyName = companyEl ? (companyEl.textContent || '').trim() : '';
 
       // Look for buttons/links with apply text
       const applyButtons = Array.from(container.querySelectorAll('button, a, [role="button"]')).filter(el => {
@@ -334,9 +357,14 @@ export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<str
       console.log('Found Regular Apply:', foundRegularApply);
       console.log('============================');
 
-      return { hasQuickApply: foundQuickApply, hasRegularApply: foundRegularApply };
-    `);
+      return { hasQuickApply: foundQuickApply, hasRegularApply: foundRegularApply, jobTitle: jobTitle, companyName: companyName };
+    `)) as { hasQuickApply: boolean; hasRegularApply: boolean; jobTitle?: string; companyName?: string };
 
+    ctx.currentJobTitlePreview = result?.jobTitle || '';
+    ctx.currentJobCompanyPreview = result?.companyName || '';
+    if (ctx.currentJobTitlePreview || ctx.currentJobCompanyPreview) {
+      printLog(`📋 Job: ${ctx.currentJobTitlePreview || '?'} at ${ctx.currentJobCompanyPreview || '?'}`);
+    }
     printLog(`Apply detection result: Quick=${result.hasQuickApply}, Regular=${result.hasRegularApply}`);
 
     if (result.hasQuickApply) {
@@ -558,6 +586,10 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
     `);
 
     if (jobData) {
+      // Store in context so every step can log "which job"
+      ctx.currentJobTitle = jobData.title || '';
+      ctx.currentJobCompany = jobData.company || '';
+
       // Save job data to file in src/bots/jobs/
       const jobsDir = path.join(__dirname, '..', 'jobs');
       if (!fs.existsSync(jobsDir)) {
@@ -575,6 +607,9 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
       // Store current job file path in context for employer questions step
       ctx.currentJobFile = filepath;
 
+      printLog(`\n═══════════════════════════════════════════════════════════════`);
+      printLog(`🎯 APPLYING TO: ${ctx.currentJobTitle} | ${ctx.currentJobCompany}`);
+      printLog(`═══════════════════════════════════════════════════════════════\n`);
       printLog(`Quick Apply job saved: ${jobData.title} at ${jobData.company} (${filename})`);
 
       // Update progress counter and overlay
@@ -601,6 +636,7 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
 // Click Quick Apply Button
 export async function* clickQuickApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    logCurrentJob(ctx);
     printLog("Clicking Quick Apply button...");
 
     const clicked = await ctx.driver.executeScript(`
@@ -735,6 +771,7 @@ export async function* waitForQuickApplyPage(ctx: WorkflowContext): AsyncGenerat
 // Get Current Step in Quick Apply Flow
 export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    logCurrentJob(ctx);
     const currentStep = await ctx.driver.executeScript(`
       const nav = document.querySelector('nav[aria-label="Progress bar"]');
       if (!nav) return 'progress_bar_not_found';
@@ -775,6 +812,7 @@ export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<stri
 // Click Continue Button
 export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    logCurrentJob(ctx);
     printLog("Clicking continue button...");
 
     // First, check the form state before clicking continue
@@ -918,7 +956,13 @@ export async function* stayPutForInspection(ctx: WorkflowContext): AsyncGenerato
 
 // Skip to Next Card
 export async function* skipToNextCard(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  printLog("Regular Apply job found - skipping job details parsing and moving to next card...");
+  const title = ctx.currentJobTitlePreview || ctx.currentJobTitle;
+  const company = ctx.currentJobCompanyPreview || ctx.currentJobCompany;
+  if (title || company) {
+    printLog(`⏭️ Skipping (regular apply): ${title || '?'} at ${company || '?'}`);
+  } else {
+    printLog("Regular Apply job found - skipping job details parsing and moving to next card...");
+  }
 
   // Update progress counter if overlay exists
   if (ctx.overlay && ctx.total_jobs) {
@@ -958,7 +1002,12 @@ export async function* clickNextPage(ctx: WorkflowContext): AsyncGenerator<strin
       yield "no_more_pages";
     }
   } catch (error) {
-    printLog(`Error clicking next page: ${error}`);
+    const msg = error instanceof Error ? error.message : String(error);
+    if (/no such window|target window already closed|web view not found/i.test(msg)) {
+      printLog("Next page: window closed, treating as no more pages.");
+    } else {
+      printLog(`Error clicking next page: ${msg}`);
+    }
     yield "no_more_pages";
   }
 }

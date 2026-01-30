@@ -492,20 +492,28 @@ export class UniversalOverlay {
    * Update job progress
    */
   async updateJobProgress(appliedJobs: number, totalJobs: number, currentStep: string, stepIndex: number): Promise<void> {
-    await this.initialize();
+    try {
+      await this.initialize();
 
-    const state: OverlayState = {
-      botName: this.botName,
-      type: 'job_progress',
-      data: {
-        appliedJobs,
-        totalJobs,
-        currentStep,
-        stepIndex
+      const state: OverlayState = {
+        botName: this.botName,
+        type: 'job_progress',
+        data: {
+          appliedJobs,
+          totalJobs,
+          currentStep,
+          stepIndex
+        }
+      };
+
+      await this.updateState(state);
+    } catch (error) {
+      if (this.isWindowClosedError(error)) {
+        console.warn('Overlay: window closed, skip job progress update.');
+      } else {
+        console.warn('Overlay job progress failed:', error instanceof Error ? error.message : error);
       }
-    };
-
-    await this.updateState(state);
+    }
   }
 
   /**
@@ -583,7 +591,19 @@ export class UniversalOverlay {
   }
 
   /**
-   * Update overlay content
+   * True when the browser window/tab was closed (overlay updates are no longer possible).
+   */
+  private isWindowClosedError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    const name = error instanceof Error ? error.constructor?.name : '';
+    return (
+      name === 'NoSuchWindowError' ||
+      /no such window|target window already closed|web view not found/i.test(msg)
+    );
+  }
+
+  /**
+   * Update overlay content. Fails silently if the window was closed (e.g. user closed a tab).
    */
   async updateOverlay(updates: Partial<OverlayConfig>): Promise<void> {
     try {
@@ -600,12 +620,16 @@ export class UniversalOverlay {
         await this.updateState(currentState);
       }
     } catch (error) {
-      console.error('Error updating overlay:', error);
+      if (this.isWindowClosedError(error)) {
+        console.warn('Overlay: window closed, skipping update.');
+      } else {
+        console.warn('Overlay update failed:', error instanceof Error ? error.message : error);
+      }
     }
   }
 
   /**
-   * Hide overlay
+   * Hide overlay. Fails silently if the window was closed.
    */
   async hideOverlay(): Promise<void> {
     try {
@@ -615,7 +639,11 @@ export class UniversalOverlay {
         sessionStorage.removeItem('universal_overlay_state');
       `);
     } catch (error) {
-      console.error('Error hiding overlay:', error);
+      if (this.isWindowClosedError(error)) {
+        console.warn('Overlay: window closed, skip hide.');
+      } else {
+        console.warn('Overlay hide failed:', error instanceof Error ? error.message : error);
+      }
     }
   }
 

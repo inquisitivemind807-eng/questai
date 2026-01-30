@@ -149,8 +149,8 @@ export class WorkflowEngine {
           // Small delay to keep overlay visible for each step
           await new Promise(resolve => setTimeout(resolve, 1000));
         } catch (error) {
-          // Ignore overlay errors to not break workflow
-          console.warn('Overlay update failed:', error);
+          // Ignore overlay errors (e.g. window closed) so workflow continues
+          console.warn('Overlay update skipped (window may be closed).');
         }
       }
 
@@ -243,8 +243,8 @@ export class WorkflowEngine {
         // Keep the overlay visible for longer so user can see the completion
         console.log('✅ Workflow completed! Overlay will remain visible.');
         await new Promise(resolve => setTimeout(resolve, 2000));
-      } catch (error) {
-        console.warn('Failed to update overlay completion:', error);
+      } catch {
+        console.warn('Overlay completion update skipped (window may be closed).');
       }
     }
 
