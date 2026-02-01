@@ -114,7 +114,8 @@ export class UniversalOverlay {
           overlay.id = OVERLAY_ID;
           overlay.className = 'universal-dynamic-overlay';
 
-          // Base styles
+          // Base styles - pointer-events: none so overlay does not block page interaction
+          // (clicks pass through to search inputs, buttons, etc.); children use 'auto' for our UI
           const baseStyles = {
             position: 'fixed',
             top: position.y + 'px',
@@ -129,6 +130,7 @@ export class UniversalOverlay {
             transition: 'all 0.3s ease',
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
+            pointerEvents: 'none', // Allow clicks to pass through to page beneath
             width: collapsed ? '60px' : '400px',
             height: collapsed ? '60px' : 'auto',
             minHeight: collapsed ? '60px' : '150px'
@@ -157,7 +159,8 @@ export class UniversalOverlay {
             alignItems: 'center',
             cursor: 'move',
             width: '100%',
-            height: collapsed ? '100%' : 'auto'
+            height: collapsed ? '100%' : 'auto',
+            pointerEvents: 'auto' // Override parent so header/buttons remain clickable
           };
 
           Object.assign(header.style, headerStyles);
@@ -222,6 +225,7 @@ export class UniversalOverlay {
           content.style.maxHeight = '400px';
           content.style.overflowY = 'auto';
           content.style.display = collapsed ? 'none' : 'block';
+          content.style.pointerEvents = 'auto'; // Override parent so content buttons remain clickable
 
           // Populate content based on type
           if (state.type === 'job_progress') {

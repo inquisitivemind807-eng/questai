@@ -56,37 +56,38 @@ steps_config:
     step: 5
     func: "openJobsPage"
     transitions:
-      jobs_page_loaded: "set_search_location"
+      jobs_page_loaded: "set_search_keywords"
       failed_opening_jobs_page: "open_jobs_page"
     timeout: 30
     on_timeout_event: "failed_opening_jobs_page"
 
-  set_search_location:
-    step: 6
-    func: "setSearchLocation"
-    transitions:
-      search_location_set: "set_search_keywords"
-      no_search_location_in_settings: "set_search_keywords"
-      location_input_not_found: "set_search_location"
-      failed_setting_search_location: "set_search_location"
-      jobs_page_missing: "set_search_location"
-    timeout: 30
-    on_timeout_event: "failed_setting_search_location"
-
   set_search_keywords:
-    step: 7
+    step: 6
     func: "setSearchKeywords"
     transitions:
-      search_keywords_set: "apply_filters"
-      no_keywords_in_settings: "apply_filters"
+      search_keywords_set: "set_search_location"
+      no_keywords_in_settings: "set_search_location"
       keywords_input_not_found: "set_search_keywords"
       failed_setting_search_keywords: "set_search_keywords"
       jobs_page_missing: "set_search_keywords"
     timeout: 30
     on_timeout_event: "failed_setting_search_keywords"
 
+  set_search_location:
+    step: 7
+    func: "setSearchLocation"
+    transitions:
+      search_location_set: "apply_filters"
+      no_search_location_in_settings: "apply_filters"
+      location_input_not_found: "apply_filters"
+      failed_setting_search_location: "apply_filters"
+      jobs_page_missing: "set_search_location"
+    timeout: 30
+    on_timeout_event: "failed_setting_search_location"
+
   apply_filters:
     step: 8
+    # Location (city, state, country) applied here after keyword search has loaded results
     func: "applyFilters"
     transitions:
       filters_applied_successfully: "get_page_info"
@@ -147,7 +148,7 @@ steps_config:
     step: 25
     func: "extractJobDetailsFromPanel"
     transitions:
-      job_details_extracted: "continue_processing"
+      job_details_extracted: "upload_resume"
       job_details_extraction_failed: "application_failed"
     timeout: 20
     on_timeout_event: "job_details_extraction_failed"
@@ -156,19 +157,41 @@ steps_config:
     step: 15
     func: "uploadResume"
     transitions:
-      resume_uploaded_successfully: "answer_questions"
-      no_resume_path_configured: "answer_questions"
-      resume_file_not_found: "answer_questions"
-      proceeding_without_resume: "answer_questions"
+      resume_uploaded_successfully: "handle_cover_letter"
+      resume_not_required: "handle_cover_letter"
+      no_resume_path_configured: "handle_cover_letter"
+      resume_file_not_found: "handle_cover_letter"
+      proceeding_without_resume: "handle_cover_letter"
       jobs_page_missing: "upload_resume"
     timeout: 30
     on_timeout_event: "proceeding_without_resume"
+
+  handle_cover_letter:
+    step: 15.5
+    func: "handleCoverLetter"
+    transitions:
+      cover_letter_filled: "extract_employer_questions"
+      cover_letter_not_required: "extract_employer_questions"
+      cover_letter_error: "extract_employer_questions"
+    timeout: 60
+    on_timeout_event: "cover_letter_error"
+
+  extract_employer_questions:
+    step: 15.6
+    func: "extractEmployerQuestions"
+    transitions:
+      employer_questions_saved: "answer_questions"
+      no_employer_questions: "answer_questions"
+      employer_questions_error: "answer_questions"
+    timeout: 30
+    on_timeout_event: "employer_questions_error"
 
   answer_questions:
     step: 16
     func: "answerQuestions"
     transitions:
       finished_answering_questions: "submit_application"
+      next_stage: "extract_employer_questions"
       error_answering_questions: "answer_questions"
       jobs_page_missing: "answer_questions"
     timeout: 60

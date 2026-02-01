@@ -8,6 +8,7 @@ import { handleResumeSelection } from './handlers/resume_handler';
 import { handleCoverLetter } from './handlers/cover_letter_handler';
 import { answerEmployerQuestions as handleEmployerQuestions } from './handlers/answer_employer_questions';
 import { extractEmployerQuestions } from './handlers/extract_employer_questions';
+import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -21,6 +22,118 @@ const BASE_URL = "https://www.seek.com.au";
 const printLog = (message: string) => {
   console.log(message);
 };
+
+/**
+ * Parse HR contact, required skills, and required experience from job details text.
+ * Used so Job Analytics can show these in the Job details tab.
+ */
+function parseJobDetailsFromText(details: string): {
+  hrContact?: { name?: string; email?: string; phone?: string };
+  requiredSkills?: string[];
+  requiredExperience?: string;
+} {
+  const result: {
+    hrContact?: { name?: string; email?: string; phone?: string };
+    requiredSkills?: string[];
+    requiredExperience?: string;
+  } = {};
+  if (!details || typeof details !== 'string') return result;
+
+  const text = details.trim();
+  const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+  // --- Email ---
+  const emailRegex = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+  const emails = text.match(emailRegex);
+  if (emails && emails.length > 0) {
+    result.hrContact = result.hrContact || {};
+    result.hrContact.email = emails[0];
+  }
+
+  // --- Phone (AU-style and generic) ---
+  const phoneRegex = /(?:\+61|0)[\s.-]?\(?\d\)?[\s.-]?\d{3,4}[\s.-]?\d{3,4}\b|\+\d{1,3}[\s.-]?\d{2,4}[\s.-]?\d{2,4}[\s.-]?\d{2,4}\b|\b\d{8,10}\b/g;
+  const phones = text.match(phoneRegex);
+  if (phones && phones.length > 0) {
+    result.hrContact = result.hrContact || {};
+    result.hrContact.phone = phones[0].replace(/\s+/g, ' ').trim();
+  }
+
+  // --- Contact / Recruiter name (e.g. "Contact: John Smith", "Recruiter: Jane") ---
+  const contactNamePatterns = [
+    /(?:Contact|Recruiter|HR|Enquiries?)\s*[:\-]\s*([A-Za-z][A-Za-z\s.]{1,50}?)(?:\s*[|\n]|$)/i,
+    /(?:contact|reach)\s+(?:me\s+at\s+)?([A-Za-z][A-Za-z\s.]{1,50}?)(?:\s+on\s+|\s*[|\n]|$)/i,
+  ];
+  for (const re of contactNamePatterns) {
+    const m = text.match(re);
+    if (m && m[1]) {
+      const name = m[1].replace(/\s+/g, ' ').trim();
+      if (name.length >= 2 && name.length <= 60) {
+        result.hrContact = result.hrContact || {};
+        result.hrContact.name = name;
+        break;
+      }
+    }
+  }
+
+  // --- Required skills: look for section then bullets or comma list; also inline "Skills: A, B, C" ---
+  const skillInlineRegex = /^(?:Key\s+)?(?:Skills?|Technical\s+skills?|What\s+you'll\s+need|Essential\s+skills?)\s*[:\-]\s*(.+)$/i;
+  const skillSectionHeaders = /^(?:Key\s+)?(?:Skills?|Requirements?|Technical\s+skills?|What\s+you'll\s+need|Essential\s+skills?)\s*[:\-]?\s*$/i;
+  const bulletOrDash = /^[\s]*[-•*]\s+(.+)$/;
+  const skillLines: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const inlineMatch = line.match(skillInlineRegex);
+    if (inlineMatch && inlineMatch[1].trim()) {
+      const rest = inlineMatch[1].split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+      skillLines.push(...rest);
+      continue;
+    }
+    if (skillSectionHeaders.test(line)) {
+      // Next line(s) may be the list
+      for (let j = i + 1; j < lines.length; j++) {
+        const next = lines[j];
+        if (/^(?:About|Responsibilities?|Experience|Benefits?|Apply)\s*[:\-]?/i.test(next) || next.length > 120) break;
+        const bullet = next.match(bulletOrDash);
+        if (bullet) skillLines.push(bullet[1].trim());
+        else if (next.includes(',') && next.length < 200) skillLines.push(...next.split(',').map((s) => s.trim()).filter(Boolean));
+        else if (next.length > 2 && next.length < 80 && !/^\d+\.?\s*$/.test(next)) skillLines.push(next);
+      }
+      break;
+    }
+  }
+  if (skillLines.length > 0) {
+    result.requiredSkills = [...new Set(skillLines)].slice(0, 50);
+  }
+
+  // --- Required experience: "X years' experience", "minimum X years", or block under "Experience:" ---
+  const experiencePhrases: string[] = [];
+  const yearsRegex = /(\d+\+?\s*(?:to\s+)?\d*\s*years?'?\s*(?:of\s+)?(?:experience|exp\.?|in\s+[A-Za-z\s]+))/gi;
+  const minYearsRegex = /(?:minimum|at\s+least|min\.?)\s+\d+\+?\s*years?'?\s*(?:of\s+)?(?:experience|exp\.?)?/gi;
+  for (const re of [yearsRegex, minYearsRegex]) {
+    const matches = text.match(re);
+    if (matches) experiencePhrases.push(...matches.map((m) => m.trim()));
+  }
+  const experienceHeader = /^(?:Experience|What\s+you'll\s+bring|Requirements?)\s*[:\-]?\s*$/i;
+  let inExpSection = false;
+  const expLines: string[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (experienceHeader.test(line)) {
+      inExpSection = true;
+      continue;
+    }
+    if (inExpSection && line.length > 10 && line.length < 500) {
+      if (/^(?:About|Responsibilities?|Skills?|Benefits?|Apply)\s*[:\-]?/i.test(line)) break;
+      expLines.push(line);
+    }
+  }
+  if (experiencePhrases.length > 0 || expLines.length > 0) {
+    const combined = [...experiencePhrases, ...expLines.slice(0, 5)].filter(Boolean);
+    result.requiredExperience = combined.join(' ');
+  }
+
+  return result;
+}
 
 /** Log current job from context so you always know which job the bot is applying to. */
 function logCurrentJob(ctx: WorkflowContext): void {
@@ -586,6 +699,18 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
     `);
 
     if (jobData) {
+      // Parse HR contact, required skills, required experience from details text (for Job Analytics)
+      const parsed = parseJobDetailsFromText(jobData.details || '');
+      if (parsed.hrContact && (parsed.hrContact.name || parsed.hrContact.email || parsed.hrContact.phone)) {
+        jobData.hrContact = parsed.hrContact;
+      }
+      if (parsed.requiredSkills && parsed.requiredSkills.length > 0) {
+        jobData.requiredSkills = parsed.requiredSkills;
+      }
+      if (parsed.requiredExperience) {
+        jobData.requiredExperience = parsed.requiredExperience;
+      }
+
       // Store in context so every step can log "which job"
       ctx.currentJobTitle = jobData.title || '';
       ctx.currentJobCompany = jobData.company || '';
@@ -895,6 +1020,26 @@ export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator
 // Close Quick Apply and Continue Search
 export async function* closeQuickApplyAndContinueSearch(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    // Record application to corpus-rag (loosely coupled; no block on failure)
+    if (ctx.currentJobFile) {
+      try {
+        const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
+        const jobId = jobData.jobId || '';
+        if (jobId) {
+          const jobDirPath = getJobDirPathFromJobFile(ctx.currentJobFile, jobId);
+          const result = await recordJobApplicationToBackend({
+            jobFilePath: ctx.currentJobFile,
+            jobDirPath
+          });
+          if (!result.ok) {
+            printLog(`[JobRecorder] Backend record skipped: ${result.error}`);
+          }
+        }
+      } catch (recordErr) {
+        printLog(`[JobRecorder] Record failed (continuing): ${recordErr}`);
+      }
+    }
+
     printLog("Closing Quick Apply page and continuing search...");
 
     const handles = await ctx.driver.getAllWindowHandles();

@@ -3,7 +3,8 @@
     "home_url": "https://www.linkedin.com/",
     "feed_url": "https://www.linkedin.com/feed/",
     "login_url": "https://www.linkedin.com/login",
-    "jobs_url": "https://www.linkedin.com/jobs/"
+    "jobs_url": "https://www.linkedin.com/jobs/",
+    "jobs_search_url": "https://www.linkedin.com/jobs/search/"
   },
   "auth": {
     "signin_link_text": "Sign in",
@@ -15,16 +16,19 @@
   },
   "jobs": {
     "keywords_input_candidates": [
-      "input[aria-label='Search by title, skill, or company']:not([disabled])",
-      "input[aria-label*='Search by title']:not([disabled])",
-      "input[placeholder*='Title, skill, or company']:not([disabled])",
-      "input[aria-label*='Title, skill']:not([disabled])",
-      "input.jobs-search-box__text-input[role='combobox']"
+      "input[aria-label='Search by title, skill, or company']",
+      "input.jobs-search-box__keyboard-text-input",
+      "input[id^='jobs-search-box-keyword-id']",
+      "input[aria-label*='Search by title']",
+      "input[placeholder*='Title, skill, or company']",
+      "input[role='combobox'][aria-label*='title']"
     ],
     "location_input_candidates": [
-      "input[aria-label='City, state, or zip code']:not([disabled])",
+      "input[aria-label='City, state, or zip code']",
+      "input[id^='jobs-search-box-location-id']",
+      "input.jobs-search-box__text-input[aria-label*='City']",
       "input[role='combobox'][aria-label*='City']",
-      "input[aria-label*='Location']:not([disabled])"
+      "input[aria-label*='Location']"
     ],
     "location_input_xpath": ".//input[@aria-label='City, state, or zip code'and not(@disabled)]",
     "cancel_button": {
@@ -32,8 +36,9 @@
       "xpath": ".//button[@aria-label='Cancel']"
     },
     "all_filters_button": {
-      "css": "button:has-text('All filters')",
-      "xpath": "//button[normalize-space()='All filters']"
+      "css": "button.search-reusables__all-filters-pill-button",
+      "xpath": "//button[normalize-space()='All filters']",
+      "aria_label_xpath": "//button[contains(@aria-label, 'all filter')]"
     },
     "show_results_button": {
       "css": "button[aria-label*='Apply current filters to show']",
@@ -94,7 +99,11 @@
     "follow_company": {
       "checkbox_input_xpath": ".//input[@id='follow-company-checkbox' and @type='checkbox']",
       "checkbox_label_xpath": ".//label[@for='follow-company-checkbox']"
-    }
+    },
+    "resume_file_input_css": "input[type='file']",
+    "resume_file_input_xpath": ".//input[@type='file']",
+    "cover_letter_textarea_css": "textarea[placeholder*='cover letter'], textarea[aria-label*='cover letter'], textarea[data-test-single-line-text-form-component]",
+    "cover_letter_textarea_xpath": "//textarea[contains(@placeholder, 'cover letter') or contains(@aria-label, 'cover letter')]"
   },
   "forms": {
     "question_container_xpath": ".//div[@data-test-form-element]",
@@ -175,6 +184,7 @@
   "feed_url": "https://www.linkedin.com/feed/",
   "login_url": "https://www.linkedin.com/login",
   "jobs_url": "https://www.linkedin.com/jobs/",
+  "jobs_search_url": "https://www.linkedin.com/jobs/search/",
   "signin_link_text": "Sign in",
   "join_now_link_text": "Join now",
   "signin_button_xpath": "//button[@type=\"submit\" and contains(text(), \"Sign in\")]",

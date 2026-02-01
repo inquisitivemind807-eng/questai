@@ -7,23 +7,33 @@ const printLog = (message: string) => {
 };
 
 // Refactored to use the robust containerSelector from the extraction step
+// When modalScopeSelector is set (e.g. LinkedIn Easy Apply), we find the container inside that modal so we don't match elements outside it
 export async function fillQuestionField(
   ctx: WorkflowContext,
   containerSelector: string, // The robust selector for the question's container
   questionType: string,
-  answer: any
+  answer: any,
+  modalScopeSelector?: string // Optional: scope to this modal (e.g. "[data-test-modal-id='easy-apply-modal']")
 ): Promise<boolean> {
   if (!containerSelector) {
     printLog('❌ Cannot fill field: containerSelector is missing.');
     return false;
   }
 
+  const answerIdx = modalScopeSelector ? 2 : 1;
+  const getContainerScript = modalScopeSelector
+    ? 'var modal = document.querySelector(arguments[0]); var container = modal ? modal.querySelector(arguments[1]) : null;'
+    : 'var container = document.querySelector(arguments[0]);';
+  const selectArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
+  const radioArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
+  const checkboxArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, Array.isArray(answer) ? answer : [answer]] : [containerSelector, Array.isArray(answer) ? answer : [answer]];
+
   try {
     switch (questionType) {
       case 'select':
         const selectResult = await ctx.driver.executeScript(`
-          const container = document.querySelector(arguments[0]);
-          if (!container) return { success: false, error: 'Container not found: ' + arguments[0] };
+          ${getContainerScript}
+          if (!container) return { success: false, error: 'Container not found' };
 
           // Debug: what's actually in the container
           console.log('Container HTML:', container.outerHTML);
@@ -39,7 +49,7 @@ export async function fillQuestionField(
             select = container.parentElement?.querySelector('select');
           }
 
-          const answerIndex = arguments[1];
+          const answerIndex = arguments[${answerIdx}];
 
           if (select && select.options && select.options[answerIndex]) {
             select.selectedIndex = answerIndex;
@@ -53,7 +63,7 @@ export async function fillQuestionField(
                    ', has options: ' + (select ? select.options.length : 0) +
                    ', container id: ' + container.id
           };
-        `, containerSelector, answer);
+        `, ...selectArgs);
 
         if (!selectResult.success) {
           printLog(`Failed to fill select: ${selectResult.error}`);
@@ -62,11 +72,11 @@ export async function fillQuestionField(
 
       case 'radio':
         const radioResult = await ctx.driver.executeScript(`
-          const container = document.querySelector(arguments[0]);
-          if (!container) return { success: false, error: 'Container not found: ' + arguments[0] };
+          ${getContainerScript}
+          if (!container) return { success: false, error: 'Container not found' };
 
           const radioButtons = container.querySelectorAll('input[type="radio"]');
-          const answerIndex = arguments[1];
+          const answerIndex = arguments[${answerIdx}];
 
           if (radioButtons && radioButtons[answerIndex]) {
             radioButtons[answerIndex].checked = true;
@@ -74,7 +84,7 @@ export async function fillQuestionField(
             return { success: true };
           }
           return { success: false, error: 'Radio button not found. Found radios: ' + radioButtons.length + ', requested index: ' + answerIndex };
-        `, containerSelector, answer);
+        `, ...radioArgs);
 
         if (!radioResult.success) {
           printLog(`Failed to fill radio: ${radioResult.error}`);
@@ -84,34 +94,33 @@ export async function fillQuestionField(
       case 'text':
       case 'textarea':
         try {
-          // Use the same approach as cover letter handler - find element with Selenium and use sendKeys
+          const textScriptArgs = modalScopeSelector ? [modalScopeSelector, containerSelector] : [containerSelector];
           const textElements = await ctx.driver.executeScript(`
-            const container = document.querySelector(arguments[0]);
+            ${getContainerScript}
             if (!container) return null;
 
-            // Find textarea or text input within the container
             const textElement = container.querySelector('textarea, input[type="text"]');
             if (textElement) {
               return {
                 tagName: textElement.tagName.toLowerCase(),
                 selector: textElement.tagName.toLowerCase() +
                          (textElement.id ? '#' + textElement.id : '') +
-                         (textElement.className ? '.' + textElement.className.split(' ').join('.') : '')
+                         (textElement.className ? '.' + textElement.className.split(' ').filter(Boolean).join('.') : '')
               };
             }
             return null;
-          `, containerSelector);
+          `, ...textScriptArgs);
 
           if (!textElements) {
             printLog(`Failed to find text element in container: ${containerSelector}`);
             return false;
           }
 
-          // Use more specific selector to find the exact element
-          const fullSelector = `${containerSelector} ${textElements.tagName}`;
+          const fullSelector = modalScopeSelector
+            ? `${modalScopeSelector} ${containerSelector} ${textElements.tagName}`
+            : `${containerSelector} ${textElements.tagName}`;
           printLog(`Found text element: ${fullSelector}`);
 
-          // Use Selenium's findElement and sendKeys like cover letter handler
           const textElement = await ctx.driver.findElement({ css: fullSelector });
 
           // Clear existing content first
@@ -136,9 +145,8 @@ export async function fillQuestionField(
           const checkboxAnswers = Array.isArray(answer) ? answer : [answer];
           printLog(`[DEBUG] Checkbox - attempting to select: ${checkboxAnswers.join(', ')}`);
 
-          // New approach: Use Selenium WebDriver's click() instead of JavaScript
           const checkboxData = await ctx.driver.executeScript(`
-            const container = document.querySelector(arguments[0]);
+            ${getContainerScript}
             if (!container) {
               return { success: false, error: 'Container not found' };
             }
@@ -148,7 +156,7 @@ export async function fillQuestionField(
               return { success: false, error: 'No checkboxes found' };
             }
 
-            const answersToSelect = arguments[1];
+            const answersToSelect = arguments[${answerIdx}];
             const checkboxesToClick = [];
 
             for (const answerText of answersToSelect) {
@@ -171,7 +179,7 @@ export async function fillQuestionField(
               success: true,
               checkboxesToClick: checkboxesToClick
             };
-          `, containerSelector, checkboxAnswers);
+          `, ...checkboxArgs);
 
           if (!checkboxData.success) {
             printLog(`❌ Failed to find checkboxes: ${checkboxData.error}`);
@@ -202,8 +210,8 @@ export async function fillQuestionField(
 
           // Verify final state
           const finalState = await ctx.driver.executeScript(`
-            const container = document.querySelector(arguments[0]);
-            const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+            ${getContainerScript}
+            const checkboxes = container ? container.querySelectorAll('input[type="checkbox"]') : [];
             const state = [];
             for (const checkbox of checkboxes) {
               const label = document.querySelector('label[for="' + checkbox.id + '"]');
@@ -213,7 +221,7 @@ export async function fillQuestionField(
               });
             }
             return state;
-          `, containerSelector);
+          `, ...(modalScopeSelector ? [modalScopeSelector, containerSelector] : [containerSelector]));
 
           console.log('[DEBUG] Final checkbox state:', JSON.stringify(finalState, null, 2));
 
@@ -258,7 +266,7 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
 
     printLog("\n📋 Question answering plan:");
     answeredQuestions.forEach((q: any, index: number) => {
-      printLog(`   ${index + 1}. [${q.answerSource}] ${q.question.substring(0, 60)}...`);
+      printLog(`   ${index + 1}. [${q.answerSource}] ${q.question}`);
     });
 
     let successCount = 0;
@@ -269,7 +277,7 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
       const question = answeredQuestions[i];
       try {
         printLog(`[DEBUG] Processing question ${i + 1}: ${JSON.stringify(question, null, 2)}`);
-        printLog(`🎯 Filling Q${i + 1} [${question.answerSource}]: "${question.question.substring(0, 50)}"...`);
+        printLog(`🎯 Filling Q${i + 1} [${question.answerSource}]: "${question.question}"`);
 
         let answer;
         if (question.type === 'select') {
