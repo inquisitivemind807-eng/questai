@@ -19,7 +19,8 @@
     "companyWeight": "0.1",
     "enableDeepSeek": false,
     "deepSeekApiKey": "",
-    "acceptTerms": true
+    "acceptTerms": true,
+    "resumeFileName": "software_engineer.txt"
   },
   "industries": [],
   "workRightOptions": []

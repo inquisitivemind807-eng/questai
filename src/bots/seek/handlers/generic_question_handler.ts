@@ -101,10 +101,11 @@ export function isGenericQuestion(questionText: string): boolean {
     return false;
   }
 
-  return config.questions.some(question =>
-    question.match_keywords.some(keyword =>
-      new RegExp(keyword, 'i').test(questionText)
-    )
+  return config.questions.some((question) =>
+    question.match_keywords
+      .map((keyword) => (keyword || '').trim())
+      .filter(Boolean)
+      .some((keyword) => new RegExp(keyword, 'i').test(questionText))
   );
 }
 
@@ -149,16 +150,19 @@ export function getGenericAnswer(questionText: string, questionType: string, opt
   const config = loadGenericQuestionsConfig();
 
   for (const question of config.questions) {
-    const matches = question.match_keywords.some(keyword =>
-      new RegExp(keyword, 'i').test(questionText)
-    );
+    const validKeywords = question.match_keywords
+      .map((keyword) => (keyword || '').trim())
+      .filter(Boolean);
+    const answerConfig = (question.answer || [])
+      .map((answer) => String(answer ?? '').trim())
+      .filter(Boolean);
+    const matches = validKeywords.some((keyword) => new RegExp(keyword, 'i').test(questionText));
 
-    if (matches) {
+    if (matches && answerConfig.length > 0) {
       printLog(`🎯 Generic answer found for: "${questionText}"`);
-      const answerConfig = question.answer;
 
       // Special handling for salary questions
-      if (question.match_keywords.some(k => k.includes('salary'))) {
+      if (validKeywords.some(k => k.includes('salary'))) {
         const desiredSalary = parseNumericValue(answerConfig[0]);
         if (desiredSalary !== null) {
           let bestOptionIndex = -1;

@@ -5,8 +5,10 @@ import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager'
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
 import { recordJobApplicationToBackend } from '../core/job_application_recorder';
+import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
+import { logger } from '../core/logger';
 import { getIntelligentAnswers } from '../seek/handlers/intelligent_qa_handler';
-import { fillQuestionField } from '../seek/handlers/answer_employer_questions';
+import { fillQuestionFieldDetailed } from '../seek/handlers/answer_employer_questions';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -922,18 +924,23 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     }
 
     // Save to file
-    const jobsDir = path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId);
+    const jobsDir = getJobArtifactDir(ctx, 'linkedin', jobId);
 
     if (!fs.existsSync(jobsDir)) {
       fs.mkdirSync(jobsDir, { recursive: true });
     }
 
     const jobDetailsPath = path.join(jobsDir, 'job_details.json');
+    const clientEmail = getClientEmailFromContext(ctx);
+    if (clientEmail) {
+      jobDetails.clientEmail = clientEmail;
+    }
     fs.writeFileSync(jobDetailsPath, JSON.stringify(jobDetails, null, 2));
 
     printLog(`Saved: ${jobDetails.title} at ${jobDetails.company}`);
     ctx.current_job_details = jobDetails;
     ctx.currentJobFile = jobDetailsPath;
+    ctx.currentJobDir = jobsDir;
 
     yield "job_details_extracted";
   } catch (error) {
@@ -964,10 +971,7 @@ async function generateAICoverLetterLinkedIn(ctx: WorkflowContext): Promise<stri
     ? fs.readFileSync(resumePath, 'utf8')
     : "Experienced software developer";
 
-  const jobDirPath = path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId);
-  if (!fs.existsSync(jobDirPath)) {
-    fs.mkdirSync(jobDirPath, { recursive: true });
-  }
+  const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
 
   const requestBody = {
     job_id: `linkedin_${jobId}`,
@@ -1096,10 +1100,7 @@ async function generateAIResumeLinkedIn(ctx: WorkflowContext): Promise<string> {
     ? fs.readFileSync(baseResumePath, 'utf8')
     : "Experienced software developer with full stack expertise";
 
-  const jobDirPath = path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId);
-  if (!fs.existsSync(jobDirPath)) {
-    fs.mkdirSync(jobDirPath, { recursive: true });
-  }
+  const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
 
   const requestBody = {
     job_id: `linkedin_${jobId}`,
@@ -1339,7 +1340,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
       const answeredQuestions = await getIntelligentAnswers(questions, ctx);
 
       const jobId = (ctx.current_job as any)?.job_id || 'unknown';
-      const jobDirPath = path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId);
+      const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
       const qnaResults: any[] = [];
 
       printLog("--- Questions and answers ---");
@@ -1369,12 +1370,71 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         const source = (q as any).answerSource || "unknown";
         printLog(`Q${i + 1} [${q.type}] ${q.question}`);
         printLog(`    Answer: ${answerDisplay} [${source}]`);
+        logger.debug('linkedin.qa.answer_resolved', 'Resolved LinkedIn answer before filling', {
+          index: i,
+          question: q.question,
+          type: q.type,
+          source,
+          answer,
+          answerDisplay,
+          containerSelector: q.containerSelector,
+          options: q.options || q.opts || []
+        });
 
         if (answer !== null && answer !== undefined) {
           const modalScope = "[data-test-modal-id='easy-apply-modal']";
-          const filled = await fillQuestionField(ctx, q.containerSelector, q.type, answer, modalScope);
-          qnaResults.push({ question: q.question, type: q.type, answer: answer, answerSource: (q as any).answerSource, status: filled ? 'success' : 'failed' });
+          const fillResult = await fillQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, modalScope);
+          const filled = fillResult.success;
+          const options = q.options || q.opts || [];
+          const selected =
+            q.type === 'select' || q.type === 'radio'
+              ? (typeof answer === 'number' ? answer : null)
+              : q.type === 'checkbox'
+                ? (Array.isArray(answer) ? answer : [answer])
+                : null;
+          const resolvedAnswer =
+            typeof answer === 'number' && Array.isArray(options) && options[answer] != null
+              ? String(options[answer])
+              : Array.isArray(answer)
+                ? answer.map((x: unknown) => String(x)).join(', ')
+                : String(answer);
+          qnaResults.push({
+            question: q.question,
+            type: q.type,
+            options,
+            selected,
+            answer: resolvedAnswer,
+            answerSource: (q as any).answerSource,
+            status: filled ? 'success' : 'failed',
+            failureReason: filled ? undefined : fillResult.failureReason,
+            fillError: filled ? undefined : fillResult.error
+          });
           printLog(`    Filled: ${filled ? "yes" : "no"}`);
+          logger[filled ? 'info' : 'warn'](
+            'linkedin.qa.fill_result',
+            filled ? 'LinkedIn question filled successfully' : 'LinkedIn question fill failed',
+            {
+              index: i,
+              question: q.question,
+              type: q.type,
+              containerSelector: q.containerSelector,
+              resolvedAnswer,
+              selected,
+              options,
+              failureReason: fillResult.failureReason,
+              fillError: fillResult.error
+            }
+          );
+        } else {
+          logger.warn('linkedin.qa.answer_skipped', 'Skipping LinkedIn question because answer is empty', {
+            index: i,
+            question: q.question,
+            type: q.type,
+            source,
+            selectedAnswer: q.selectedAnswer,
+            textAnswer: q.textAnswer,
+            options: q.options || q.opts || []
+          });
         }
         await driver.sleep(300);
       }
@@ -1605,7 +1665,7 @@ export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<stri
       fs.writeFileSync(jobIdsPath, JSON.stringify(Array.from(appliedJobIds), null, 2));
 
       const jobId = currentJob.job_id;
-      const jobDirPath = path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId);
+      const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
       const jobFilePath = path.join(jobDirPath, 'job_details.json');
       if (fs.existsSync(jobFilePath)) {
         try {
@@ -1671,13 +1731,8 @@ export async function* externalApply(ctx: WorkflowContext): AsyncGenerator<strin
     }
 
     // Save to JSON file
-    const jobsDir = path.join(process.cwd(), 'jobs/linkedinjobs');
-    if (!fs.existsSync(jobsDir)) {
-      fs.mkdirSync(jobsDir, { recursive: true });
-    }
-
-    const filename = `${currentJob.job_id}.json`;
-    const filepath = path.join(jobsDir, filename);
+    const jobDirPath = getJobArtifactDir(ctx, 'linkedin', currentJob.job_id);
+    const filepath = path.join(jobDirPath, 'job_details.json');
     fs.writeFileSync(filepath, JSON.stringify(jobDetails, null, 2));
 
     ctx.skipped_jobs = (ctx.skipped_jobs || 0) + 1;

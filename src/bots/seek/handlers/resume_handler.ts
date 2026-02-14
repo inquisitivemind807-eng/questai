@@ -4,7 +4,9 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { By } from 'selenium-webdriver';
 import { Document, Paragraph, TextRun, Packer } from 'docx';
+// @ts-ignore - pdfkit types are not installed in this project.
 import PDFDocument from 'pdfkit';
+import { getJobArtifactDir } from '../../core/client_paths';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,11 +15,8 @@ const printLog = (message: string) => {
   console.log(message);
 };
 
-async function createResumeFile(resumeText: string, jobId: string): Promise<string> {
-  const jobDir = path.join(__dirname, '../../jobs', jobId);
-  if (!fs.existsSync(jobDir)) {
-    fs.mkdirSync(jobDir, { recursive: true });
-  }
+async function createResumeFile(ctx: WorkflowContext, resumeText: string, jobId: string): Promise<string> {
+  const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
 
   const txtPath = path.join(jobDir, 'resume.txt');
   const docxPath = path.join(jobDir, 'resume.docx');
@@ -51,7 +50,7 @@ async function createResumeFile(resumeText: string, jobId: string): Promise<stri
   });
   pdfDoc.end();
 
-  await new Promise((resolve) => stream.on('finish', resolve));
+  await new Promise<void>((resolve) => stream.on('finish', () => resolve()));
   printLog(`💾 Created: resume.pdf`);
 
   return txtPath;
@@ -95,10 +94,7 @@ Highlight experience and skills that directly match the job requirements.
 Keep formatting clean and professional. Focus on quantifiable achievements.`
   };
 
-  const jobDir = path.join(__dirname, '../../jobs', jobId);
-  if (!fs.existsSync(jobDir)) {
-    fs.mkdirSync(jobDir, { recursive: true });
-  }
+  const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
 
   fs.writeFileSync(
     path.join(jobDir, 'resume_request.json'),
@@ -138,6 +134,7 @@ export async function* handleResumeSelection(ctx: WorkflowContext): AsyncGenerat
       jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
     }
     const resumeFilePath = await createResumeFile(
+      ctx,
       resumeText,
       jobData.jobId || 'unknown'
     );

@@ -1,23 +1,57 @@
 import type { WorkflowContext } from '../../core/workflow_engine';
 import { isGenericQuestion, getGenericAnswer } from './generic_question_handler';
 import { getIntelligentAnswers, extractQuestionsFromPage } from './intelligent_qa_handler';
+import { getJobArtifactDir } from '../../core/client_paths';
 
 const printLog = (message: string) => {
   console.log(message);
 };
 
+export type FillFailureReason =
+  | 'none'
+  | 'missing_container_selector'
+  | 'container_not_found'
+  | 'option_not_found'
+  | 'element_not_found'
+  | 'element_not_interactable'
+  | 'unsupported_question_type'
+  | 'script_error'
+  | 'unknown_error';
+
+export interface FillQuestionResult {
+  success: boolean;
+  failureReason: FillFailureReason;
+  error?: string;
+}
+
+function mapFailureReason(questionType: string, errorText?: string): FillFailureReason {
+  const msg = (errorText || '').toLowerCase();
+  if (!msg) return 'unknown_error';
+  if (msg.includes('containerselector is missing')) return 'missing_container_selector';
+  if (msg.includes('container not found')) return 'container_not_found';
+  if (msg.includes('option not found') || msg.includes('requested index')) return 'option_not_found';
+  if (msg.includes('no such element') || msg.includes('not found')) return 'element_not_found';
+  if (msg.includes('not interactable') || msg.includes('element click intercepted') || msg.includes('stale element')) {
+    return 'element_not_interactable';
+  }
+  if (msg.includes('unknown question type')) return 'unsupported_question_type';
+  if (msg.includes('javascript error') || msg.includes('execute script')) return 'script_error';
+  if ((questionType === 'select' || questionType === 'radio') && msg.includes('index')) return 'option_not_found';
+  return 'unknown_error';
+}
+
 // Refactored to use the robust containerSelector from the extraction step
 // When modalScopeSelector is set (e.g. LinkedIn Easy Apply), we find the container inside that modal so we don't match elements outside it
-export async function fillQuestionField(
+export async function fillQuestionFieldDetailed(
   ctx: WorkflowContext,
   containerSelector: string, // The robust selector for the question's container
   questionType: string,
   answer: any,
   modalScopeSelector?: string // Optional: scope to this modal (e.g. "[data-test-modal-id='easy-apply-modal']")
-): Promise<boolean> {
+): Promise<FillQuestionResult> {
   if (!containerSelector) {
     printLog('❌ Cannot fill field: containerSelector is missing.');
-    return false;
+    return { success: false, failureReason: 'missing_container_selector', error: 'containerSelector is missing' };
   }
 
   const answerIdx = modalScopeSelector ? 2 : 1;
@@ -67,8 +101,13 @@ export async function fillQuestionField(
 
         if (!selectResult.success) {
           printLog(`Failed to fill select: ${selectResult.error}`);
+          return {
+            success: false,
+            failureReason: mapFailureReason(questionType, String(selectResult.error || '')),
+            error: String(selectResult.error || '')
+          };
         }
-        return selectResult.success;
+        return { success: true, failureReason: 'none' };
 
       case 'radio':
         const radioResult = await ctx.driver.executeScript(`
@@ -88,8 +127,13 @@ export async function fillQuestionField(
 
         if (!radioResult.success) {
           printLog(`Failed to fill radio: ${radioResult.error}`);
+          return {
+            success: false,
+            failureReason: mapFailureReason(questionType, String(radioResult.error || '')),
+            error: String(radioResult.error || '')
+          };
         }
-        return radioResult.success;
+        return { success: true, failureReason: 'none' };
 
       case 'text':
       case 'textarea':
@@ -113,7 +157,7 @@ export async function fillQuestionField(
 
           if (!textElements) {
             printLog(`Failed to find text element in container: ${containerSelector}`);
-            return false;
+            return { success: false, failureReason: 'element_not_found', error: 'Text element not found in container' };
           }
 
           const fullSelector = modalScopeSelector
@@ -133,11 +177,15 @@ export async function fillQuestionField(
           await ctx.driver.sleep(500);
 
           printLog(`✅ Successfully filled text field with: "${answer}"`);
-          return true;
+          return { success: true, failureReason: 'none' };
 
         } catch (error) {
           printLog(`❌ Failed to fill text field: ${error}`);
-          return false;
+          return {
+            success: false,
+            failureReason: mapFailureReason(questionType, String(error)),
+            error: String(error)
+          };
         }
 
       case 'checkbox':
@@ -183,7 +231,11 @@ export async function fillQuestionField(
 
           if (!checkboxData.success) {
             printLog(`❌ Failed to find checkboxes: ${checkboxData.error}`);
-            return false;
+            return {
+              success: false,
+              failureReason: mapFailureReason(questionType, String(checkboxData.error || '')),
+              error: String(checkboxData.error || '')
+            };
           }
 
           // Click each checkbox using Selenium WebDriver
@@ -227,24 +279,43 @@ export async function fillQuestionField(
 
           if (successCount > 0) {
             printLog(`✅ Successfully clicked ${successCount} checkboxes using Selenium`);
-            return true;
+            return { success: true, failureReason: 'none' };
           } else {
             printLog(`❌ Failed to click any checkboxes`);
-            return false;
+            return { success: false, failureReason: 'element_not_interactable', error: 'Failed to click any checkboxes' };
           }
         } catch (error) {
           printLog(`❌ CRASH in checkbox field logic: ${error}`);
-          return false;
+          return {
+            success: false,
+            failureReason: mapFailureReason(questionType, String(error)),
+            error: String(error)
+          };
         }
 
       default:
         printLog(`⚠️ Unknown question type: ${questionType}`);
-        return false;
+        return { success: false, failureReason: 'unsupported_question_type', error: `Unknown question type: ${questionType}` };
     }
   } catch (error) {
     printLog(`❌ Failed to fill question field: ${error}`);
-    return false;
+    return {
+      success: false,
+      failureReason: mapFailureReason(questionType, String(error)),
+      error: String(error)
+    };
   }
+}
+
+export async function fillQuestionField(
+  ctx: WorkflowContext,
+  containerSelector: string,
+  questionType: string,
+  answer: any,
+  modalScopeSelector?: string
+): Promise<boolean> {
+  const result = await fillQuestionFieldDetailed(ctx, containerSelector, questionType, answer, modalScopeSelector);
+  return result.success;
 }
 
 // Enhanced handler that uses unified intelligent Q&A approach
@@ -311,6 +382,19 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
 
         if (answer !== undefined && answer !== null && question.answerSource !== 'No Answer') {
           const filled = await fillQuestionField(ctx, question.containerSelector, question.type, answer);
+          const options = question.options || question.opts || [];
+          const selected =
+            question.type === 'select' || question.type === 'radio'
+              ? (typeof answer === 'number' ? answer : null)
+              : question.type === 'checkbox'
+                ? (Array.isArray(answer) ? answer : [answer])
+                : null;
+          const resolvedAnswer =
+            typeof answer === 'number' && Array.isArray(options) && options[answer] != null
+              ? String(options[answer])
+              : Array.isArray(answer)
+                ? answer.map((x: unknown) => String(x)).join(', ')
+                : String(answer);
 
           if (filled) {
             printLog(`✅ Question ${i + 1} answered successfully`);
@@ -318,7 +402,9 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
             qnaResults.push({
               question: question.question,
               type: question.type,
-              answer: answer,
+              options,
+              selected,
+              answer: resolvedAnswer,
               answerSource: question.answerSource,
               status: 'success'
             });
@@ -328,7 +414,9 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
             qnaResults.push({
               question: question.question,
               type: question.type,
-              answer: answer,
+              options,
+              selected,
+              answer: resolvedAnswer,
               answerSource: question.answerSource,
               status: 'failed'
             });
@@ -364,10 +452,7 @@ export async function* answerEmployerQuestions(ctx: WorkflowContext): AsyncGener
       jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
     }
     const jobId = jobData.jobId || 'unknown';
-    const jobDir = path.join(__dirname, '../../jobs', jobId);
-    if (!fs.existsSync(jobDir)) {
-      fs.mkdirSync(jobDir, { recursive: true });
-    }
+    const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
     fs.writeFileSync(
       path.join(jobDir, 'qna.json'),
       JSON.stringify({ questions: qnaResults, summary: { total: answeredQuestions.length, success: successCount, errors: errorCount } }, null, 2)

@@ -13,6 +13,8 @@
     "test": "vitest",
     "test:run": "vitest run",
     "test:watch": "vitest --watch",
+    "logs:bundle": "node scripts/bundle-logs.mjs",
+    "logs:tail": "node scripts/tail-logs.mjs",
     "tauri": "tauri",
     "tauri:dev": "set -a && . .env && tauri dev"
   },

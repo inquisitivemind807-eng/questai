@@ -5,6 +5,8 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
+import { logger } from './logger.js';
 
 interface ApiConfig {
   baseUrl: string;
@@ -14,6 +16,23 @@ interface JwtTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+}
+
+function summarizeBody(body: any): Record<string, unknown> {
+  if (!body || typeof body !== 'object') return {};
+  const summary: Record<string, unknown> = {};
+  const fields = ['job_id', 'platform', 'platform_job_id', 'job_title', 'company', 'questions_count'];
+  for (const field of fields) {
+    if (body[field] != null) summary[field] = body[field];
+  }
+  if (Array.isArray(body.questions)) summary.questions_count = body.questions.length;
+  if (typeof body.job_details === 'string') summary.job_details_length = body.job_details.length;
+  if (typeof body.resume_text === 'string') summary.resume_text_length = body.resume_text.length;
+  return summary;
+}
+
+function shouldLogFullPayload(endpoint: string): boolean {
+  return endpoint === '/api/questionAndAnswers' || endpoint === '/api/employer-questions/compare';
 }
 
 /**
@@ -35,12 +54,12 @@ async function getSessionToken(): Promise<string | null> {
   if (fs.existsSync(tokenCachePath)) {
     const cachedToken = fs.readFileSync(tokenCachePath, 'utf8').trim();
     if (cachedToken) {
-      console.log('✅ Using shared authentication token for bot process.');
+      logger.auth('debug', 'auth.session_cache_hit', 'Using shared authentication token');
       return cachedToken;
     }
   }
 
-  console.log('ℹ️ No shared authentication token available for bot process.');
+  logger.auth('warn', 'auth.session_cache_miss', 'No shared authentication token available');
   return null;
 }
 
@@ -57,12 +76,12 @@ async function getAccessToken(): Promise<string | null> {
 
       // Check if access token is still valid (with 1 minute buffer)
       if (cached.expiresAt > Date.now() + 60000) {
-        console.log('✅ Using cached JWT access token');
+        logger.auth('debug', 'auth.jwt_cache_hit', 'Using cached JWT access token');
         return cached.accessToken;
       }
 
       // Try to refresh the token
-      console.log('🔄 Access token expired, refreshing...');
+      logger.auth('info', 'auth.jwt_refresh_start', 'Access token expired, refreshing');
       const config = getApiConfig();
       const response = await fetch(`${config.baseUrl}/api/auth/refresh`, {
         method: 'POST',
@@ -78,11 +97,13 @@ async function getAccessToken(): Promise<string | null> {
           expiresAt: Date.now() + (data.expiresIn * 1000)
         };
         fs.writeFileSync(jwtCachePath, JSON.stringify(newTokens, null, 2));
-        console.log('✅ JWT token refreshed successfully');
+        logger.auth('info', 'auth.jwt_refresh_success', 'JWT token refreshed successfully');
         return newTokens.accessToken;
       }
     } catch (error) {
-      console.log('⚠️ Error refreshing JWT, will try session token conversion');
+      logger.auth('warn', 'auth.jwt_refresh_failed', 'Error refreshing JWT, trying session token conversion', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -93,7 +114,7 @@ async function getAccessToken(): Promise<string | null> {
   }
 
   try {
-    console.log('🔄 Converting session token to JWT...');
+    logger.auth('info', 'auth.session_to_jwt_start', 'Converting session token to JWT');
     const config = getApiConfig();
     const response = await fetch(`${config.baseUrl}/api/auth/session-to-jwt`, {
       method: 'POST',
@@ -105,7 +126,10 @@ async function getAccessToken(): Promise<string | null> {
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error(`❌ Session to JWT conversion failed: ${response.status} - ${errorText}`);
+      logger.auth('error', 'auth.session_to_jwt_failed', 'Session to JWT conversion failed', {
+        status: response.status,
+        errorText
+      });
       return null;
     }
 
@@ -123,10 +147,12 @@ async function getAccessToken(): Promise<string | null> {
     }
     fs.writeFileSync(jwtCachePath, JSON.stringify(tokens, null, 2));
 
-    console.log('✅ Session token converted to JWT successfully');
+    logger.auth('info', 'auth.session_to_jwt_success', 'Session token converted to JWT successfully');
     return tokens.accessToken;
   } catch (error) {
-    console.error(`❌ Error converting session to JWT: ${error}`);
+    logger.auth('error', 'auth.session_to_jwt_error', 'Error converting session token to JWT', {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return null;
   }
 }
@@ -152,8 +178,17 @@ export async function apiRequest(
   };
 
   const url = `${config.baseUrl}${endpoint}`;
+  const requestId = randomUUID().slice(0, 12);
+  const startedAt = Date.now();
 
-  console.log(`🔵 API Request: ${method} ${url}`);
+  logger.apiRequest(`${method} ${endpoint}`, {
+    requestId,
+    method,
+    endpoint,
+    url,
+    bodySummary: summarizeBody(body),
+    ...(shouldLogFullPayload(endpoint) ? { requestBody: body } : {})
+  });
 
   const response = await fetch(url, {
     method,
@@ -163,12 +198,23 @@ export async function apiRequest(
 
   if (!response.ok) {
     const errorText = await response.text();
-    console.error(`❌ API Error Response: ${response.status} - ${errorText}`);
+    logger.apiError(`${method} ${endpoint}`, {
+      requestId,
+      status: response.status,
+      durationMs: Date.now() - startedAt,
+      errorText
+    });
     throw new Error(`API request failed: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();
-  console.log(`✅ API Response: Success`);
+  logger.apiResponse(`${method} ${endpoint}`, {
+    requestId,
+    status: response.status,
+    durationMs: Date.now() - startedAt,
+    success: data?.success !== false,
+    ...(shouldLogFullPayload(endpoint) ? { responseBody: data } : {})
+  });
   return data;
 }
 
@@ -186,7 +232,7 @@ export function saveSessionToken(token: string): void {
 
   const tokenCachePath = path.join(cacheDir, 'api_token.txt');
   fs.writeFileSync(tokenCachePath, token, 'utf8');
-  console.log('✅ Session token saved to cache');
+  logger.auth('info', 'auth.session_saved', 'Session token saved to cache');
 }
 
 /**
@@ -196,6 +242,6 @@ export function clearSessionToken(): void {
   const tokenCachePath = path.join(process.cwd(), '.cache', 'api_token.txt');
   if (fs.existsSync(tokenCachePath)) {
     fs.unlinkSync(tokenCachePath);
-    console.log('✅ Session token cleared');
+    logger.auth('info', 'auth.session_cleared', 'Session token cleared');
   }
 }

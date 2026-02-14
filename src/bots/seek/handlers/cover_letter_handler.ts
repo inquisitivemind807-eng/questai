@@ -1,4 +1,5 @@
 import type { WorkflowContext } from '../../core/workflow_engine';
+import { getJobArtifactDir } from '../../core/client_paths';
 
 const printLog = (message: string) => {
   console.log(message);
@@ -45,10 +46,7 @@ Keep it concise (300-400 words) and personalized to ${jobData.company || 'the co
 Focus on demonstrating value and enthusiasm for the role.`
   };
 
-  const jobDir = path.join(__dirname, '../../jobs', jobId);
-  if (!fs.existsSync(jobDir)) {
-    fs.mkdirSync(jobDir, { recursive: true });
-  }
+  const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
 
   fs.writeFileSync(
     path.join(jobDir, 'cover_letter_request.json'),

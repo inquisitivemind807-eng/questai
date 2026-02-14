@@ -1,6 +1,7 @@
 import { bot_registry, BotRegistry } from './core/registry.js';
 import { WorkflowEngine, type WorkflowContext } from './core/workflow_engine.js';
 import { killAllChromeProcesses } from './core/browser_manager.js';
+import { logger } from './core/logger.js';
 import * as path from 'path';
 
 // Ensure stdout is not buffered for real-time event streaming
@@ -31,15 +32,22 @@ export class BotStarter {
   // Main entry point - like Python's bot_runner.py
   async run_bot(options: BotRunOptions): Promise<void> {
     const { bot_name, config, headless = false, keep_open = true } = options;
+    const sessionId = logger.createSessionId(bot_name);
+    logger.setContext({ sessionId, botName: bot_name });
 
     // Setup emergency cleanup handler
     const emergencyCleanup = async (signal: string) => {
       print_log(`\n⚠️ Received ${signal} - performing emergency cleanup...`);
+      logger.error('bot.emergency_cleanup', 'Emergency cleanup triggered', { signal });
       try {
         await killAllChromeProcesses();
         print_log("✅ Emergency cleanup completed");
+        logger.info('bot.emergency_cleanup_done', 'Emergency cleanup completed');
       } catch (error) {
         print_log(`❌ Emergency cleanup failed: ${error}`);
+        logger.error('bot.emergency_cleanup_failed', 'Emergency cleanup failed', {
+          error: error instanceof Error ? error.message : String(error)
+        });
       }
       process.exit(1);
     };
@@ -51,16 +59,24 @@ export class BotStarter {
     // Handle uncaught errors
     process.on('uncaughtException', async (error) => {
       print_log(`❌ Uncaught exception: ${error}`);
+      logger.error('bot.uncaught_exception', 'Uncaught exception', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       await emergencyCleanup('uncaughtException');
     });
 
     process.on('unhandledRejection', async (reason) => {
       print_log(`❌ Unhandled rejection: ${reason}`);
+      logger.error('bot.unhandled_rejection', 'Unhandled promise rejection', {
+        reason: String(reason)
+      });
       await emergencyCleanup('unhandledRejection');
     });
 
     try {
       print_log(`🚀 Starting bot runner for: ${bot_name}`);
+      logger.info('bot.start', 'Bot runner started', { bot_name, headless, keep_open });
 
       // 1. Discover and validate bot
       this.registry.discover_bots();
@@ -75,17 +91,20 @@ export class BotStarter {
       }
 
       print_log(`✅ Bot validated: ${bot_info.display_name}`);
+      logger.info('bot.validated', 'Bot validated', { displayName: bot_info.display_name });
 
       // 2. Load bot configuration and selectors
       const bot_config = this.registry.load_bot_config(bot_name);
       const bot_selectors = this.registry.load_bot_selectors(bot_name);
 
       print_log(`⚙️ Configuration and selectors loaded for ${bot_name}`);
+      logger.info('bot.config_loaded', 'Bot configuration and selectors loaded');
 
       // 3. Load bot implementation
       const bot_impl = await this.load_bot_implementation(bot_info.impl_path);
 
       print_log(`🔧 Implementation loaded for ${bot_name}`);
+      logger.info('bot.impl_loaded', 'Bot implementation loaded', { implPath: bot_info.impl_path });
 
       // 4. Create workflow engine with bot's YAML
       const workflow_engine = new WorkflowEngine(bot_info.yaml_path);
@@ -101,6 +120,7 @@ export class BotStarter {
       workflow_engine.setContext('config', initial_context.config);
       workflow_engine.setContext('selectors', initial_context.selectors);
       workflow_engine.setContext('bot_name', bot_name);
+      workflow_engine.setContext('sessionId', sessionId);
 
       await workflow_engine.run();
 
@@ -109,9 +129,14 @@ export class BotStarter {
       await this.handle_post_execution(final_context, keep_open);
 
       print_log(`✅ Bot '${bot_name}' execution completed successfully`);
+      logger.info('bot.completed', 'Bot execution completed successfully');
 
     } catch (error) {
       print_log(`❌ Bot '${bot_name}' execution failed: ${error}`);
+      logger.error('bot.failed', 'Bot execution failed', {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      });
       throw error;
     }
   }

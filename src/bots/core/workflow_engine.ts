@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { UniversalOverlay } from './universal_overlay';
+import { logger } from './logger.js';
 
 export interface WorkflowStep {
   step: number;
@@ -105,6 +106,15 @@ export class WorkflowEngine {
         this.executeGenerator(generator),
         timeoutPromise
       ]);
+      logger.debug('workflow.step_result', 'Step executed', {
+        stepName,
+        stepNumber: stepConfig.step,
+        func: stepConfig.func,
+        result
+      }, {
+        sessionId: this.context.sessionId,
+        botName: this.context.bot_name
+      });
 
       // Use bot's overlay if available, otherwise create fallback
       const activeOverlay = this.context.overlay || this.overlay;
@@ -157,6 +167,14 @@ export class WorkflowEngine {
       return result;
     } catch (error) {
       console.error(`[Workflow] Error in step '${stepName}':`, error);
+      logger.error('workflow.step_error', 'Workflow step execution failed', {
+        stepName,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined
+      }, {
+        sessionId: this.context.sessionId,
+        botName: this.context.bot_name
+      });
       throw error;
     }
   }
@@ -168,6 +186,14 @@ export class WorkflowEngine {
 
   async run(): Promise<void> {
     console.log(`🤖 ${this.config.workflow_meta.title}`);
+    logger.info('workflow.start', 'Workflow started', {
+      title: this.config.workflow_meta.title,
+      description: this.config.workflow_meta.description,
+      startStep: this.currentStep
+    }, {
+      sessionId: this.context.sessionId,
+      botName: this.context.bot_name
+    });
 
 
     // Initialize fallback overlay if no bot overlay and driver is available
@@ -210,9 +236,24 @@ export class WorkflowEngine {
       const stepConfig = this.config.steps_config[currentStepName];
 
       if (stepConfig.transitions[event]) {
+        logger.info('workflow.transition', 'Workflow transition', {
+          fromStep: currentStepName,
+          event,
+          toStep: stepConfig.transitions[event]
+        }, {
+          sessionId: this.context.sessionId,
+          botName: this.context.bot_name
+        });
         currentStepName = stepConfig.transitions[event];
       } else {
         console.warn(`❌ No transition found for event '${event}' in step '${currentStepName}'`);
+        logger.warn('workflow.transition_missing', 'No transition found for event', {
+          step: currentStepName,
+          event
+        }, {
+          sessionId: this.context.sessionId,
+          botName: this.context.bot_name
+        });
         break;
       }
 
@@ -222,6 +263,13 @@ export class WorkflowEngine {
 
     if (stepCount >= maxSteps) {
       console.warn('❌ Maximum step count reached, stopping workflow');
+      logger.warn('workflow.max_steps_reached', 'Maximum step count reached', {
+        maxSteps,
+        stepCount
+      }, {
+        sessionId: this.context.sessionId,
+        botName: this.context.bot_name
+      });
     }
 
     // Update overlay with completion status (prefer bot's overlay)
@@ -249,6 +297,12 @@ export class WorkflowEngine {
     }
 
     console.log('✅ Workflow completed');
+    logger.info('workflow.completed', 'Workflow completed', {
+      totalSteps: stepCount
+    }, {
+      sessionId: this.context.sessionId,
+      botName: this.context.bot_name
+    });
 
     // Emit workflow completion event
     this.emitProgress({

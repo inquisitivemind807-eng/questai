@@ -9,6 +9,7 @@ import { handleCoverLetter } from './handlers/cover_letter_handler';
 import { answerEmployerQuestions as handleEmployerQuestions } from './handlers/answer_employer_questions';
 import { extractEmployerQuestions } from './handlers/extract_employer_questions';
 import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
+import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -715,27 +716,24 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
       ctx.currentJobTitle = jobData.title || '';
       ctx.currentJobCompany = jobData.company || '';
 
-      // Save job data to file in src/bots/jobs/
-      const jobsDir = path.join(__dirname, '..', 'jobs');
-      if (!fs.existsSync(jobsDir)) {
-        fs.mkdirSync(jobsDir, { recursive: true });
-      }
-
-      // Create filename using company and jobId
-      const company = (jobData.company || 'unknown').replace(/[^a-zA-Z0-9]/g, '_').toLowerCase();
       const jobId = jobData.jobId || Date.now().toString();
-      const filename = `${company}_${jobId}.json`;
-      const filepath = path.join(jobsDir, filename);
+      const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
+      const filepath = path.join(jobDir, 'job_details.json');
+      const clientEmail = getClientEmailFromContext(ctx);
+      if (clientEmail) {
+        jobData.clientEmail = clientEmail;
+      }
 
       fs.writeFileSync(filepath, JSON.stringify(jobData, null, 2));
 
       // Store current job file path in context for employer questions step
       ctx.currentJobFile = filepath;
+      ctx.currentJobDir = jobDir;
 
       printLog(`\n═══════════════════════════════════════════════════════════════`);
       printLog(`🎯 APPLYING TO: ${ctx.currentJobTitle} | ${ctx.currentJobCompany}`);
       printLog(`═══════════════════════════════════════════════════════════════\n`);
-      printLog(`Quick Apply job saved: ${jobData.title} at ${jobData.company} (${filename})`);
+      printLog(`Quick Apply job saved: ${jobData.title} at ${jobData.company} (${filepath})`);
 
       // Update progress counter and overlay
       if (ctx.overlay && ctx.total_jobs) {

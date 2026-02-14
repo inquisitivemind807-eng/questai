@@ -1,0 +1,11 @@
+streamlit
+chromadb
+openai
+python-docx
+pdfplumber
+pydantic
+tqdm
+python-dotenv
+httpx
+fastapi
+uvicorn[standard] 

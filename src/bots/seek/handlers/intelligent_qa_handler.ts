@@ -2,6 +2,8 @@ import type { WorkflowContext } from '../../core/workflow_engine';
 import { isGenericQuestion, getGenericAnswer } from './generic_question_handler';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
+import { logger } from '../../core/logger';
 
 /**
  * Parse API response text like "**Question 1:**\nAnswer one\n\n**Question 2:**\nAnswer two"
@@ -9,11 +11,13 @@ import * as path from 'path';
  */
 function parseQuestionAnswersFromText(text: string): string[] {
   const out: string[] = [];
-  const re = /\*\*Question\s*(\d+)\s*\*\*\s*[:\s]*([\s\S]*?)(?=\*\*Question\s*\d+\s*\*\*|$)/gi;
+  const re = /\*\*Question\s*(\d+)\s*:?\s*([^*]*)\*\*\s*([\s\S]*?)(?=\n?\s*\*\*Question\s*\d+\s*:?\s*[^*]*\*\*|$)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
-    const answer = (m[2] || '').trim();
-    if (answer && !answer.startsWith('Based on the provided resume')) {
+    let answer = (m[3] || '').trim();
+    answer = answer.replace(/^\*\*Answer\*\*\s*:?\s*/i, '').trim();
+    answer = answer.replace(/^Answer\s*:?\s*/i, '').trim();
+    if (answer && !/^Based on the provided resume/i.test(answer)) {
       out.push(answer);
     }
   }
@@ -26,6 +30,92 @@ function parseQuestionAnswersFromText(text: string): string[] {
   return [];
 }
 
+function normalizeForMatch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function mapTextToOptionIndex(answerText: string, options: string[]): number | null {
+  if (!answerText || !Array.isArray(options) || options.length === 0) return null;
+  const normalizedAnswer = normalizeForMatch(answerText);
+
+  // Remove common placeholder options while keeping original indices.
+  const candidateOptions = options
+    .map((opt, idx) => ({ idx, opt, normalized: normalizeForMatch(opt) }))
+    .filter(({ normalized }) => normalized && !/^(select an option|select|please select|choose)$/.test(normalized));
+
+  // Exact option text match.
+  const exact = candidateOptions.find(({ normalized }) => normalized === normalizedAnswer);
+  if (exact) return exact.idx;
+
+  // If answer includes one option phrase.
+  const included = candidateOptions.find(({ normalized }) => normalizedAnswer.includes(normalized));
+  if (included) return included.idx;
+
+  // Simple yes/no fallback for binary options.
+  const yesNo = candidateOptions.find(({ normalized }) => normalized === 'yes' || normalized === 'no');
+  if (yesNo) {
+    if (/\byes\b/i.test(answerText)) {
+      const yes = candidateOptions.find(({ normalized }) => normalized === 'yes');
+      if (yes) return yes.idx;
+    }
+    if (/\bno\b/i.test(answerText)) {
+      const no = candidateOptions.find(({ normalized }) => normalized === 'no');
+      if (no) return no.idx;
+    }
+  }
+
+  return null;
+}
+
+function parseAnswerArrayFromText(aiResponse: string): unknown[] {
+  if (!aiResponse || typeof aiResponse !== 'string') return [];
+  const cleanResponse = aiResponse.trim();
+  const startIndex = cleanResponse.indexOf('[');
+  if (startIndex === -1) return [];
+
+  let bracketCount = 0;
+  let endIndex = -1;
+  for (let i = startIndex; i < cleanResponse.length; i++) {
+    if (cleanResponse[i] === '[') bracketCount++;
+    if (cleanResponse[i] === ']') bracketCount--;
+    if (bracketCount === 0) {
+      endIndex = i;
+      break;
+    }
+  }
+  if (endIndex === -1) return [];
+
+  try {
+    const jsonString = cleanResponse.substring(startIndex, endIndex + 1);
+    const parsed = JSON.parse(jsonString);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function getEmployerQuestionsComparePrompt(): string {
+  return `For each of these employer questions, analyze the question and my resume/background, then return ONLY a JSON array with the recommended responses.
+
+Response Format:
+- For "select" questions: single number (e.g., 2)
+- For "checkbox" questions: array of numbers (e.g., [0,3,7])
+- For "text" questions: concise string answer
+
+Example: If Q1 is select (recommend option 3), Q2 is checkbox (recommend options 1,4), Q3 is text:
+Return: [3, [1,4], "Your concise answer"]
+
+Rules:
+- Return ONLY the array, no explanations or text
+- Use 0-based indexing (first option = 0, second = 1, etc.)
+- Array length must match number of questions
+- Select questions = single number, checkbox questions = array of numbers, text questions = string
+- Consider my actual experience and background from resume
+- Choose answers that are truthful and aligned with the job
+
+Questions: [Questions List]`;
+}
+
 /**
  * Unified intelligent question answering function
  * Used by both main flow and test flow
@@ -36,7 +126,7 @@ function parseQuestionAnswersFromText(text: string): string[] {
  * 3. Fallback to default answers if all else fails
  */
 export async function getIntelligentAnswers(questions: any[], ctx: WorkflowContext): Promise<any[]> {
-  const answeredQuestions = [];
+  const answeredQuestions: any[] = [];
   const aiQuestions = [];
   const genericAnsweredIndices = new Set();
 
@@ -105,47 +195,70 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
 
       const jobId = jobData.job_id || jobData.jobId || 'unknown';
       const platform = (ctx as any).platform || (ctx.currentJobFile && ctx.currentJobFile.includes('linkedinjobs') ? 'linkedin' : 'seek');
+      const clientEmail = getClientEmailFromContext(ctx) || '';
 
       const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
       const resumeText = fs.existsSync(resumePath)
         ? fs.readFileSync(resumePath, 'utf8')
         : "Experienced software developer";
 
-      const requestBody = {
+      const compareRequestBody = {
+        userId: clientEmail || (ctx as any)?.config?.formData?.email || 'unknown@local',
+        prompt: getEmployerQuestionsComparePrompt(),
+        questions: aiQuestions.map((q: { q: string; opts: string[] }, idx: number) => ({
+          q: q.q,
+          type: answeredQuestions.filter((x) => x.answerSource === 'unknown')[idx]?.type || 'select',
+          options: q.opts || []
+        })),
+        details: jobData.details || jobData.description || `${jobData.title || ''} at ${jobData.company || ''}`,
+        stream: false,
+        useRag: true,
+        jobId: `${platform}_${jobId}`
+      };
+
+      const fallbackRequestBody = {
         job_id: `${platform}_${jobId}`,
         questions: aiQuestions,
         resume_text: resumeText,
         useAi: "deepseek-chat",
-        job_details: jobData.details || jobData.description || `${jobData.title || ''} at ${jobData.company || ''}`,
-
+        job_details: compareRequestBody.details,
         platform,
         platform_job_id: jobId,
         job_title: jobData.title || '',
         company: jobData.company || '',
-
-        prompt: `Answer these employer screening questions professionally and honestly based on the provided resume.
-For multiple choice questions, select the most appropriate option that matches the candidate's experience.
-For text questions, provide clear, concise answers (1-2 sentences).
-Be truthful - if the candidate doesn't have a specific qualification, indicate that politely while highlighting related experience.`
+        prompt: compareRequestBody.prompt
       };
 
-      const jobDir = platform === 'linkedin'
-        ? path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId)
-        : path.join(__dirname, '../../jobs', jobId);
-      if (!fs.existsSync(jobDir)) {
-        fs.mkdirSync(jobDir, { recursive: true });
-      }
+      const jobDir = getJobArtifactDir(ctx, platform === 'linkedin' ? 'linkedin' : 'seek', jobId);
 
       fs.writeFileSync(
         path.join(jobDir, 'qna_request.json'),
-        JSON.stringify(requestBody, null, 2)
+        JSON.stringify({
+          primaryEndpoint: '/api/employer-questions/compare',
+          primaryRequest: compareRequestBody,
+          fallbackEndpoint: '/api/questionAndAnswers',
+          fallbackRequest: fallbackRequestBody
+        }, null, 2)
       );
 
-      console.log(`📋 Question answers API request (POST /api/questionAndAnswers):\n${JSON.stringify(requestBody, null, 2)}`);
+      console.log(`📋 Q&A API request (POST /api/employer-questions/compare):\n${JSON.stringify(compareRequestBody, null, 2)}`);
 
       // Use apiRequest helper for authenticated calls
       const { apiRequest } = await import('../../core/api_client');
-      const data = await apiRequest('/api/questionAndAnswers', 'POST', requestBody);
+      let data: any;
+      let answerPayload: unknown;
+      try {
+        data = await apiRequest('/api/employer-questions/compare', 'POST', compareRequestBody);
+        const results = Array.isArray(data?.results) ? data.results : [];
+        const firstSuccessful = results.find((r: any) => r && !r.error && typeof r.text === 'string');
+        answerPayload = firstSuccessful?.text ?? '';
+      } catch (compareError) {
+        logger.warn('qa.compare_api_failed', 'Primary compare API failed, using questionAndAnswers fallback', {
+          error: compareError instanceof Error ? compareError.message : String(compareError)
+        });
+        data = await apiRequest('/api/questionAndAnswers', 'POST', fallbackRequestBody);
+        answerPayload = data?.answers;
+      }
 
       fs.writeFileSync(
         path.join(jobDir, 'qna_response.json'),
@@ -155,26 +268,28 @@ Be truthful - if the candidate doesn't have a specific qualification, indicate t
       console.log(`✅ AI answers received for ${aiQuestions.length} questions`);
       console.log(`📋 Question answers API response (full):\n${JSON.stringify(data, null, 2)}`);
 
-      // Log answers field explicitly for readability
-      if (data.answers != null) {
-        const rawStr = Array.isArray(data.answers)
-          ? JSON.stringify(data.answers, null, 2)
-          : typeof data.answers === 'string'
-            ? data.answers
-            : String(data.answers);
+      // Log answers payload explicitly for readability
+      if (answerPayload != null) {
+        const rawStr = Array.isArray(answerPayload)
+          ? JSON.stringify(answerPayload, null, 2)
+          : typeof answerPayload === 'string'
+            ? answerPayload
+            : String(answerPayload);
         console.log(`📋 Question answers API response (data.answers):\n${rawStr}`);
       }
 
       // Only set textAnswer when we have a real answer; otherwise leave field empty
-      if (data.answers) {
-        const raw = data.answers;
-        const perQuestion: string[] = Array.isArray(raw)
+      if (answerPayload) {
+        const raw = answerPayload;
+        const parsedArray = Array.isArray(raw)
           ? raw
-          : parseQuestionAnswersFromText(typeof raw === 'string' ? raw : String(raw));
+          : parseAnswerArrayFromText(typeof raw === 'string' ? raw : String(raw));
+        const fallbackTextAnswers = parseQuestionAnswersFromText(typeof raw === 'string' ? raw : String(raw));
 
-        if (perQuestion.length > 0) {
-          console.log(`📋 Parsed ${perQuestion.length} answer(s) from API:`);
-          perQuestion.forEach((ans, idx) => {
+        if (parsedArray.length > 0 || fallbackTextAnswers.length > 0) {
+          const debugAnswers = parsedArray.length > 0 ? parsedArray : fallbackTextAnswers;
+          console.log(`📋 Parsed ${debugAnswers.length} answer(s) from API:`);
+          debugAnswers.forEach((ans, idx) => {
             console.log(`   [${idx + 1}] ${ans}`);
           });
         }
@@ -183,9 +298,70 @@ Be truthful - if the candidate doesn't have a specific qualification, indicate t
         for (let i = 0; i < answeredQuestions.length; i++) {
           if (answeredQuestions[i].answerSource === 'unknown') {
             answeredQuestions[i].answerSource = 'AI API';
-            const value = perQuestion[aiAnswerIndex];
-            if (value != null && value.trim() !== '') {
-              answeredQuestions[i].textAnswer = value.trim();
+            const structuredValue = parsedArray[aiAnswerIndex];
+            const fallbackValue = fallbackTextAnswers[aiAnswerIndex];
+            const value = structuredValue != null ? structuredValue : fallbackValue;
+            if (value != null && String(value).trim() !== '') {
+              const normalizedValue = String(value).trim();
+              if (answeredQuestions[i].type === 'select' || answeredQuestions[i].type === 'radio') {
+                const indexCandidate = typeof value === 'number' ? value : mapTextToOptionIndex(normalizedValue, answeredQuestions[i].options || []);
+                if (indexCandidate != null) {
+                  answeredQuestions[i].selectedAnswer = indexCandidate;
+                  logger.debug('qa.answer_mapped_option', 'Mapped AI answer to option index', {
+                    question: answeredQuestions[i].question,
+                    type: answeredQuestions[i].type,
+                    rawAnswer: normalizedValue,
+                    mappedIndex: indexCandidate,
+                    mappedOption: (answeredQuestions[i].options || [])[indexCandidate]
+                  });
+                } else {
+                  // Keep text for debugging if we fail to map.
+                  answeredQuestions[i].textAnswer = normalizedValue;
+                  logger.warn('qa.answer_map_failed', 'Could not map AI answer to available options', {
+                    question: answeredQuestions[i].question,
+                    type: answeredQuestions[i].type,
+                    rawAnswer: normalizedValue,
+                    options: answeredQuestions[i].options || []
+                  });
+                }
+              } else if (answeredQuestions[i].type === 'checkbox') {
+                const options = answeredQuestions[i].options || [];
+                if (Array.isArray(value)) {
+                  const mappedValues = value
+                    .map((item) => {
+                      if (typeof item === 'number') return options[item];
+                      if (typeof item === 'string') {
+                        const mapped = mapTextToOptionIndex(item, options);
+                        if (mapped != null) return options[mapped];
+                        return item;
+                      }
+                      return null;
+                    })
+                    .filter(Boolean);
+                  answeredQuestions[i].selectedAnswer = mappedValues;
+                } else {
+                  const rawParts = normalizedValue.split(/,|\n|;|\band\b/gi).map((x) => x.trim()).filter(Boolean);
+                  const mappedValues = rawParts
+                    .map((part) => {
+                      const mapped = mapTextToOptionIndex(part, options);
+                      if (mapped != null) return options[mapped];
+                      return null;
+                    })
+                    .filter(Boolean);
+                  answeredQuestions[i].selectedAnswer = mappedValues.length > 0 ? mappedValues : rawParts;
+                }
+                logger.debug('qa.answer_mapped_checkbox', 'Mapped AI answer for checkbox question', {
+                  question: answeredQuestions[i].question,
+                  rawAnswer: normalizedValue,
+                  selectedAnswer: answeredQuestions[i].selectedAnswer
+                });
+              } else {
+                answeredQuestions[i].textAnswer = normalizedValue;
+                logger.debug('qa.answer_mapped_text', 'Using AI text answer', {
+                  question: answeredQuestions[i].question,
+                  rawAnswer: normalizedValue
+                });
+              }
             }
             // else: leave textAnswer null so the field is not filled
             aiAnswerIndex++;

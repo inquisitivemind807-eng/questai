@@ -1,5 +1,11 @@
 # Job Analytics Feature – Plan & Design (MongoDB + corpus-rag)
 
+> Operational docs for ongoing implementation and research now live in `docs/job-analytics/`:
+> - `README.md`
+> - `data-contract.md`
+> - `flow-seek-linkedin.md`
+> - `operations.md`
+
 ## Principles
 
 - **Loosely coupled:** finalboss only calls corpus-rag REST APIs; no shared DB or schema. corpus-rag owns MongoDB and the Job model.

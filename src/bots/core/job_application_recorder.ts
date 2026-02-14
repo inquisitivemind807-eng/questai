@@ -5,6 +5,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { apiRequest } from './api_client.js';
+import { logger } from './logger.js';
 
 /** One API call token record for job-applications payload. */
 export interface ApiCallTokenRecord {
@@ -39,10 +40,16 @@ export interface JobApplicationPayload {
   application: {
     coverLetter?: string;
     tailoredResume?: string;
-    questionAnswers?: Array<{ question: string; answer: string }>;
+    questionAnswers?: Array<{
+      question: string;
+      answer: string;
+      type?: string;
+      options?: string[];
+      selected?: number | string | string[] | null;
+    }>;
     apiCalls?: ApiCallTokenRecord[];
   };
-  source?: { jobFile?: string; jobDir?: string };
+  source?: { jobFile?: string; jobDir?: string; clientFolder?: string };
 }
 
 export interface RecordJobApplicationInput {
@@ -55,47 +62,170 @@ export interface RecordJobApplicationInput {
 }
 
 const printLog = (msg: string) => console.log(msg);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function readJsonFile(filePath: string): any | null {
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function getCandidateJobDirs(primaryDir: string, platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string[] {
+  const dirs = [primaryDir];
+  if (platform === 'linkedin') {
+    dirs.push(path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId));
+  } else if (platform === 'seek') {
+    dirs.push(path.join(process.cwd(), 'src', 'bots', 'jobs', jobId));
+  }
+  return Array.from(new Set(dirs));
+}
+
+function readJsonFromDirs(jobDirs: string[], filename: string): any | null {
+  for (const dir of jobDirs) {
+    const p = path.join(dir, filename);
+    const data = readJsonFile(p);
+    if (data != null) return data;
+  }
+  return null;
+}
 
 /**
  * Read cover letter text from jobDir/cover_letter_response.json.
  */
-function readCoverLetter(jobDirPath: string): string | undefined {
-  const p = path.join(jobDirPath, 'cover_letter_response.json');
-  if (!fs.existsSync(p)) return undefined;
-  try {
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    return data.cover_letter ?? data.coverLetter;
-  } catch {
-    return undefined;
-  }
+function readCoverLetter(jobDirs: string[]): string | undefined {
+  const data = readJsonFromDirs(jobDirs, 'cover_letter_response.json');
+  if (!data || typeof data !== 'object') return undefined;
+  const content = data.cover_letter ?? data.coverLetter;
+  return typeof content === 'string' && content.trim() ? content.trim() : undefined;
 }
 
 /**
- * Read Q&A from jobDir/qna.json. Normalize to { question, answer }[].
+ * Parse markdown-ish Q&A block from qna_response.answers:
+ * "**Question 1:** ... **Answer:** ...".
  */
-function readQuestionAnswers(jobDirPath: string): Array<{ question: string; answer: string }> {
-  const p = path.join(jobDirPath, 'qna.json');
-  if (!fs.existsSync(p)) return [];
-  try {
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const list = data.questions ?? data.questionAnswers ?? [];
-    return list.map((q: any) => ({
-      question: typeof q === 'string' ? q : (q.question ?? q.q ?? ''),
-      answer: typeof q === 'string' ? '' : (q.answer ?? q.a ?? '')
-    })).filter((x: { question: string; answer: string }) => x.question || x.answer);
-  } catch {
-    return [];
+function parseAnswersTextBlock(raw: string): string[] {
+  const answers: string[] = [];
+  const blockRegex = /\*\*Question\s*\d+\s*:\*\*[\s\S]*?(?:\*\*Answer:\*\*|Answer:)\s*([\s\S]*?)(?=\n\s*\*\*Question\s*\d+\s*:\*\*|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = blockRegex.exec(raw)) !== null) {
+    const answer = (match[1] || '').trim();
+    if (answer) answers.push(answer);
   }
+  if (answers.length > 0) return answers;
+  const fallback = raw.trim();
+  return fallback ? [fallback] : [];
+}
+
+function normalizeQuestionAnswer(item: any): {
+  question: string;
+  answer: string;
+  type?: string;
+  options?: string[];
+  selected?: number | string | string[] | null;
+} | null {
+  const question = typeof item?.question === 'string'
+    ? item.question
+    : typeof item?.q === 'string'
+      ? item.q
+      : '';
+
+  let answerValue: unknown = item?.answer ?? item?.a ?? item?.textAnswer ?? item?.selectedAnswer;
+  if (typeof answerValue === 'number' && Array.isArray(item?.opts) && item.opts[answerValue]) {
+    answerValue = item.opts[answerValue];
+  }
+  if (typeof answerValue === 'number' && Array.isArray(item?.options) && item.options[answerValue]) {
+    answerValue = item.options[answerValue];
+  }
+  if (Array.isArray(answerValue)) {
+    answerValue = answerValue.map((x) => String(x)).join(', ');
+  }
+  const answer = typeof answerValue === 'string' ? answerValue.trim() : '';
+
+  const options = Array.isArray(item?.options)
+    ? item.options.map((x: unknown) => String(x))
+    : Array.isArray(item?.opts)
+      ? item.opts.map((x: unknown) => String(x))
+      : undefined;
+
+  const selected = item?.selected ?? null;
+  const type = typeof item?.type === 'string' ? item.type : undefined;
+
+  if (!question && !answer) return null;
+  return { question: question.trim(), answer, ...(type ? { type } : {}), ...(options ? { options } : {}), selected };
 }
 
 /**
- * Prefer resume path (txt or docx) for audit; backend can store path or later upload.
+ * Read Q&A from qna.json first, fallback to qna_response.json + qna_request.json mapping.
  */
-function readResumeRef(jobDirPath: string): string | undefined {
-  const txt = path.join(jobDirPath, 'resume.txt');
-  if (fs.existsSync(txt)) return txt;
-  const docx = path.join(jobDirPath, 'resume.docx');
-  if (fs.existsSync(docx)) return docx;
+function readQuestionAnswers(jobDirs: string[]): Array<{
+  question: string;
+  answer: string;
+  type?: string;
+  options?: string[];
+  selected?: number | string | string[] | null;
+}> {
+  const primary = readJsonFromDirs(jobDirs, 'qna.json');
+  const primaryList = (primary?.questions ?? primary?.questionAnswers ?? []) as any[];
+  const normalizedPrimary = primaryList
+    .map(normalizeQuestionAnswer)
+    .filter((x): x is { question: string; answer: string } => Boolean(x));
+  if (normalizedPrimary.length > 0) return normalizedPrimary;
+
+  const response = readJsonFromDirs(jobDirs, 'qna_response.json');
+  const request = readJsonFromDirs(jobDirs, 'qna_request.json');
+  const rawAnswers = response?.answers;
+  if (!rawAnswers) return [];
+
+  const answerList = Array.isArray(rawAnswers)
+    ? rawAnswers.map((x) => String(x).trim()).filter(Boolean)
+    : parseAnswersTextBlock(String(rawAnswers));
+
+  if (answerList.length === 0) return [];
+
+  const requestQuestions: string[] = Array.isArray(request?.questions)
+    ? request.questions.map((q: any) => (typeof q?.q === 'string' ? q.q : typeof q?.question === 'string' ? q.question : '')).filter(Boolean)
+    : [];
+
+  return answerList.map((answer, index) => ({
+    question: requestQuestions[index] || `Question ${index + 1}`,
+    answer,
+    type: 'text',
+    options: [],
+    selected: null
+  }));
+}
+
+/**
+ * Prefer resume text over path reference for analytics readability.
+ */
+function readTailoredResume(jobDirs: string[]): string | undefined {
+  const response = readJsonFromDirs(jobDirs, 'resume_response.json');
+  if (response && typeof response === 'object') {
+    const fromApi = response.resume ?? response.generatedText ?? response.tailoredResume;
+    if (typeof fromApi === 'string' && fromApi.trim()) {
+      return fromApi.trim();
+    }
+  }
+  for (const dir of jobDirs) {
+    const txt = path.join(dir, 'resume.txt');
+    if (fs.existsSync(txt)) {
+      try {
+        const content = fs.readFileSync(txt, 'utf8');
+        if (content.trim()) return content.trim();
+      } catch {
+        // Fall through to path reference fallback.
+      }
+    }
+  }
+  for (const dir of jobDirs) {
+    const docx = path.join(dir, 'resume.docx');
+    if (fs.existsSync(docx)) return docx;
+    const pdf = path.join(dir, 'resume.pdf');
+    if (fs.existsSync(pdf)) return pdf;
+  }
   return undefined;
 }
 
@@ -103,43 +233,38 @@ function readResumeRef(jobDirPath: string): string | undefined {
  * Read token usage from a response JSON file (cover_letter_response, qna_response, resume_response).
  */
 function readTokenUsage(
-  jobDirPath: string,
+  jobDirs: string[],
   filename: string,
   endpoint: string
 ): ApiCallTokenRecord | null {
-  const p = path.join(jobDirPath, filename);
-  if (!fs.existsSync(p)) return null;
-  try {
-    const data = JSON.parse(fs.readFileSync(p, 'utf8'));
-    const tokensUsed = data.actualTokensUsed ?? data.tokensUsed;
-    const inputTokens = data.inputTokens;
-    const outputTokens = data.outputTokens;
-    if (tokensUsed == null && inputTokens == null && outputTokens == null) return null;
-    return {
-      endpoint,
-      timestamp: data.timestamp ?? new Date().toISOString(),
-      aiProvider: data.aiProvider ?? 'unknown',
-      tokensUsed: typeof tokensUsed === 'number' ? tokensUsed : undefined,
-      inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
-      outputTokens: typeof outputTokens === 'number' ? outputTokens : undefined,
-      cost: typeof data.cost === 'number' ? data.cost : undefined,
-      processingTime: typeof data.processingTime === 'number' ? data.processingTime : undefined
-    };
-  } catch {
-    return null;
-  }
+  const data = readJsonFromDirs(jobDirs, filename);
+  if (!data || typeof data !== 'object') return null;
+  const tokensUsed = data.actualTokensUsed ?? data.tokensUsed;
+  const inputTokens = data.inputTokens;
+  const outputTokens = data.outputTokens;
+  if (tokensUsed == null && inputTokens == null && outputTokens == null) return null;
+  return {
+    endpoint,
+    timestamp: data.timestamp ?? new Date().toISOString(),
+    aiProvider: data.aiProvider ?? 'unknown',
+    tokensUsed: typeof tokensUsed === 'number' ? tokensUsed : undefined,
+    inputTokens: typeof inputTokens === 'number' ? inputTokens : undefined,
+    outputTokens: typeof outputTokens === 'number' ? outputTokens : undefined,
+    cost: typeof data.cost === 'number' ? data.cost : undefined,
+    processingTime: typeof data.processingTime === 'number' ? data.processingTime : undefined
+  };
 }
 
 /**
  * Build apiCalls array from jobDir response files (cover letter, Q&A, resume).
  */
-function readApiCallsFromJobDir(jobDirPath: string): ApiCallTokenRecord[] {
+function readApiCallsFromJobDir(jobDirs: string[]): ApiCallTokenRecord[] {
   const calls: ApiCallTokenRecord[] = [];
-  const cover = readTokenUsage(jobDirPath, 'cover_letter_response.json', '/api/cover_letter');
+  const cover = readTokenUsage(jobDirs, 'cover_letter_response.json', '/api/cover_letter');
   if (cover) calls.push(cover);
-  const qna = readTokenUsage(jobDirPath, 'qna_response.json', '/api/questionAndAnswers');
+  const qna = readTokenUsage(jobDirs, 'qna_response.json', '/api/questionAndAnswers');
   if (qna) calls.push(qna);
-  const resume = readTokenUsage(jobDirPath, 'resume_response.json', '/api/resume');
+  const resume = readTokenUsage(jobDirs, 'resume_response.json', '/api/resume');
   if (resume) calls.push(resume);
   return calls;
 }
@@ -173,10 +298,11 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     return null;
   }
 
-  const coverLetter = readCoverLetter(jobDirPath);
-  const questionAnswers = readQuestionAnswers(jobDirPath);
-  const tailoredResume = readResumeRef(jobDirPath);
-  const apiCalls = readApiCallsFromJobDir(jobDirPath);
+  const candidateJobDirs = getCandidateJobDirs(jobDirPath, platform, platformJobId);
+  const coverLetter = readCoverLetter(candidateJobDirs);
+  const questionAnswers = readQuestionAnswers(candidateJobDirs);
+  const tailoredResume = readTailoredResume(candidateJobDirs);
+  const apiCalls = readApiCallsFromJobDir(candidateJobDirs);
 
   // Extra job fields for Job details tab (posted, category, application_volume, etc.)
   const jobDetails: Record<string, unknown> = {};
@@ -207,7 +333,11 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
       questionAnswers,
       ...(apiCalls.length > 0 ? { apiCalls } : {})
     },
-    source: { jobFile: jobFilePath, jobDir: jobDirPath }
+    source: {
+      jobFile: jobFilePath,
+      jobDir: jobDirPath,
+      clientFolder: jobDirPath.includes(`${path.sep}clients${path.sep}`) ? jobDirPath.split(`${path.sep}jobs${path.sep}`)[0] : undefined
+    }
   };
 }
 
@@ -218,24 +348,67 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
 export async function recordJobApplicationToBackend(input: RecordJobApplicationInput): Promise<{ ok: boolean; id?: string; error?: string }> {
   const payload = buildJobApplicationPayload(input);
   if (!payload) {
+    logger.warn('recorder.payload_invalid', 'Could not build payload from job file and dir', {
+      jobFilePath: input.jobFilePath,
+      jobDirPath: input.jobDirPath
+    });
     return { ok: false, error: 'Could not build payload from job file and dir' };
   }
 
-  try {
-    const result = await apiRequest('/api/job-applications', 'POST', payload);
-    const id = result?.id ?? result?.data?.id;
-    printLog(`[JobRecorder] Recorded application: ${payload.company} / ${payload.title} (${id ?? 'ok'})`);
-    return { ok: true, id };
-  } catch (e) {
-    const message = e instanceof Error ? e.message : String(e);
-    printLog(`[JobRecorder] Failed to record application: ${message}`);
-    return { ok: false, error: message };
+  const maxAttempts = 3;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      logger.info('recorder.post_attempt', 'Recording job application attempt', {
+        attempt,
+        maxAttempts,
+        platform: payload.platform,
+        platformJobId: payload.platformJobId,
+        company: payload.company,
+        title: payload.title
+      }, {
+        platform: payload.platform,
+        jobId: payload.platformJobId
+      });
+      const result = await apiRequest('/api/job-applications', 'POST', payload);
+      const id = result?.id ?? result?.data?.id;
+      printLog(`[JobRecorder] Recorded application: ${payload.company} / ${payload.title} (${id ?? 'ok'})`);
+      logger.info('recorder.post_success', 'Recorded job application', {
+        id,
+        attempt
+      }, {
+        platform: payload.platform,
+        jobId: payload.platformJobId
+      });
+      return { ok: true, id };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const isLast = attempt === maxAttempts;
+      printLog(`[JobRecorder] Record attempt ${attempt}/${maxAttempts} failed: ${message}`);
+      logger.error('recorder.post_failed', 'Record attempt failed', {
+        attempt,
+        maxAttempts,
+        error: message,
+        isLast
+      }, {
+        platform: payload.platform,
+        jobId: payload.platformJobId
+      });
+      if (isLast) {
+        return { ok: false, error: message };
+      }
+      await sleep(300 * attempt);
+    }
   }
+  return { ok: false, error: 'Unexpected recorder failure' };
 }
 
 /**
  * Build job dir path from job file path and jobId (e.g. .../jobs/company_123.json -> .../jobs/123).
  */
 export function getJobDirPathFromJobFile(jobFilePath: string, jobId: string): string {
-  return path.join(path.dirname(jobFilePath), jobId);
+  const dir = path.dirname(jobFilePath);
+  if (path.basename(dir) === jobId) {
+    return dir;
+  }
+  return path.join(dir, jobId);
 }

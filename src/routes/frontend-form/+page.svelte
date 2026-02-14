@@ -22,15 +22,17 @@
     companyWeight: '0.1',
     enableDeepSeek: false,
     deepSeekApiKey: '',
-    acceptTerms: false
+    acceptTerms: false,
+    resumeFileName: ''
   };
 
   let isAdvancedMode = false;
   let showSmartMatching = false;
   let showDeepSeek = false;
   let isSubmitting = false;
-  let resumeFile = null;
+  let resumeFile: { name: string } | null = null;
   let resumeUploaded = false;
+  let availableResumeFiles: string[] = [];
 
   onMount(() => {
     loadConfig();
@@ -96,18 +98,52 @@
     showDeepSeek = !showDeepSeek;
   }
 
-  function handleToggleKeydown(event, toggleFunction) {
+  function handleToggleKeydown(event: KeyboardEvent, toggleFunction: () => void) {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       toggleFunction();
     }
   }
 
-  function handleResumeUpload(event) {
-    const file = event.target.files[0];
+  async function loadUploadedResumes() {
+    try {
+      await invoke<string>("create_directory_async", {
+        dirname: "data/uploads"
+      }).catch(() => {});
+      const files = await invoke<string[]>("list_files", { path: "data/uploads" });
+      availableResumeFiles = (files || []).filter((f) => !!f && !f.startsWith('.'));
+    } catch (error) {
+      console.error('Failed to list uploaded resumes:', error);
+      availableResumeFiles = [];
+    }
+  }
+
+  async function handleResumeUpload(event: Event) {
+    const target = event.target as HTMLInputElement | null;
+    const file = target?.files?.[0];
     if (file) {
-      resumeFile = file;
-      resumeUploaded = true;
+      try {
+        const fileName = String(file.name || 'resume.txt');
+        const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const content = await file.text();
+
+        await invoke<string>("create_directory_async", {
+          dirname: "data/uploads"
+        }).catch(() => {});
+
+        await invoke<string>("write_file_async", {
+          filename: `data/uploads/${sanitizedFileName}`,
+          content
+        });
+
+        formData.resumeFileName = sanitizedFileName;
+        resumeFile = { name: sanitizedFileName };
+        resumeUploaded = true;
+        await loadUploadedResumes();
+      } catch (error) {
+        console.error('Failed to upload resume:', error);
+        alert('Failed to upload resume file');
+      }
     }
   }
 
@@ -132,13 +168,14 @@
       companyWeight: '0.1',
       enableDeepSeek: false,
       deepSeekApiKey: '',
-      acceptTerms: false
+      acceptTerms: false,
+      resumeFileName: ''
     };
     resumeFile = null;
     resumeUploaded = false;
   }
 
-  async function handleSubmit(event) {
+  async function handleSubmit(event: SubmitEvent) {
     event.preventDefault();
     
     console.log('Form data at submit:', formData);
@@ -172,10 +209,11 @@
     }
   }
 
-  function validateWeight(event) {
-    const value = parseFloat(event.target.value);
+  function validateWeight(event: Event) {
+    const target = event.target as HTMLInputElement | null;
+    const value = parseFloat(target?.value || '0');
     if (value < 0 || value > 1) {
-      event.target.value = Math.max(0, Math.min(1, value));
+      if (target) target.value = String(Math.max(0, Math.min(1, value)));
     }
   }
 
@@ -189,9 +227,24 @@
       if (config.formData) {
         formData = { ...formData, ...config.formData };
       }
+      await loadUploadedResumes();
+      if (formData.resumeFileName && availableResumeFiles.includes(formData.resumeFileName)) {
+        resumeFile = { name: formData.resumeFileName };
+        resumeUploaded = true;
+      } else if (availableResumeFiles.length > 0) {
+        formData.resumeFileName = availableResumeFiles[0];
+        resumeFile = { name: availableResumeFiles[0] };
+        resumeUploaded = true;
+      }
       console.log('Config loaded from project file');
     } catch (error) {
       console.log('No existing config found, using defaults');
+      await loadUploadedResumes();
+      if (availableResumeFiles.length > 0) {
+        formData.resumeFileName = availableResumeFiles[0];
+        resumeFile = { name: availableResumeFiles[0] };
+        resumeUploaded = true;
+      }
     }
   }
 

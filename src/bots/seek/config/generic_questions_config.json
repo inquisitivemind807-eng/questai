@@ -145,9 +145,33 @@
       "id": 14,
       "match_keywords": [],
       "answer": []
+    },
+    {
+      "id": 15,
+      "match_keywords": [
+        "mobile phone number",
+        "mobile number",
+        "phone number",
+        "telephone number",
+        "contact number"
+      ],
+      "answer": [
+        "0481839006"
+      ]
+    },
+    {
+      "id": 16,
+      "match_keywords": [
+        "email",
+        "e-mail",
+        "email address"
+      ],
+      "answer": [
+        "achaulagain123@gmail.com"
+      ]
     }
   ],
   "settings": {
-    "autoAnswer": false
+    "autoAnswer": true
   }
 }

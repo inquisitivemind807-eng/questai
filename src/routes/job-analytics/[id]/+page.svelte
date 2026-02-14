@@ -304,7 +304,7 @@
           <div class="card-body">
             {#if app.application?.tailoredResume}
               <h2 class="card-title text-base">Resume</h2>
-              <p class="text-sm text-base-content/70">{app.application.tailoredResume}</p>
+              <div class="prose prose-sm max-w-none whitespace-pre-wrap">{app.application.tailoredResume}</div>
             {:else}
               <p class="text-base-content/70">No resume data for this application.</p>
             {/if}
@@ -331,8 +331,28 @@
               <ul class="space-y-4">
                 {#each app.application.questionAnswers as qa}
                   <li class="border-l-2 border-base-300 pl-4">
-                    <p class="font-medium text-sm">{qa.question}</p>
-                    <p class="text-sm text-base-content/80">{qa.answer}</p>
+                    <p class="font-medium text-sm mb-1">{qa.question}</p>
+                    {#if qa.options && qa.options.length > 0}
+                      <div class="flex flex-wrap gap-2 mb-2">
+                        {#each qa.options as option, optionIndex}
+                          {@const selectedSingle = typeof qa.selected === 'number' && qa.selected === optionIndex}
+                          {@const selectedText = typeof qa.selected === 'string' && qa.selected === option}
+                          {@const selectedMulti = Array.isArray(qa.selected) && qa.selected.includes(option)}
+                          <span class="badge badge-sm {selectedSingle || selectedText || selectedMulti ? 'badge-primary' : 'badge-outline'}">{option}</span>
+                        {/each}
+                      </div>
+                    {/if}
+                    <p class="text-xs text-base-content/60 mb-1">
+                      <strong>Answer:</strong>
+                      {#if qa.answer}
+                        {qa.answer}
+                      {:else}
+                        —
+                      {/if}
+                    </p>
+                    {#if qa.answerSource}
+                      <p class="text-xs text-base-content/50">Source: {qa.answerSource}</p>
+                    {/if}
                   </li>
                 {/each}
               </ul>
