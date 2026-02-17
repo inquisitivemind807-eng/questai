@@ -23,7 +23,6 @@
         if (!validation.valid) {
           // Session expired or invalid - log out silently
           console.log('Session validation failed:', validation.error);
-
           // Automatically log out to clear expired session
           await authService.logout();
 
