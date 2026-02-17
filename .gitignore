@@ -23,3 +23,30 @@ src/lib/authorized-users.json
 # Google OAuth credentials (never commit these)
 google_credentials.json
 *_credentials.json
+
+# Authentication tokens and credentials (CRITICAL)
+.cache/
+*.token
+*.jwt
+jwt_tokens.json
+api_token.txt
+
+# User configuration files (contains personal preferences and API keys)
+src/bots/core/user-bots-config.json
+src/bots/user-bots-config.json
+src-tauri/src/bots/user-bots-config.json
+deknilJobsIds.json
+
+# Job application data (personal information)
+jobs/
+apitestjsons/
+
+# Logs and debug files (may contain sensitive data)
+logs/
+*.log
+*-debug.log
+.cursor/
+
+# Additional sensitive patterns
+debug/
+test_session/
