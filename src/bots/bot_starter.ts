@@ -35,21 +35,64 @@ export class BotStarter {
     const sessionId = logger.createSessionId(bot_name);
     logger.setContext({ sessionId, botName: bot_name });
 
+    // Helper function to check if Chrome is still running
+    const checkChromeRunning = async (): Promise<boolean> => {
+      try {
+        const { execSync } = await import('child_process');
+        if (process.platform === 'linux' || process.platform === 'darwin') {
+          execSync('pgrep chrome', { stdio: 'ignore' });
+          return true;  // Process found
+        } else if (process.platform === 'win32') {
+          execSync('tasklist /FI "IMAGENAME eq chrome.exe" 2>NUL | find /I "chrome.exe"', { stdio: 'ignore' });
+          return true;
+        }
+      } catch {
+        return false;  // Process not found (command returns non-zero)
+      }
+      return false;
+    };
+
+    // Keep reference to context for cleanup
+    let context: WorkflowContext | null = null;
+
     // Setup emergency cleanup handler
     const emergencyCleanup = async (signal: string) => {
-      print_log(`\n⚠️ Received ${signal} - performing emergency cleanup...`);
+      print_log(`\n⚠️ Received ${signal} - performing graceful shutdown...`);
       logger.error('bot.emergency_cleanup', 'Emergency cleanup triggered', { signal });
+
       try {
-        await killAllChromeProcesses();
-        print_log("✅ Emergency cleanup completed");
+        // CRITICAL: Gracefully close Chrome FIRST (prevents LOCK files and corruption)
+        if (context?.driver) {
+          print_log("🔄 Closing Chrome gracefully...");
+          try {
+            await context.driver.quit();
+            print_log("✅ Chrome closed gracefully");
+
+            // Wait for Chrome to actually exit
+            await new Promise(resolve => setTimeout(resolve, 2000));
+          } catch (quitError) {
+            print_log(`⚠️ Graceful quit failed: ${quitError.message}`);
+          }
+        }
+
+        // Only force-kill if Chrome is still running after graceful shutdown
+        const stillRunning = await checkChromeRunning();
+        if (stillRunning) {
+          print_log("⚠️ Chrome still running, force killing...");
+          await killAllChromeProcesses();
+        } else {
+          print_log("✅ Chrome already exited");
+        }
+
+        print_log("✅ Cleanup completed");
         logger.info('bot.emergency_cleanup_done', 'Emergency cleanup completed');
       } catch (error) {
-        print_log(`❌ Emergency cleanup failed: ${error}`);
+        print_log(`❌ Cleanup failed: ${error}`);
         logger.error('bot.emergency_cleanup_failed', 'Emergency cleanup failed', {
           error: error instanceof Error ? error.message : String(error)
         });
       }
-      process.exit(1);
+      process.exit(0);  // Exit with 0 (normal termination, not error)
     };
 
     // Handle Ctrl+C and other termination signals
@@ -126,6 +169,7 @@ export class BotStarter {
 
       // 8. Handle post-execution
       const final_context = workflow_engine.getContext();
+      context = final_context;  // Store for cleanup handler
       await this.handle_post_execution(final_context, keep_open);
 
       print_log(`✅ Bot '${bot_name}' execution completed successfully`);
@@ -193,6 +237,12 @@ export class BotStarter {
   // Handle cleanup and browser management after execution
   private async handle_post_execution(context: WorkflowContext, keep_open: boolean): Promise<void> {
     if (context.driver && keep_open) {
+      // Gracefully close browser monitoring when workflow completes
+      if (context.stopMonitoring) {
+        context.stopMonitoring();
+        print_log('✅ Stopped browser monitoring');
+      }
+
       print_log('🎯 Workflow completed! Browser will remain open for you to continue using.');
       if (context.sessionsDir) {
         print_log(`📂 Session saved to: ${context.sessionsDir}`);

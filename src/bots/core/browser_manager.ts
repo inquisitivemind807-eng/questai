@@ -113,6 +113,66 @@ export const monitorBrowserClose = (driver: WebDriver, onBrowserClosed?: () => v
   };
 };
 
+/**
+ * Cleans stale Chrome LOCK files from a session directory.
+ * Only removes LOCK files older than 1 hour to prevent removing active locks.
+ *
+ * @param sessionDir - The Chrome user-data-dir path
+ */
+const cleanStaleLockFiles = (sessionDir: string): void => {
+  try {
+    printLog(`Checking for stale LOCK files in: ${sessionDir}`);
+
+    // Recursively find all LOCK files in the session directory
+    const files = fs.readdirSync(sessionDir, { recursive: true, withFileTypes: true });
+    const lockFiles = files
+      .filter(file => file.isFile() && file.name === 'LOCK')
+      .map(file => path.join(file.path || file.parentPath || sessionDir, file.name));
+
+    if (lockFiles.length === 0) {
+      printLog('No LOCK files found - clean session');
+      return;
+    }
+
+    printLog(`Found ${lockFiles.length} LOCK files, checking staleness...`);
+
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    const now = Date.now();
+    let removedCount = 0;
+    let skippedCount = 0;
+
+    for (const lockFile of lockFiles) {
+      try {
+        const stats = fs.statSync(lockFile);
+        const ageMs = now - stats.mtimeMs;
+
+        // Only remove LOCK files older than 1 hour (safety margin)
+        if (ageMs > ONE_HOUR_MS) {
+          fs.unlinkSync(lockFile);
+          removedCount++;
+          printLog(`  Removed stale LOCK (${Math.round(ageMs / 1000 / 60)} min old): ${path.relative(sessionDir, lockFile)}`);
+        } else {
+          skippedCount++;
+          printLog(`  Skipped recent LOCK (${Math.round(ageMs / 1000 / 60)} min old): ${path.relative(sessionDir, lockFile)}`);
+        }
+      } catch (err) {
+        // File might have been deleted by another process, or permission issue
+        printLog(`  Could not process LOCK: ${path.relative(sessionDir, lockFile)} - ${err}`);
+      }
+    }
+
+    if (removedCount > 0) {
+      printLog(`✓ Cleanup complete: removed ${removedCount} stale LOCK files`);
+    }
+    if (skippedCount > 0) {
+      printLog(`Kept ${skippedCount} recent LOCK files (< 1 hour old)`);
+    }
+  } catch (error) {
+    // Don't fail bot startup if cleanup fails
+    printLog(`Warning: LOCK cleanup failed (continuing anyway): ${error}`);
+  }
+};
+
 export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ driver: WebDriver; actions: any; sessionExists: boolean; sessionsDir: string; stopMonitoring?: () => void }> => {
   try {
     const configPath = path.join(__dirname, '../user-bots-config.json');
@@ -127,12 +187,34 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
 
     makeDirectories([sessionsDir, screenshotsDir, logsDir, resumeDir, tempDir]);
 
+    // Clean stale LOCK files before checking session
+    cleanStaleLockFiles(sessionsDir);
+
     // Check if session exists (has saved data)
     const sessionExists = fs.readdirSync(sessionsDir).filter(file =>
       !['screenshots', 'logs', 'resume', 'temp'].includes(file)
     ).length > 0;
 
     const options = new Options();
+
+    // CRITICAL: Enable CDP explicitly (Chrome 144+ requirement)
+    // Without this, Runtime.evaluate and all executeScript() calls fail
+    options.addArguments('--remote-debugging-port=9222');
+    printLog('🔍 Enabled Chrome DevTools Protocol on port 9222');
+
+    // Wayland support for Linux (Sway/GNOME Wayland/etc.)
+    if (process.platform === 'linux') {
+      // Check if running on Wayland
+      const isWayland = process.env.WAYLAND_DISPLAY || process.env.XDG_SESSION_TYPE === 'wayland';
+
+      if (isWayland) {
+        printLog('🔍 Detected Wayland session - configuring Chrome for Wayland');
+        options.addArguments('--ozone-platform=wayland');
+        options.addArguments('--enable-features=UseOzonePlatform,WaylandWindowDecorations');
+      } else {
+        printLog('🔍 Detected X11 session');
+      }
+    }
 
     const runInBackground = process.env.HEADLESS === 'true';
     const disableExtensions = process.env.DISABLE_EXTENSIONS === 'true';
@@ -146,7 +228,7 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
       options.addArguments('--disable-dev-shm-usage');
     } else {
       // Headless mode (easier to detect)
-      options.addArguments('--headless');
+      options.addArguments('--headless=new');
       options.addArguments('--no-sandbox');
       options.addArguments('--disable-dev-shm-usage');
       options.addArguments('--disable-gpu');
@@ -239,7 +321,21 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
       .setChromeOptions(options)
       .build();
 
-    await driver.manage().window().maximize();
+    // Try to maximize window (may fail on Wayland)
+    try {
+      await driver.manage().window().maximize();
+      printLog("✅ Window maximized");
+    } catch (maximizeError) {
+      printLog(`⚠️ Maximize failed (${maximizeError.message}), using fallback`);
+      // Fallback: Set window size manually
+      try {
+        await driver.manage().window().setRect({ width: 1920, height: 1080, x: 0, y: 0 });
+        printLog("✅ Window resized to 1920x1080");
+      } catch (resizeError) {
+        printLog(`⚠️ Resize also failed (continuing anyway): ${resizeError.message}`);
+        // Continue anyway - window size is not critical
+      }
+    }
 
     const actions = driver.actions();
 
