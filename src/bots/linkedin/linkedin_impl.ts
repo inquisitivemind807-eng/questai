@@ -9,6 +9,7 @@ import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_pat
 import { logger } from '../core/logger';
 import { getIntelligentAnswers } from '../seek/handlers/intelligent_qa_handler';
 import { fillQuestionFieldDetailed } from '../seek/handlers/answer_employer_questions';
+import { Document, Paragraph, TextRun, Packer } from 'docx';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -19,6 +20,12 @@ const __dirname = path.dirname(__filename);
 const printLog = (message: string) => {
   console.log(message);
 };
+const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+function isSupportedResumeFile(name: string): boolean {
+  const lower = String(name || '').toLowerCase();
+  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
 
 // #region agent log
 const DEBUG_LOG = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
@@ -948,6 +955,42 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
   }
 }
 
+async function resolveResumeTextForLinkedIn(ctx: WorkflowContext): Promise<string> {
+  const { apiRequest } = await import('../core/api_client.js');
+  const clientEmail =
+    getClientEmailFromContext(ctx) ||
+    (ctx as any)?.config?.formData?.email ||
+    '';
+
+  if (!clientEmail) {
+    throw new Error('Missing client email. Uploaded resume lookup requires user email in config.');
+  }
+
+  const listData = await apiRequest(`/api/upload?userId=${encodeURIComponent(clientEmail)}`, 'GET');
+  const files = Array.isArray(listData?.files) ? listData.files : [];
+  const names = files
+    .map((f: any) => f?.name)
+    .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+  if (names.length === 0) {
+    throw new Error(`No uploaded .doc/.docx/.pdf resume found for ${clientEmail}`);
+  }
+
+  const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+  const selectedName =
+    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+    names.find((name: string) => name.toLowerCase().includes('resume')) ||
+    names[0];
+  const fileData = await apiRequest(
+    `/api/upload?userId=${encodeURIComponent(clientEmail)}&filename=${encodeURIComponent(selectedName)}`,
+    'GET'
+  );
+  if (typeof fileData?.content !== 'string' || fileData.content.trim().length === 0) {
+    throw new Error(`Uploaded resume ${selectedName} is empty for ${clientEmail}`);
+  }
+  printLog(`📄 Using uploaded resume: ${selectedName}`);
+  return fileData.content;
+}
+
 // Generate AI cover letter for LinkedIn (same API as Seek, platform: linkedin)
 async function generateAICoverLetterLinkedIn(ctx: WorkflowContext): Promise<string> {
   let jobData: any = {};
@@ -966,10 +1009,14 @@ async function generateAICoverLetterLinkedIn(ctx: WorkflowContext): Promise<stri
   printLog("Generating AI cover letter for LinkedIn...");
   printLog(`📝 Job: ${title} at ${company}`);
 
-  const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-  const resumeText = fs.existsSync(resumePath)
-    ? fs.readFileSync(resumePath, 'utf8')
-    : "Experienced software developer";
+  const resumeText = await resolveResumeTextForLinkedIn(ctx);
+  const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
+  const contactProfile = {
+    full_name: String(formData.fullName || '').trim(),
+    email: String(formData.email || getClientEmailFromContext(ctx) || '').trim(),
+    phone: String(formData.phone || '').trim(),
+    linkedin_url: String(formData.linkedinUrl || '').trim()
+  };
 
   const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
 
@@ -978,6 +1025,10 @@ async function generateAICoverLetterLinkedIn(ctx: WorkflowContext): Promise<stri
     job_details: description,
     resume_text: resumeText,
     useAi: "deepseek-chat",
+    strictQuality: true,
+    qualityThreshold: 92,
+    strictQualityRetries: 1,
+    contact_profile: contactProfile,
     platform: "linkedin",
     platform_job_id: jobId,
     job_title: title,
@@ -1095,10 +1146,7 @@ async function generateAIResumeLinkedIn(ctx: WorkflowContext): Promise<string> {
   }
 
   printLog("Generating AI resume for LinkedIn...");
-  const baseResumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-  const resumeText = fs.existsSync(baseResumePath)
-    ? fs.readFileSync(baseResumePath, 'utf8')
-    : "Experienced software developer with full stack expertise";
+  const resumeText = await resolveResumeTextForLinkedIn(ctx);
 
   const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
 
@@ -1122,10 +1170,22 @@ async function generateAIResumeLinkedIn(ctx: WorkflowContext): Promise<string> {
   if (!data || !data.resume) {
     throw new Error('No resume field returned from API');
   }
-  const txtPath = path.join(jobDirPath, 'resume.txt');
-  fs.writeFileSync(txtPath, data.resume);
-  printLog(`✅ AI resume saved: ${txtPath}`);
-  return txtPath;
+  const docxPath = path.join(jobDirPath, 'resume.docx');
+  const paragraphs = String(data.resume || '').split('\n').map((line) =>
+    new Paragraph({ children: [new TextRun(line)] })
+  );
+  const doc = new Document({
+    sections: [
+      {
+        properties: {},
+        children: paragraphs
+      }
+    ]
+  });
+  const buffer = await Packer.toBuffer(doc);
+  fs.writeFileSync(docxPath, buffer);
+  printLog(`✅ AI resume saved: ${docxPath}`);
+  return docxPath;
 }
 
 // Upload resume (Easy Apply modal – use selectors; optional AI resume, else config path; no file input → resume_not_required)

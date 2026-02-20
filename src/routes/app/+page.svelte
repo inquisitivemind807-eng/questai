@@ -173,6 +173,25 @@
           </div>
         </div>
       </div>
+
+      <!-- Files Manager Card -->
+      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
+           on:click={() => navigateTo('/files')}
+           on:keydown={(e) => e.key === 'Enter' && navigateTo('/files')}
+           role="button"
+           tabindex="0">
+        <figure class="px-10 pt-10">
+          <div class="text-6xl">🗂️</div>
+        </figure>
+        <div class="card-body items-center text-center">
+          <h2 class="card-title">Files Manager</h2>
+          <p>Manage local resume, cover-letter, and enhancement files with filtering, grouping, and backups</p>
+          <div class="card-actions">
+            <div class="badge badge-info">Files</div>
+            <div class="badge badge-outline">Local</div>
+          </div>
+        </div>
+      </div>
     </div>
   {:else}
     <!-- Not Authenticated -->

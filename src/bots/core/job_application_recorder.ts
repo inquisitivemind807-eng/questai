@@ -210,17 +210,6 @@ function readTailoredResume(jobDirs: string[]): string | undefined {
     }
   }
   for (const dir of jobDirs) {
-    const txt = path.join(dir, 'resume.txt');
-    if (fs.existsSync(txt)) {
-      try {
-        const content = fs.readFileSync(txt, 'utf8');
-        if (content.trim()) return content.trim();
-      } catch {
-        // Fall through to path reference fallback.
-      }
-    }
-  }
-  for (const dir of jobDirs) {
     const docx = path.join(dir, 'resume.docx');
     if (fs.existsSync(docx)) return docx;
     const pdf = path.join(dir, 'resume.pdf');

@@ -4,6 +4,7 @@
   import { authService } from '$lib/authService.js';
   import { env } from '$env/dynamic/public';
   import '$styles/shared.css';
+  import { registerManagedFile } from '$lib/file-manager';
 
   // all variables
   let user = null;
@@ -13,6 +14,10 @@
   let isLoading = false;
   let isGenerating = false;
   let generatedCoverLetter = '';
+  let qualityScore = null;
+  let qualityControl = null;
+  let generationWarning = '';
+  let contactProfileUsed = null;
   let coverLetterPrompt = '';
   let jwtToken = '';
 
@@ -50,11 +55,16 @@
 
   async function getJwtToken() {
     try {
-      const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      if (!sessionToken) {
-        console.error('No session token found');
+      // Preferred path: use the auth service access token directly.
+      const directAccessToken = await authService.getAccessToken();
+      if (directAccessToken) {
+        jwtToken = directAccessToken;
         return;
       }
+
+      // Legacy fallback: if an old session token exists in storage, convert it.
+      const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      if (!sessionToken) return;
 
       const res = await fetch(`${CORPUS_RAG_API}/api/auth/session-to-jwt`, {
         method: 'POST',
@@ -69,6 +79,9 @@
         if (data.success && data.accessToken) {
           jwtToken = data.accessToken;
         }
+      } else {
+        // Avoid silent failures so users see the true auth issue.
+        console.warn('session-to-jwt failed with status:', res.status);
       }
     } catch (err) {
       console.error('Failed to get JWT token:', err);
@@ -124,6 +137,10 @@
     selectedJob = job;
     jobContent = null;
     generatedCoverLetter = '';
+    qualityScore = null;
+    qualityControl = null;
+    generationWarning = '';
+    contactProfileUsed = null;
     comparisonResults = null;
     isEditingJob = false;
 
@@ -202,6 +219,10 @@
 
     isGenerating = true;
     generatedCoverLetter = '';
+    qualityScore = null;
+    qualityControl = null;
+    generationWarning = '';
+    contactProfileUsed = null;
 
     try {
       // Ensure we have JWT token
@@ -234,6 +255,10 @@
 
       if (data.success) {
         generatedCoverLetter = data.coverLetter;
+        qualityScore = data?.metadata?.qualityScore || null;
+        qualityControl = data?.metadata?.qualityControl || null;
+        generationWarning = data?.metadata?.warning || '';
+        contactProfileUsed = data?.metadata?.contactProfileUsed || null;
       } else {
         alert('Failed to generate cover letter: ' + data.error);
       }
@@ -242,6 +267,29 @@
       alert('Failed to generate cover letter: ' + error.message);
     } finally {
       isGenerating = false;
+    }
+  }
+
+  async function saveCoverLetterToLocalFiles() {
+    if (!generatedCoverLetter?.trim() || !user?.email) return;
+    const company = (selectedJob?.company || 'company').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filename = `cover-letter-${company}-${Date.now()}.txt`;
+    try {
+      await registerManagedFile({
+        userId: user.email,
+        feature: 'cover-letter',
+        filename,
+        content: generatedCoverLetter,
+        jobId: selectedJob?.jobId || selectedJob?.filename,
+        sourceRoute: '/cover-letters',
+        mimeType: 'text/plain',
+        tags: ['generated']
+      });
+      alert('Saved to local Files Manager');
+    } catch (error) {
+      console.error('Failed to save cover letter locally:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`Failed to save locally: ${message}`);
     }
   }
 
@@ -398,11 +446,51 @@
                 <div class="section-header">
                   <h3>📝 Your Cover Letter</h3>
                   <div class="actions">
+                    <button class="copy-btn" on:click={saveCoverLetterToLocalFiles}>
+                      💾 Save Local
+                    </button>
                     <button class="copy-btn" on:click={() => copyToClipboard(generatedCoverLetter)}>
                       📋 Copy
                     </button>
                   </div>
                 </div>
+                {#if qualityScore}
+                  <div style="margin: 0 0 1rem 0; padding: 0.85rem 1rem; border: 1px solid rgba(128,128,128,0.3); border-radius: 8px; background: rgba(128, 128, 128, 0.08);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+                      <strong>📊 Quality Score</strong>
+                      <span style="font-weight:700;">Overall: {qualityScore.overall}/100</span>
+                    </div>
+                    <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.35rem 0.8rem; font-size: 0.9rem;">
+                      <div>Alignment: <strong>{qualityScore.alignment}</strong></div>
+                      <div>Specificity: <strong>{qualityScore.specificity}</strong></div>
+                      <div>Tone: <strong>{qualityScore.tone}</strong></div>
+                      <div>Structure: <strong>{qualityScore.structure}</strong></div>
+                      <div>Compliance: <strong>{qualityScore.compliance}</strong></div>
+                    </div>
+                    {#if qualityControl}
+                      <div style="margin-top:0.5rem; font-size:0.8rem; opacity:0.85;">
+                        Strict mode: <strong>{qualityControl.strictQuality ? 'On' : 'Off'}</strong>
+                        | Threshold: <strong>{qualityControl.qualityThreshold}</strong>
+                        | Extra retries: <strong>{qualityControl.strictRetriesUsed}</strong>
+                      </div>
+                    {/if}
+                    {#if contactProfileUsed}
+                      <div style="margin-top:0.35rem; font-size:0.8rem; opacity:0.85;">
+                        Profile used: <strong>{contactProfileUsed.full_name || 'N/A'}</strong>{#if contactProfileUsed.email} ({contactProfileUsed.email}){/if}
+                      </div>
+                    {/if}
+                    {#if generationWarning}
+                      <div style="margin-top:0.45rem; font-size:0.8rem; color: #b45309;">
+                        ⚠️ {generationWarning}
+                      </div>
+                    {/if}
+                    {#if qualityScore.reasons && qualityScore.reasons.length > 0}
+                      <div style="margin-top:0.45rem; font-size:0.8rem; color:#ef4444;">
+                        Issues: {qualityScore.reasons.join(', ')}
+                      </div>
+                    {/if}
+                  </div>
+                {/if}
                 <div class="generated-content">
                   <pre class="cover-letter-text">{generatedCoverLetter}</pre>
                 </div>

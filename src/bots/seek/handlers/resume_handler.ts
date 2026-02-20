@@ -14,16 +14,17 @@ const __dirname = path.dirname(__filename);
 const printLog = (message: string) => {
   console.log(message);
 };
+const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+function isSupportedResumeFile(name: string): boolean {
+  const lower = String(name || '').toLowerCase();
+  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
 
 async function createResumeFile(ctx: WorkflowContext, resumeText: string, jobId: string): Promise<string> {
   const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
-
-  const txtPath = path.join(jobDir, 'resume.txt');
   const docxPath = path.join(jobDir, 'resume.docx');
   const pdfPath = path.join(jobDir, 'resume.pdf');
-
-  fs.writeFileSync(txtPath, resumeText);
-  printLog(`💾 Created: resume.txt`);
 
   const paragraphs = resumeText.split('\n').map(line =>
     new Paragraph({
@@ -53,7 +54,40 @@ async function createResumeFile(ctx: WorkflowContext, resumeText: string, jobId:
   await new Promise<void>((resolve) => stream.on('finish', () => resolve()));
   printLog(`💾 Created: resume.pdf`);
 
-  return txtPath;
+  return docxPath;
+}
+
+async function resolveResumeText(ctx: WorkflowContext): Promise<string> {
+  const { apiRequest } = await import('../../core/api_client');
+  const userEmail = String((ctx as any)?.config?.formData?.email || '').trim();
+  if (!userEmail) {
+    throw new Error('Missing user email. Uploaded resume lookup requires email in config.');
+  }
+
+  const listData = await apiRequest(`/api/upload?userId=${encodeURIComponent(userEmail)}`, 'GET');
+  const files = Array.isArray(listData?.files) ? listData.files : [];
+  const names = files
+    .map((f: any) => f?.name)
+    .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+  if (names.length === 0) {
+    throw new Error(`No uploaded .doc/.docx/.pdf resume found for ${userEmail}`);
+  }
+
+  const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+  const selectedName =
+    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+    names.find((name: string) => name.toLowerCase().includes('resume')) ||
+    names[0];
+
+  const fileData = await apiRequest(
+    `/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(selectedName)}`,
+    'GET'
+  );
+  if (typeof fileData?.content !== 'string' || fileData.content.trim().length === 0) {
+    throw new Error(`Uploaded resume ${selectedName} is empty for ${userEmail}`);
+  }
+  printLog(`📄 Using uploaded resume: ${selectedName}`);
+  return fileData.content;
 }
 
 async function generateAIResume(ctx: WorkflowContext): Promise<string> {
@@ -70,10 +104,7 @@ async function generateAIResume(ctx: WorkflowContext): Promise<string> {
   printLog("Generating AI resume...");
   printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
 
-  const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-  const resumeText = fs.existsSync(resumePath)
-    ? fs.readFileSync(resumePath, 'utf8')
-    : "Experienced software developer with full stack expertise";
+  const resumeText = await resolveResumeText(ctx);
 
   const requestBody = {
     job_id: `seek_${jobId}`,

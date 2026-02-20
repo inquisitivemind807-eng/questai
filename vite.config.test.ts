@@ -1,5 +1,6 @@
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, loadEnv } from 'vitest/config';
+import { defineConfig } from 'vitest/config';
+import { loadEnv } from 'vite';
 
 export default defineConfig(({ mode }) => {
   // Load env file based on `mode` in the current working directory.

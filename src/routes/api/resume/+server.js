@@ -2,6 +2,62 @@ import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 
 const API_BASE = env.API_BASE || process.env.API_BASE || 'http://localhost:3000';
+const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+/** @param {string} name */
+function isSupportedResumeFile(name) {
+  const lower = String(name || '').toLowerCase();
+  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/** @param {string} userId @param {string} authHeader @param {string} [preferredResumeFileName] */
+async function loadResumeFromUploads(userId, authHeader, preferredResumeFileName = '') {
+  if (!userId) {
+    throw new Error('Missing userId. Cannot resolve uploaded resume.');
+  }
+  const listRes = await fetch(`${API_BASE}/api/upload?userId=${encodeURIComponent(userId)}`, {
+    method: 'GET',
+    headers: {
+      Authorization: authHeader
+    }
+  });
+  if (!listRes.ok) {
+    throw new Error(`Failed to list uploaded resumes (${listRes.status})`);
+  }
+  const listData = await listRes.json();
+  const files = Array.isArray(listData?.files) ? /** @type {Array<{name?: string}>} */ (listData.files) : [];
+  const names = files
+    .map((f) => f?.name)
+    .filter((name) => typeof name === 'string' && isSupportedResumeFile(name))
+    .map((name) => String(name));
+  if (names.length === 0) {
+    throw new Error(`No uploaded .doc/.docx/.pdf resume files found for userId ${userId}`);
+  }
+
+  const selectedName =
+    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+    names.find((name) => String(name).toLowerCase().includes('resume')) ||
+    names[0];
+
+  const fileRes = await fetch(
+    `${API_BASE}/api/upload?userId=${encodeURIComponent(userId)}&filename=${encodeURIComponent(selectedName)}`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: authHeader
+      }
+    }
+  );
+  if (!fileRes.ok) {
+    throw new Error(`Failed to load uploaded resume file (${fileRes.status})`);
+  }
+  const fileData = await fileRes.json();
+  const content = typeof fileData?.content === 'string' ? fileData.content.trim() : '';
+  if (!content) {
+    throw new Error(`Uploaded resume file is empty for userId ${userId}`);
+  }
+  return content;
+}
 
 export async function POST({ request }) {
   try {
@@ -26,17 +82,12 @@ export async function POST({ request }) {
       }, { status: 400 });
     }
 
-    // Use provided resume text or read from default location
+    // Use provided resume text or read from uploaded supported document
     let resumeText = providedResumeText;
     
     if (!resumeText) {
-      // Read resume from default location
-      const fs = await import('fs');
-      const path = await import('path');
-      const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-      resumeText = fs.existsSync(resumePath)
-        ? fs.readFileSync(resumePath, 'utf8')
-        : "Experienced software developer";
+      const preferredResumeFileName = String(body.resumeFileName || '').trim();
+      resumeText = await loadResumeFromUploads(userId, authHeader, preferredResumeFileName);
     }
 
     // Generate a job_id if not provided (required by corpus-rag API)
@@ -124,9 +175,10 @@ Format your response clearly showing:
 
   } catch (error) {
     console.error('❌ Resume enhancement error:', error);
+    const message = error instanceof Error ? error.message : String(error);
     return json({
       success: false,
-      error: error.message || 'Internal server error'
+      error: message || 'Internal server error'
     }, { status: 500 });
   }
 }

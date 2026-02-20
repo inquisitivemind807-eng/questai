@@ -2,6 +2,95 @@ import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 
 const API_BASE = env.API_BASE || process.env.API_BASE || 'http://localhost:3000';
+const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+/** @param {string} name */
+function isSupportedResumeFile(name) {
+  const lower = String(name || '').toLowerCase();
+  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/** @param {string} userId @param {string} authHeader @param {string} [preferredResumeFileName] */
+async function loadResumeFromUploads(userId, authHeader, preferredResumeFileName = '') {
+  if (!userId) {
+    throw new Error('Missing userId. Cannot resolve uploaded resume.');
+  }
+  const listRes = await fetch(`${API_BASE}/api/upload?userId=${encodeURIComponent(userId)}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': authHeader
+    }
+  });
+  if (!listRes.ok) {
+    throw new Error(`Failed to list uploaded resumes (${listRes.status})`);
+  }
+  const listData = await listRes.json();
+  const files = Array.isArray(listData?.files) ? /** @type {Array<{name?: string}>} */ (listData.files) : [];
+  if (files.length === 0) {
+    throw new Error(`No uploaded resumes found for userId ${userId}`);
+  }
+
+  const names = files
+    .map((f) => f?.name)
+    .filter((name) => typeof name === 'string' && isSupportedResumeFile(name))
+    .map((name) => String(name));
+  if (names.length === 0) {
+    throw new Error(`No uploaded .doc/.docx/.pdf resume files found for userId ${userId}`);
+  }
+
+  const selectedName =
+    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+    names.find((name) => String(name).toLowerCase().includes('resume')) ||
+    names[0];
+
+  const fileRes = await fetch(
+    `${API_BASE}/api/upload?userId=${encodeURIComponent(userId)}&filename=${encodeURIComponent(selectedName)}`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': authHeader
+      }
+    }
+  );
+  if (!fileRes.ok) {
+    const fileErr = await fileRes.json().catch(() => ({}));
+    throw new Error(fileErr?.error || `Failed to load uploaded resume file (${fileRes.status})`);
+  }
+  const fileData = await fileRes.json();
+  const content = typeof fileData?.content === 'string' ? fileData.content.trim() : '';
+  if (content.length === 0) {
+    throw new Error(`Uploaded resume file is empty for userId ${userId}`);
+  }
+  return content;
+}
+
+/** @param {string} userId */
+async function loadContactProfile(userId) {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const configPath = path.join(process.cwd(), 'src/bots/user-bots-config.json');
+    if (!fs.existsSync(configPath)) return null;
+
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    const formData = parsed?.formData || {};
+    const contactProfile = {
+      full_name: String(formData.fullName || '').trim(),
+      email: String(formData.email || userId || '').trim(),
+      phone: String(formData.phone || '').trim(),
+      linkedin_url: String(formData.linkedinUrl || '').trim(),
+      resume_file_name: String(formData.resumeFileName || '').trim()
+    };
+
+    if (!contactProfile.full_name && !contactProfile.email && !contactProfile.phone && !contactProfile.linkedin_url) {
+      return null;
+    }
+    return contactProfile;
+  } catch {
+    return null;
+  }
+}
 
 export async function POST({ request }) {
   try {
@@ -26,13 +115,13 @@ export async function POST({ request }) {
       }, { status: 400 });
     }
 
-    // Read resume from default location
-    const fs = await import('fs');
-    const path = await import('path');
-    const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-    const resumeText = fs.existsSync(resumePath)
-      ? fs.readFileSync(resumePath, 'utf8')
-      : "Experienced software developer";
+    // Strict mode: only use uploaded resume associated with this user.
+    const contactProfile = await loadContactProfile(userId);
+    const resumeText = await loadResumeFromUploads(
+      userId,
+      authHeader,
+      contactProfile?.resume_file_name || ''
+    );
 
     // Generate a job_id if not provided (required by corpus-rag API)
     const generatedJobId = jobId || `job_${Date.now()}_${Math.random().toString(36).substring(7)}`;
@@ -46,6 +135,10 @@ export async function POST({ request }) {
       platform: "manual",
       job_title: "",
       company: "",
+      strictQuality: true,
+      qualityThreshold: 92,
+      strictQualityRetries: 1,
+      contact_profile: contactProfile,
       prompt: `Write a compelling, professional cover letter for this job posting.
 Highlight relevant experience and skills that match the job requirements.
 Keep it concise (300-400 words) and personalized.
@@ -81,7 +174,11 @@ Focus on demonstrating value and enthusiasm for the role.`
         coverLetter: data.cover_letter,
         metadata: {
           provider: 'deepseek-chat',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          qualityScore: data.qualityScore,
+          qualityControl: data.qualityControl,
+          contactProfileUsed: data.contactProfileUsed,
+          warning: data.warning
         }
       });
     } else {
@@ -93,9 +190,10 @@ Focus on demonstrating value and enthusiasm for the role.`
 
   } catch (error) {
     console.error('❌ Cover letter generation error:', error);
+    const message = error instanceof Error ? error.message : String(error);
     return json({
       success: false,
-      error: error.message || 'Internal server error'
+      error: message || 'Internal server error'
     }, { status: 500 });
   }
 }

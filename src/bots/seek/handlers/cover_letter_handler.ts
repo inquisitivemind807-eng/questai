@@ -1,9 +1,52 @@
 import type { WorkflowContext } from '../../core/workflow_engine';
-import { getJobArtifactDir } from '../../core/client_paths';
+import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
 
 const printLog = (message: string) => {
   console.log(message);
 };
+const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+function isSupportedResumeFile(name: string): boolean {
+  const lower = String(name || '').toLowerCase();
+  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+async function resolveResumeText(ctx: WorkflowContext): Promise<string> {
+  const { apiRequest } = await import('../../core/api_client');
+
+  const clientEmail =
+    getClientEmailFromContext(ctx) ||
+    (ctx as any)?.config?.formData?.email ||
+    '';
+
+  if (!clientEmail) {
+    throw new Error('Missing client email. Uploaded resume lookup requires user email in config.');
+  }
+
+  const listData = await apiRequest(`/api/upload?userId=${encodeURIComponent(clientEmail)}`, 'GET');
+  const files = Array.isArray(listData?.files) ? listData.files : [];
+  const names = files
+    .map((f: any) => f?.name)
+    .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+  if (names.length === 0) {
+    throw new Error(`No uploaded .doc/.docx/.pdf resume found for ${clientEmail}`);
+  }
+
+  const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+  const selectedName =
+    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+    names.find((name: string) => name.toLowerCase().includes('resume')) ||
+    names[0];
+  const fileData = await apiRequest(
+    `/api/upload?userId=${encodeURIComponent(clientEmail)}&filename=${encodeURIComponent(selectedName)}`,
+    'GET'
+  );
+  if (typeof fileData?.content !== 'string' || fileData.content.trim().length === 0) {
+    throw new Error(`Uploaded resume ${selectedName} is empty for ${clientEmail}`);
+  }
+  printLog(`📄 Using uploaded resume: ${selectedName}`);
+  return fileData.content;
+}
 
 async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
   const fs = await import('fs');
@@ -22,16 +65,24 @@ async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
   printLog("Generating AI cover letter...");
   printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
 
-  const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-  const resumeText = fs.existsSync(resumePath)
-    ? fs.readFileSync(resumePath, 'utf8')
-    : "Experienced software developer";
+  const resumeText = await resolveResumeText(ctx);
+  const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
+  const contactProfile = {
+    full_name: String(formData.fullName || '').trim(),
+    email: String(formData.email || getClientEmailFromContext(ctx) || '').trim(),
+    phone: String(formData.phone || '').trim(),
+    linkedin_url: String(formData.linkedinUrl || '').trim()
+  };
 
   const requestBody = {
     job_id: `seek_${jobId}`,
     job_details: jobData.details || `${jobData.title} at ${jobData.company}`,
     resume_text: resumeText,
     useAi: "deepseek-chat",
+    strictQuality: true,
+    qualityThreshold: 92,
+    strictQualityRetries: 1,
+    contact_profile: contactProfile,
 
     // Required tracking fields per API docs
     platform: "seek",

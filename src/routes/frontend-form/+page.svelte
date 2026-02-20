@@ -1,8 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { invoke } from "@tauri-apps/api/core"
+  import { env } from '$env/dynamic/public';
+  import { registerManagedFile } from '$lib/file-manager';
   
   let formData = {
+    fullName: '',
+    email: '',
+    phone: '',
+    linkedinUrl: '',
     keywords: '',
     locations: '',
     minSalary: '',
@@ -33,6 +39,14 @@
   let resumeFile: { name: string } | null = null;
   let resumeUploaded = false;
   let availableResumeFiles: string[] = [];
+  let uploadValidationMessage = '';
+  const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+  const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+  function isSupportedResumeFile(name: string): boolean {
+    const lower = String(name || '').toLowerCase();
+    return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  }
 
   onMount(() => {
     loadConfig();
@@ -106,12 +120,22 @@
   }
 
   async function loadUploadedResumes() {
+    const userEmail = (formData.email || '').trim();
+    if (!userEmail) {
+      availableResumeFiles = [];
+      return;
+    }
     try {
-      await invoke<string>("create_directory_async", {
-        dirname: "data/uploads"
-      }).catch(() => {});
-      const files = await invoke<string[]>("list_files", { path: "data/uploads" });
-      availableResumeFiles = (files || []).filter((f) => !!f && !f.startsWith('.'));
+      const listRes = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}`);
+      if (!listRes.ok) {
+        availableResumeFiles = [];
+        return;
+      }
+      const listData = await listRes.json();
+      const fileNames = (Array.isArray(listData?.files) ? listData.files : [])
+        .map((f: any) => f?.name)
+        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+      availableResumeFiles = fileNames;
     } catch (error) {
       console.error('Failed to list uploaded resumes:', error);
       availableResumeFiles = [];
@@ -122,24 +146,35 @@
     const target = event.target as HTMLInputElement | null;
     const file = target?.files?.[0];
     if (file) {
+      if (!isSupportedResumeFile(file.name)) {
+        alert('Only .doc, .docx, and .pdf resume files are supported.');
+        return;
+      }
+      const userEmail = (formData.email || '').trim();
+      if (!userEmail) {
+        alert('Please add your Email in Profile & Contact before uploading resume.');
+        return;
+      }
       try {
-        const fileName = String(file.name || 'resume.txt');
+        const fileName = String(file.name || 'resume.docx');
         const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const content = await file.text();
-
-        await invoke<string>("create_directory_async", {
-          dirname: "data/uploads"
-        }).catch(() => {});
-
-        await invoke<string>("write_file_async", {
-          filename: `data/uploads/${sanitizedFileName}`,
-          content
+        const uploadFormData = new FormData();
+        uploadFormData.append('file', file, sanitizedFileName);
+        uploadFormData.append('userId', userEmail);
+        const uploadRes = await fetch(`${CORPUS_RAG_API}/api/upload`, {
+          method: 'POST',
+          body: uploadFormData
         });
+        const uploadData = await uploadRes.json().catch(() => ({}));
+        if (!uploadRes.ok || uploadData?.success !== true) {
+          throw new Error(uploadData?.error || `Upload failed (${uploadRes.status})`);
+        }
 
         formData.resumeFileName = sanitizedFileName;
         resumeFile = { name: sanitizedFileName };
         resumeUploaded = true;
         await loadUploadedResumes();
+        await syncUploadedResumeToLocalFiles(userEmail, sanitizedFileName);
       } catch (error) {
         console.error('Failed to upload resume:', error);
         alert('Failed to upload resume file');
@@ -147,8 +182,35 @@
     }
   }
 
+  async function syncUploadedResumeToLocalFiles(userEmail: string, filename: string) {
+    try {
+      const contentRes = await fetch(
+        `${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(filename)}`
+      );
+      if (!contentRes.ok) return;
+      const contentData = await contentRes.json();
+      const content = typeof contentData?.content === 'string' ? contentData.content : '';
+      if (!content.trim()) return;
+      await registerManagedFile({
+        userId: userEmail,
+        feature: 'resume',
+        filename: `${filename}.txt`,
+        content,
+        sourceRoute: '/frontend-form',
+        mimeType: 'text/plain',
+        tags: ['uploaded-resume', 'snapshot']
+      });
+    } catch (error) {
+      console.warn('Unable to mirror uploaded resume to local Files Manager:', error);
+    }
+  }
+
   function resetForm() {
     formData = {
+      fullName: '',
+      email: '',
+      phone: '',
+      linkedinUrl: '',
       keywords: '',
       locations: '',
       minSalary: '',
@@ -189,6 +251,21 @@
       alert('You must accept the legal disclaimer to continue');
       return;
     }
+
+    const syncResult = await syncSelectedResumeToCorpus();
+    if (!syncResult.success) {
+      alert(syncResult.message);
+      uploadValidationMessage = syncResult.message;
+      return;
+    }
+
+    const uploadValidation = await validateUploadedResumeForCurrentUser();
+    if (!uploadValidation.success) {
+      alert(uploadValidation.message);
+      uploadValidationMessage = uploadValidation.message;
+      return;
+    }
+    uploadValidationMessage = `${syncResult.message} ${uploadValidation.message}`.trim();
 
     isSubmitting = true;
     
@@ -280,6 +357,138 @@
       return false;
     }
   }
+
+  async function validateUploadedResumeForCurrentUser(): Promise<{ success: boolean; message: string }> {
+    const userEmail = (formData.email || '').trim();
+    if (!userEmail) {
+      return {
+        success: false,
+        message: 'Please add your Email in Profile & Contact before saving configuration.'
+      };
+    }
+
+    try {
+      const listRes = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}`);
+      if (!listRes.ok) {
+        return {
+          success: false,
+          message: `Could not verify uploads for ${userEmail} (status ${listRes.status}).`
+        };
+      }
+      const listData = await listRes.json();
+      const fileNames = (Array.isArray(listData?.files) ? listData.files : [])
+        .map((f: any) => f?.name)
+        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+
+      if (fileNames.length === 0) {
+        return {
+          success: false,
+          message: `No uploaded .doc/.docx/.pdf resume found for ${userEmail}. Please upload resume first.`
+        };
+      }
+
+      let selectedResumeName = '';
+      if (formData.resumeFileName) {
+        if (!fileNames.includes(formData.resumeFileName)) {
+          return {
+            success: false,
+            message: `Selected resume "${formData.resumeFileName}" was not found in corpus uploads for ${userEmail}. Upload/select that same file first.`
+          };
+        }
+        selectedResumeName = formData.resumeFileName;
+      } else {
+        selectedResumeName =
+          fileNames.find((name: string) => name.toLowerCase().includes('resume')) ||
+          fileNames[0];
+      }
+
+      const contentRes = await fetch(
+        `${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(selectedResumeName)}`
+      );
+      if (!contentRes.ok) {
+        return {
+          success: false,
+          message: `Uploaded resume check failed for ${selectedResumeName} (status ${contentRes.status}).`
+        };
+      }
+      const contentData = await contentRes.json();
+      if (typeof contentData?.content !== 'string' || contentData.content.trim().length === 0) {
+        return {
+          success: false,
+          message: `Uploaded resume ${selectedResumeName} is empty. Please upload a valid resume.`
+        };
+      }
+
+      formData.resumeFileName = selectedResumeName;
+      resumeFile = { name: selectedResumeName };
+      resumeUploaded = true;
+      return {
+        success: true,
+        message: `Resume verified: ${selectedResumeName}`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Resume upload validation failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+
+  async function syncSelectedResumeToCorpus(): Promise<{ success: boolean; message: string }> {
+    const userEmail = (formData.email || '').trim();
+    if (!userEmail) {
+      return {
+        success: false,
+        message: 'Please add your Email in Profile & Contact before saving configuration.'
+      };
+    }
+
+    const selectedResumeName = (formData.resumeFileName || '').trim();
+    if (!selectedResumeName) {
+      return {
+        success: false,
+        message: 'Please select/upload a resume file before saving configuration.'
+      };
+    }
+
+    if (!isSupportedResumeFile(selectedResumeName)) {
+      return {
+        success: false,
+        message: 'Only .doc, .docx, and .pdf resumes are supported.'
+      };
+    }
+
+    try {
+      const listRes = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}`);
+      if (!listRes.ok) {
+        return {
+          success: false,
+          message: `Could not verify uploads for ${userEmail} (status ${listRes.status}).`
+        };
+      }
+      const listData = await listRes.json();
+      const fileNames = (Array.isArray(listData?.files) ? listData.files : [])
+        .map((f: any) => f?.name)
+        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+
+      if (!fileNames.includes(selectedResumeName)) {
+        return {
+          success: false,
+          message: `Selected resume "${selectedResumeName}" was not found in corpus uploads for ${userEmail}. Please upload it first.`
+        };
+      }
+
+      return {
+        success: true,
+        message: `Resume synced in corpus: ${selectedResumeName}`
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Resume sync to corpus failed: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
 </script>
 
 <div class="container mx-auto p-6">
@@ -292,6 +501,66 @@
     </div>
 
     <form onsubmit={handleSubmit} class="space-y-8">
+      <!-- Profile & Contact -->
+      <div class="card bg-base-100 shadow-xl">
+        <div class="card-body">
+          <h2 class="card-title text-2xl mb-6">👤 Profile & Contact</h2>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="form-control">
+              <label class="label" for="full-name-input">
+                <span class="label-text font-semibold">Full Name</span>
+              </label>
+              <input
+                id="full-name-input"
+                type="text"
+                placeholder="Amit Chaulagain"
+                bind:value={formData.fullName}
+                class="input input-bordered w-full"
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label" for="email-input">
+                <span class="label-text font-semibold">Email</span>
+              </label>
+              <input
+                id="email-input"
+                type="email"
+                placeholder="you@example.com"
+                bind:value={formData.email}
+                class="input input-bordered w-full"
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label" for="phone-input">
+                <span class="label-text font-semibold">Phone</span>
+              </label>
+              <input
+                id="phone-input"
+                type="text"
+                placeholder="+61 4XX XXX XXX"
+                bind:value={formData.phone}
+                class="input input-bordered w-full"
+              />
+            </div>
+
+            <div class="form-control">
+              <label class="label" for="linkedin-url-input">
+                <span class="label-text font-semibold">LinkedIn URL</span>
+              </label>
+              <input
+                id="linkedin-url-input"
+                type="url"
+                placeholder="https://www.linkedin.com/in/your-profile"
+                bind:value={formData.linkedinUrl}
+                class="input input-bordered w-full"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Job Preferences -->
       <div class="card bg-base-100 shadow-xl">
         <div class="card-body">
@@ -457,6 +726,9 @@
               <div class="form-label">
                 <span class="label-text">Resume Upload</span>
                 <span class="helper-text">PDF format recommended</span>
+                <div class="text-sm opacity-80 mt-1">
+                  Migration update: only `.doc`, `.docx`, and `.pdf` are supported. `.txt` is no longer allowed.
+                </div>
                 <div class="file-upload-wrapper">
                   <input
                     type="file"
@@ -671,6 +943,11 @@
           🔄 Reset Form
         </button>
       </div>
+      {#if uploadValidationMessage}
+        <div style="margin-top: 12px; text-align: center; font-size: 0.9rem; opacity: 0.9;">
+          {uploadValidationMessage}
+        </div>
+      {/if}
     </form>
   </div>
 </div>

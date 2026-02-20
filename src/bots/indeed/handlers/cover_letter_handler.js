@@ -5,12 +5,56 @@ import fs from 'fs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+/** @param {string} message */
 const printLog = (message) => {
   console.log(message);
 };
+const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
 
+/** @param {string} name */
+function isSupportedResumeFile(name) {
+  const lower = String(name || '').toLowerCase();
+  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+/** @param {any} ctx */
+async function resolveResumeText(ctx) {
+  const { apiRequest } = await import('../../core/api_client.js');
+  const userEmail = String(ctx?.config?.formData?.email || '').trim();
+  if (!userEmail) {
+    throw new Error('Missing user email. Uploaded resume lookup requires email in config.');
+  }
+
+  const listData = await apiRequest(`/api/upload?userId=${encodeURIComponent(userEmail)}`, 'GET');
+  const files = Array.isArray(listData?.files) ? /** @type {Array<{name?: string}>} */ (listData.files) : [];
+  const names = files
+    .map((f) => f?.name)
+    .filter((name) => typeof name === 'string' && isSupportedResumeFile(name))
+    .map((name) => String(name));
+  if (names.length === 0) {
+    throw new Error(`No uploaded .doc/.docx/.pdf resume found for ${userEmail}`);
+  }
+
+  const preferredResumeFileName = String(ctx?.config?.formData?.resumeFileName || '').trim();
+  const selectedName =
+    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+    names.find((name) => String(name).toLowerCase().includes('resume')) ||
+    names[0];
+
+  const fileData = await apiRequest(
+    `/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(selectedName)}`,
+    'GET'
+  );
+  if (typeof fileData?.content !== 'string' || fileData.content.trim().length === 0) {
+    throw new Error(`Uploaded resume ${selectedName} is empty for ${userEmail}`);
+  }
+  printLog(`📄 Using uploaded resume: ${selectedName}`);
+  return fileData.content;
+}
+
+/** @param {any} ctx */
 async function generateAICoverLetter(ctx) {
-  let jobData = {};
+  let jobData = /** @type {any} */ ({});
   if (ctx.currentJobFile) {
     jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
   }
@@ -23,10 +67,7 @@ async function generateAICoverLetter(ctx) {
   printLog("Generating AI cover letter...");
   printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
 
-  const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-  const resumeText = fs.existsSync(resumePath)
-    ? fs.readFileSync(resumePath, 'utf8')
-    : "Experienced software developer";
+  const resumeText = await resolveResumeText(ctx);
 
   const requestBody = {
     job_id: `indeed_${jobId}`,
@@ -64,8 +105,9 @@ Focus on demonstrating value and enthusiasm for the role.`
   try {
     data = await apiRequest('/api/cover_letter', 'POST', requestBody);
   } catch (apiError) {
-    printLog(`❌ API request failed: ${apiError.message}`);
-    throw new Error(`Cover letter API call failed: ${apiError.message}`);
+    const message = apiError instanceof Error ? apiError.message : String(apiError);
+    printLog(`❌ API request failed: ${message}`);
+    throw new Error(`Cover letter API call failed: ${message}`);
   }
 
   fs.writeFileSync(
@@ -89,6 +131,7 @@ Focus on demonstrating value and enthusiasm for the role.`
 }
 
 // Handle Cover Letter (part of Choose Documents step)
+/** @param {any} ctx */
 export async function* handleCoverLetter(ctx) {
   try {
     printLog("Handling cover letter...");

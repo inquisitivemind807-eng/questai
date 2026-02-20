@@ -197,10 +197,33 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
       const platform = (ctx as any).platform || (ctx.currentJobFile && ctx.currentJobFile.includes('linkedinjobs') ? 'linkedin' : 'seek');
       const clientEmail = getClientEmailFromContext(ctx) || '';
 
-      const resumePath = path.join(process.cwd(), 'src/bots/all-resumes/software_engineer.txt');
-      const resumeText = fs.existsSync(resumePath)
-        ? fs.readFileSync(resumePath, 'utf8')
-        : "Experienced software developer";
+      const { apiRequest: apiClient } = await import('../../core/api_client');
+      const namesResponse = await apiClient(
+        `/api/upload?userId=${encodeURIComponent(clientEmail || (ctx as any)?.config?.formData?.email || '')}`,
+        'GET'
+      );
+      const uploadFiles = Array.isArray(namesResponse?.files) ? namesResponse.files : [];
+      const resumeNames = uploadFiles
+        .map((f: any) => f?.name)
+        .filter((name: unknown): name is string =>
+          typeof name === 'string' && ['.doc', '.docx', '.pdf'].some((ext) => name.toLowerCase().endsWith(ext))
+        );
+      const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+      const selectedResumeName =
+        (preferredResumeFileName && resumeNames.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
+        resumeNames.find((name: string) => name.toLowerCase().includes('resume')) ||
+        resumeNames[0];
+      if (!selectedResumeName) {
+        throw new Error('No uploaded .doc/.docx/.pdf resume found for intelligent Q&A fallback.');
+      }
+      const resumeFileData = await apiClient(
+        `/api/upload?userId=${encodeURIComponent(clientEmail || (ctx as any)?.config?.formData?.email || '')}&filename=${encodeURIComponent(selectedResumeName)}`,
+        'GET'
+      );
+      const resumeText = typeof resumeFileData?.content === 'string' ? resumeFileData.content : '';
+      if (!resumeText.trim()) {
+        throw new Error(`Uploaded resume ${selectedResumeName} is empty for intelligent Q&A fallback.`);
+      }
 
       const compareRequestBody = {
         userId: clientEmail || (ctx as any)?.config?.formData?.email || 'unknown@local',
@@ -244,11 +267,10 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
       console.log(`📋 Q&A API request (POST /api/employer-questions/compare):\n${JSON.stringify(compareRequestBody, null, 2)}`);
 
       // Use apiRequest helper for authenticated calls
-      const { apiRequest } = await import('../../core/api_client');
       let data: any;
       let answerPayload: unknown;
       try {
-        data = await apiRequest('/api/employer-questions/compare', 'POST', compareRequestBody);
+        data = await apiClient('/api/employer-questions/compare', 'POST', compareRequestBody);
         const results = Array.isArray(data?.results) ? data.results : [];
         const firstSuccessful = results.find((r: any) => r && !r.error && typeof r.text === 'string');
         answerPayload = firstSuccessful?.text ?? '';
@@ -256,7 +278,7 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
         logger.warn('qa.compare_api_failed', 'Primary compare API failed, using questionAndAnswers fallback', {
           error: compareError instanceof Error ? compareError.message : String(compareError)
         });
-        data = await apiRequest('/api/questionAndAnswers', 'POST', fallbackRequestBody);
+        data = await apiClient('/api/questionAndAnswers', 'POST', fallbackRequestBody);
         answerPayload = data?.answers;
       }
 

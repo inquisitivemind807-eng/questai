@@ -7,6 +7,7 @@
   import '$styles/shared.css';
   import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
   import jsPDF from 'jspdf';
+  import { registerManagedFile } from '$lib/file-manager';
 
   let user: any = null;
   let jobs: any[] = [];
@@ -39,6 +40,12 @@
   let jwtToken: string = '';
 
   const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+  const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+  function isSupportedResumeFile(name: string): boolean {
+    const lower = String(name || '').toLowerCase();
+    return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  }
 
   onMount(async () => {
     // Check authentication
@@ -83,29 +90,30 @@
   async function loadAvailableResumes() {
     isLoadingResume = true;
     try {
-      // Try to load resumes from corpus-rag uploads
-      const resumeFiles = await invoke('list_files', { path: 'data/uploads' });
-      availableResumes = resumeFiles
-        .filter((file: string) => file.endsWith('.txt') || file.endsWith('.pdf.txt'))
-        .map((file: string) => ({
-          name: file,
-          type: file.endsWith('.pdf.txt') ? 'pdf' : 'txt'
-        }));
-
-      // If no resumes found, try default location
-      if (availableResumes.length === 0) {
-        try {
-          const defaultResumes = await invoke('list_files', { path: 'src/bots/all-resumes' });
-          availableResumes = defaultResumes
-            .filter((file: string) => file.endsWith('.txt'))
-            .map((file: string) => ({
-              name: file,
-              type: 'txt'
-            }));
-        } catch (err) {
-          console.log('No default resumes found');
-        }
+      const userId = user?.email || '';
+      if (!userId) {
+        availableResumes = [];
+        return;
       }
+      const res = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userId)}`, {
+        headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}
+      });
+      if (!res.ok) {
+        availableResumes = [];
+        return;
+      }
+      const data = await res.json();
+      const files = (Array.isArray(data?.files) ? data.files : [])
+        .map((f: any) => f?.name)
+        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+      availableResumes = files.map((file: string) => ({
+        name: file,
+        type: file.toLowerCase().endsWith('.pdf')
+          ? 'pdf'
+          : file.toLowerCase().endsWith('.docx')
+            ? 'docx'
+            : 'doc'
+      }));
 
       if (availableResumes.length > 0 && !selectedResumeFile) {
         selectedResumeFile = availableResumes[0].name;
@@ -122,25 +130,19 @@
     if (!selectedResumeFile) return;
 
     try {
-      // Try to load from corpus-rag uploads first
-      let resumePath = `data/uploads/${user?.email || 'default'}/${selectedResumeFile}`;
-      let resumeText = '';
-
-      try {
-        resumeText = await invoke('read_file_async', { filename: resumePath });
-      } catch (err) {
-        // Try default location
-        try {
-          resumePath = `src/bots/all-resumes/${selectedResumeFile}`;
-          resumeText = await invoke('read_file_async', { filename: resumePath });
-        } catch (err2) {
-          console.error('Failed to load resume:', err2);
-          alert('Failed to load resume file');
-          return;
+      const userId = user?.email || '';
+      const res = await fetch(
+        `${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userId)}&filename=${encodeURIComponent(selectedResumeFile)}`,
+        {
+          headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}
         }
+      );
+      if (!res.ok) {
+        alert('Failed to load resume file');
+        return;
       }
-
-      originalResume = resumeText;
+      const data = await res.json();
+      originalResume = typeof data?.content === 'string' ? data.content : '';
     } catch (error: any) {
       console.error('Failed to load resume:', error);
       alert('Failed to load resume: ' + error.message);
@@ -399,7 +401,7 @@
     
     try {
       const lines1 = originalResume.split('\n');
-      const lines2 = enhancedResume.split('\n');
+      const lines2 = (enhancedResume || '').split('\n');
       
       analysisResult = {
         totalLines: lines2.length,
@@ -566,6 +568,28 @@
     const sizes = ['Bytes', 'KB', 'MB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return Math.round(bytes / Math.pow(k, i)) + ' ' + sizes[i];
+  }
+
+  async function saveEnhancedResumeToLocalFiles() {
+    if (!enhancedResume?.trim() || !user?.email) return;
+    const company = (selectedJob?.company || 'company').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const filename = `enhanced-resume-${company}-${Date.now()}.txt`;
+    try {
+      await registerManagedFile({
+        userId: user.email,
+        feature: 'enhancement',
+        filename,
+        content: enhancedResume,
+        jobId: selectedJob?.jobId || selectedJob?.filename,
+        sourceRoute: '/resume-enhancement',
+        mimeType: 'text/plain',
+        tags: ['generated', 'resume-enhancement']
+      });
+      alert('Saved to local Files Manager');
+    } catch (error: any) {
+      console.error('Failed saving enhanced resume locally:', error);
+      alert(`Failed to save locally: ${error?.message || error}`);
+    }
   }
 </script>
 
@@ -925,6 +949,9 @@
                   </button>
                 </div>
                 <div class="download-actions">
+                  <button class="download-btn" on:click={saveEnhancedResumeToLocalFiles}>
+                    💾 Save Local
+                  </button>
                   <button class="download-btn" on:click={downloadAsDocx}>
                     📄 DOCX
                   </button>
