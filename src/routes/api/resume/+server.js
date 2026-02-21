@@ -49,7 +49,8 @@ async function loadResumeFromUploads(userId, authHeader, preferredResumeFileName
     }
   );
   if (!fileRes.ok) {
-    throw new Error(`Failed to load uploaded resume file (${fileRes.status})`);
+    const fileErr = await fileRes.json().catch(() => ({}));
+    throw new Error(fileErr?.error || `Failed to load uploaded resume file (${fileRes.status})`);
   }
   const fileData = await fileRes.json();
   const content = typeof fileData?.content === 'string' ? fileData.content.trim() : '';
@@ -132,7 +133,8 @@ Format your response clearly showing:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': authHeader  // Forward auth token
+        'Authorization': authHeader,  // Forward auth token
+        'X-Resume-Source': 'finalboss-managed'
       },
       body: JSON.stringify(requestBody)
     });
@@ -152,8 +154,10 @@ Format your response clearly showing:
 
       // Parse fit scores from the response
       const enhancedResumeText = data.resume;
-      const originalFitMatch = enhancedResumeText.match(/Original Fit Score:\s*(\d+)%/i);
-      const enhancedFitMatch = enhancedResumeText.match(/Enhanced Fit Score:\s*(\d+)%/i);
+      // Accept both plain and markdown-bold labels, e.g.
+      // "Original Fit Score: 85%" or "**Original Fit Score:** 85%"
+      const originalFitMatch = enhancedResumeText.match(/\*{0,2}\s*Original Fit Score\s*:?\s*\*{0,2}\s*(\d+)%/i);
+      const enhancedFitMatch = enhancedResumeText.match(/\*{0,2}\s*Enhanced Fit Score\s*:?\s*\*{0,2}\s*(\d+)%/i);
 
       return json({
         success: true,

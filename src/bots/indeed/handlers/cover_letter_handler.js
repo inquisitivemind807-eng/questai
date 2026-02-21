@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
+import { readCanonicalResumeText } from '../../../lib/canonical-resume';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,47 +10,17 @@ const __dirname = path.dirname(__filename);
 const printLog = (message) => {
   console.log(message);
 };
-const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
-
-/** @param {string} name */
-function isSupportedResumeFile(name) {
-  const lower = String(name || '').toLowerCase();
-  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
-}
 
 /** @param {any} ctx */
 async function resolveResumeText(ctx) {
-  const { apiRequest } = await import('../../core/api_client.js');
   const userEmail = String(ctx?.config?.formData?.email || '').trim();
   if (!userEmail) {
-    throw new Error('Missing user email. Uploaded resume lookup requires email in config.');
+    throw new Error('Missing user email. Canonical resume lookup requires email in config.');
   }
-
-  const listData = await apiRequest(`/api/upload?userId=${encodeURIComponent(userEmail)}`, 'GET');
-  const files = Array.isArray(listData?.files) ? /** @type {Array<{name?: string}>} */ (listData.files) : [];
-  const names = files
-    .map((f) => f?.name)
-    .filter((name) => typeof name === 'string' && isSupportedResumeFile(name))
-    .map((name) => String(name));
-  if (names.length === 0) {
-    throw new Error(`No uploaded .doc/.docx/.pdf resume found for ${userEmail}`);
-  }
-
   const preferredResumeFileName = String(ctx?.config?.formData?.resumeFileName || '').trim();
-  const selectedName =
-    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
-    names.find((name) => String(name).toLowerCase().includes('resume')) ||
-    names[0];
-
-  const fileData = await apiRequest(
-    `/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(selectedName)}`,
-    'GET'
-  );
-  if (typeof fileData?.content !== 'string' || fileData.content.trim().length === 0) {
-    throw new Error(`Uploaded resume ${selectedName} is empty for ${userEmail}`);
-  }
-  printLog(`📄 Using uploaded resume: ${selectedName}`);
-  return fileData.content;
+  const resume = readCanonicalResumeText(userEmail, preferredResumeFileName);
+  printLog(`📄 Using canonical resume: ${resume.filename}`);
+  return resume.content;
 }
 
 /** @param {any} ctx */

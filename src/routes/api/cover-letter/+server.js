@@ -1,8 +1,19 @@
 import { json } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
+import fs from 'fs';
+import path from 'path';
 
 const API_BASE = env.API_BASE || process.env.API_BASE || 'http://localhost:3000';
 const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+/**
+ * @typedef {Object} ManagedResumeEntry
+ * @property {string=} feature
+ * @property {string=} filename
+ * @property {string=} relativePath
+ * @property {string=} relative_path
+ * @property {string|number=} updatedAt
+ * @property {string|number=} updated_at
+ */
 
 /** @param {string} name */
 function isSupportedResumeFile(name) {
@@ -10,58 +21,171 @@ function isSupportedResumeFile(name) {
   return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
+/**
+ * @param {string} userId
+ * @returns {string}
+ */
+function sanitizeSegment(userId) {
+  const raw = String(userId || '');
+  let out = '';
+  for (const ch of raw) {
+    out += /^[a-zA-Z0-9._-]$/.test(ch) ? ch : '_';
+  }
+  const trimmed = out.replace(/^_+|_+$/g, '');
+  return trimmed || 'unknown';
+}
+
+function getAppDataRoot() {
+  const home = process.env.HOME || '';
+  if (process.platform === 'win32') {
+    const base = process.env.APPDATA || process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Roaming');
+    return path.join(base, 'FinalBoss');
+  }
+  if (process.platform === 'darwin') {
+    return path.join(home, 'Library', 'Application Support', 'FinalBoss');
+  }
+  const base = process.env.XDG_DATA_HOME || path.join(home, '.local', 'share');
+  return path.join(base, 'finalboss');
+}
+
+/** @param {string} userId */
+function getManagedIndexPath(userId) {
+  return path.join(getAppDataRoot(), 'users', sanitizeSegment(userId), 'index', 'files-index.json');
+}
+
+/** @param {string} userId */
+function getManagedUserRoot(userId) {
+  return path.join(getAppDataRoot(), 'users', sanitizeSegment(userId));
+}
+
+/** @param {string} userId */
+function loadManagedIndex(userId) {
+  const indexPath = getManagedIndexPath(userId);
+  if (!fs.existsSync(indexPath)) return { entries: [] };
+  const raw = fs.readFileSync(indexPath, 'utf8');
+  const parsed = JSON.parse(raw);
+  return {
+    entries: Array.isArray(parsed?.entries) ? parsed.entries : []
+  };
+}
+
+/** @param {string} userId @param {{ relativePath?: string, relative_path?: string }} entry */
+function resolveManagedEntryPath(userId, entry) {
+  const userRoot = getManagedUserRoot(userId);
+  const rel = String(entry?.relativePath || entry?.relative_path || '');
+  if (!rel || path.isAbsolute(rel)) {
+    throw new Error('Managed resume path is invalid.');
+  }
+  const normalizedRel = rel.split('/').join(path.sep);
+  const parts = normalizedRel.split(path.sep);
+  if (parts[0] !== 'storage' || parts.includes('..')) {
+    throw new Error('Managed resume path is unsafe.');
+  }
+  const full = path.join(userRoot, normalizedRel);
+  if (!full.startsWith(userRoot)) {
+    throw new Error('Managed resume path escaped user root.');
+  }
+  return full;
+}
+
+/** @param {string} filename */
+function guessMimeType(filename) {
+  const lower = String(filename || '').toLowerCase();
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.docx')) return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+  if (lower.endsWith('.doc')) return 'application/msword';
+  return 'application/octet-stream';
+}
+
+/** @param {string} userId */
+function listManagedResumeEntries(userId) {
+  const index = loadManagedIndex(userId);
+  /** @type {ManagedResumeEntry[]} */
+  const entries = index.entries
+    .filter((/** @type {ManagedResumeEntry} */ entry) => entry?.feature === 'resume' && isSupportedResumeFile(String(entry?.filename || '')))
+    .sort((/** @type {ManagedResumeEntry} */ a, /** @type {ManagedResumeEntry} */ b) => Number(b?.updatedAt || b?.updated_at || 0) - Number(a?.updatedAt || a?.updated_at || 0));
+
+  if (entries.length === 0) {
+    throw new Error(`No managed .doc/.docx/.pdf resume files found for userId ${userId}`);
+  }
+
+  return entries;
+}
+
 /** @param {string} userId @param {string} authHeader @param {string} [preferredResumeFileName] */
-async function loadResumeFromUploads(userId, authHeader, preferredResumeFileName = '') {
+async function loadResumeFromManagedStorage(userId, authHeader, preferredResumeFileName = '') {
   if (!userId) {
-    throw new Error('Missing userId. Cannot resolve uploaded resume.');
-  }
-  const listRes = await fetch(`${API_BASE}/api/upload?userId=${encodeURIComponent(userId)}`, {
-    method: 'GET',
-    headers: {
-      'Authorization': authHeader
-    }
-  });
-  if (!listRes.ok) {
-    throw new Error(`Failed to list uploaded resumes (${listRes.status})`);
-  }
-  const listData = await listRes.json();
-  const files = Array.isArray(listData?.files) ? /** @type {Array<{name?: string}>} */ (listData.files) : [];
-  if (files.length === 0) {
-    throw new Error(`No uploaded resumes found for userId ${userId}`);
+    throw new Error('Missing userId. Cannot resolve managed resume.');
   }
 
-  const names = files
-    .map((f) => f?.name)
-    .filter((name) => typeof name === 'string' && isSupportedResumeFile(name))
-    .map((name) => String(name));
-  if (names.length === 0) {
-    throw new Error(`No uploaded .doc/.docx/.pdf resume files found for userId ${userId}`);
+  const entries = listManagedResumeEntries(userId);
+  const preferred = preferredResumeFileName
+    ? entries.find((/** @type {ManagedResumeEntry} */ entry) => String(entry?.filename || '') === preferredResumeFileName)
+    : undefined;
+  const resumeNamed = entries.find((/** @type {ManagedResumeEntry} */ entry) => String(entry?.filename || '').toLowerCase().includes('resume'));
+  /** @type {ManagedResumeEntry[]} */
+  const orderedCandidates = [];
+  const seen = new Set();
+  for (const candidate of [preferred, resumeNamed, ...entries]) {
+    if (!candidate) continue;
+    const key = String(candidate.filename || candidate.relativePath || candidate.relative_path || '');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    orderedCandidates.push(candidate);
   }
+  /** @type {string[]} */
+  const failures = [];
 
-  const selectedName =
-    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
-    names.find((name) => String(name).toLowerCase().includes('resume')) ||
-    names[0];
+  for (const selected of orderedCandidates) {
+    const selectedName = String(selected?.filename || '').trim();
+    if (!selectedName) continue;
 
-  const fileRes = await fetch(
-    `${API_BASE}/api/upload?userId=${encodeURIComponent(userId)}&filename=${encodeURIComponent(selectedName)}`,
-    {
-      method: 'GET',
-      headers: {
-        'Authorization': authHeader
+    try {
+      const fullPath = resolveManagedEntryPath(userId, selected);
+      if (!fs.existsSync(fullPath)) {
+        failures.push(`${selectedName}: managed file missing on disk`);
+        continue;
       }
+
+      const binary = fs.readFileSync(fullPath);
+      const mimeType = guessMimeType(selectedName);
+      const formData = new FormData();
+      formData.append('userId', userId);
+      formData.append('file', new Blob([binary], { type: mimeType }), selectedName);
+
+      const fileRes = await fetch(
+        `${API_BASE}/api/upload`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: authHeader
+          },
+          body: formData
+        }
+      );
+      if (!fileRes.ok) {
+        const fileErr = await fileRes.json().catch(() => ({}));
+        failures.push(`${selectedName}: ${fileErr?.error || `extract failed (${fileRes.status})`}`);
+        continue;
+      }
+      const fileData = await fileRes.json();
+      const content = typeof fileData?.content === 'string' ? fileData.content.trim() : '';
+      if (!content) {
+        failures.push(`${selectedName}: extracted content is empty`);
+        continue;
+      }
+      return content;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${selectedName}: ${message}`);
     }
+  }
+
+  throw new Error(
+    `Unable to extract any managed resume for userId ${userId}. ` +
+      `Tried ${orderedCandidates.length} file(s). ` +
+      `Failures: ${failures.join(' | ')}`
   );
-  if (!fileRes.ok) {
-    const fileErr = await fileRes.json().catch(() => ({}));
-    throw new Error(fileErr?.error || `Failed to load uploaded resume file (${fileRes.status})`);
-  }
-  const fileData = await fileRes.json();
-  const content = typeof fileData?.content === 'string' ? fileData.content.trim() : '';
-  if (content.length === 0) {
-    throw new Error(`Uploaded resume file is empty for userId ${userId}`);
-  }
-  return content;
 }
 
 /** @param {string} userId */
@@ -115,9 +239,9 @@ export async function POST({ request }) {
       }, { status: 400 });
     }
 
-    // Strict mode: only use uploaded resume associated with this user.
+    // Strict mode: only use FinalBoss managed resume associated with this user.
     const contactProfile = await loadContactProfile(userId);
-    const resumeText = await loadResumeFromUploads(
+    const resumeText = await loadResumeFromManagedStorage(
       userId,
       authHeader,
       contactProfile?.resume_file_name || ''
@@ -152,7 +276,8 @@ Focus on demonstrating value and enthusiasm for the role.`
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': authHeader  // Forward auth token
+        'Authorization': authHeader,  // Forward auth token
+        'X-Resume-Source': 'finalboss-managed'
       },
       body: JSON.stringify(requestBody)
     });

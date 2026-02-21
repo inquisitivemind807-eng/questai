@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
 import { logger } from '../../core/logger';
+import { readCanonicalResumeText } from '../../../lib/canonical-resume';
 
 /**
  * Parse API response text like "**Question 1:**\nAnswer one\n\n**Question 2:**\nAnswer two"
@@ -196,37 +197,22 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
       const jobId = jobData.job_id || jobData.jobId || 'unknown';
       const platform = (ctx as any).platform || (ctx.currentJobFile && ctx.currentJobFile.includes('linkedinjobs') ? 'linkedin' : 'seek');
       const clientEmail = getClientEmailFromContext(ctx) || '';
+      const fallbackEmail = String((ctx as any)?.config?.formData?.email || '').trim();
+      const userEmail = clientEmail || fallbackEmail;
+      if (!userEmail) {
+        throw new Error('Missing user email. Canonical resume lookup requires email in config.');
+      }
+      const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+      const resume = readCanonicalResumeText(userEmail, preferredResumeFileName);
+      const resumeText = String(resume.content || '').trim();
+      if (!resumeText) {
+        throw new Error(`Canonical resume ${resume.filename} is empty for intelligent Q&A fallback.`);
+      }
 
       const { apiRequest: apiClient } = await import('../../core/api_client');
-      const namesResponse = await apiClient(
-        `/api/upload?userId=${encodeURIComponent(clientEmail || (ctx as any)?.config?.formData?.email || '')}`,
-        'GET'
-      );
-      const uploadFiles = Array.isArray(namesResponse?.files) ? namesResponse.files : [];
-      const resumeNames = uploadFiles
-        .map((f: any) => f?.name)
-        .filter((name: unknown): name is string =>
-          typeof name === 'string' && ['.doc', '.docx', '.pdf'].some((ext) => name.toLowerCase().endsWith(ext))
-        );
-      const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
-      const selectedResumeName =
-        (preferredResumeFileName && resumeNames.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
-        resumeNames.find((name: string) => name.toLowerCase().includes('resume')) ||
-        resumeNames[0];
-      if (!selectedResumeName) {
-        throw new Error('No uploaded .doc/.docx/.pdf resume found for intelligent Q&A fallback.');
-      }
-      const resumeFileData = await apiClient(
-        `/api/upload?userId=${encodeURIComponent(clientEmail || (ctx as any)?.config?.formData?.email || '')}&filename=${encodeURIComponent(selectedResumeName)}`,
-        'GET'
-      );
-      const resumeText = typeof resumeFileData?.content === 'string' ? resumeFileData.content : '';
-      if (!resumeText.trim()) {
-        throw new Error(`Uploaded resume ${selectedResumeName} is empty for intelligent Q&A fallback.`);
-      }
 
       const compareRequestBody = {
-        userId: clientEmail || (ctx as any)?.config?.formData?.email || 'unknown@local',
+        userId: userEmail || 'unknown@local',
         prompt: getEmployerQuestionsComparePrompt(),
         questions: aiQuestions.map((q: { q: string; opts: string[] }, idx: number) => ({
           q: q.q,

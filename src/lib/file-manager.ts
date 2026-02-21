@@ -29,6 +29,17 @@ export interface RegisterManagedFileInput {
   tags?: string[];
 }
 
+export interface RegisterManagedBinaryFileInput {
+  userId: string;
+  feature: ManagedFeature | string;
+  filename: string;
+  contentBase64: string;
+  jobId?: string;
+  sourceRoute?: string;
+  mimeType?: string;
+  tags?: string[];
+}
+
 export interface ManagedFilesQuotaInfo {
   usedFileCount: number;
   maxFileCount: number;
@@ -51,6 +62,21 @@ export async function registerManagedFile(input: RegisterManagedFileInput): Prom
       feature: input.feature,
       filename: input.filename,
       content: input.content,
+      jobId: input.jobId,
+      sourceRoute: input.sourceRoute,
+      mimeType: input.mimeType,
+      tags: input.tags ?? []
+    }
+  });
+}
+
+export async function registerManagedBinaryFile(input: RegisterManagedBinaryFileInput): Promise<ManagedFileEntry> {
+  return invoke<ManagedFileEntry>('register_managed_file_base64', {
+    input: {
+      userId: input.userId,
+      feature: input.feature,
+      filename: input.filename,
+      contentBase64: input.contentBase64,
       jobId: input.jobId,
       sourceRoute: input.sourceRoute,
       mimeType: input.mimeType,

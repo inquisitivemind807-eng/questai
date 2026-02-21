@@ -7,7 +7,6 @@
   import '$styles/shared.css';
   import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
   import jsPDF from 'jspdf';
-  import { registerManagedFile } from '$lib/file-manager';
 
   let user: any = null;
   let jobs: any[] = [];
@@ -28,9 +27,17 @@
   let lastSavedPrompt: string = '';
   let isPromptExpanded: boolean = false;
   let isPromptModified: boolean = false;
-  let availableResumes: any[] = [];
-  let selectedResumeFile: string = '';
+  let configuredResumeName: string = '';
+  let configuredResumeType: 'doc' | 'docx' | 'pdf' = 'docx';
+  let configuredResumeStatus: string = '';
+  let configuredResumePath: string = '';
+  let configuredResumeCleanPath: string = '';
+  let configuredResumeFileId: string = '';
+  let currentUserId: string = '';
   let isLoadingResume: boolean = false;
+  let resumeLoadSuccess: boolean = false;
+  let lastEnhancedResumeFile: { id: string; filename: string; size: number } | null = null;
+  let lastEnhancedResumeFilePath: string = '';
   let isEditingJob: boolean = false;
   let editedJobDescription: string = '';
   let editedJobData: any = null;
@@ -38,16 +45,24 @@
   let newJob = { company: '', title: '', location: '', description: '' };
   let isSavingPrompt: boolean = false;
   let jwtToken: string = '';
+  let isDownloading: boolean = false;
+  let downloadSuccess: boolean = false;
+  let downloadPath: string = '';
 
   const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
   const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
+
+  type ManagedResumeEntry = {
+    id: string;
+    filename: string;
+  };
 
   function isSupportedResumeFile(name: string): boolean {
     const lower = String(name || '').toLowerCase();
     return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
   }
 
-  onMount(async () => {
+  onMount(() => {
     // Check authentication
     if (!$authService.isLoggedIn) {
       goto('/login');
@@ -55,18 +70,114 @@
     }
 
     user = $authService.user;
-    await getJwtToken();
+    getJwtToken();
     loadJobs();
-    loadAvailableResumes();
+    loadConfiguredResume();
+    
+    // Auto-refresh resume when page becomes visible (e.g., after switching tabs)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('Page visible, refreshing resume data...');
+        loadConfiguredResume();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Cleanup
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   });
+
+  function toResumeType(name: string): 'doc' | 'docx' | 'pdf' {
+    const lower = String(name || '').toLowerCase();
+    if (lower.endsWith('.pdf')) return 'pdf';
+    if (lower.endsWith('.docx')) return 'docx';
+    return 'doc';
+  }
+
+  async function getManagedResumeEntries(userId: string): Promise<ManagedResumeEntry[]> {
+    const rows = await invoke<any[]>('get_managed_files', {
+      query: {
+        userId,
+        feature: 'resume'
+      }
+    });
+    return Array.isArray(rows)
+      ? rows.map((row: any) => ({
+          id: String(row?.id || ''),
+          filename: String(row?.filename || '')
+        }))
+      : [];
+  }
+
+  async function previewManagedResume(userId: string, fileId: string): Promise<string> {
+    const text = await invoke<string>('preview_managed_file', {
+      query: { userId, fileId, maxChars: 1_000_000 }
+    });
+    return String(text || '');
+  }
+
+  async function registerManagedBinaryEnhancement(input: {
+    userId: string;
+    filename: string;
+    contentBase64: string;
+    jobId?: string;
+    mimeType: string;
+    tags: string[];
+  }): Promise<any> {
+    return await invoke('register_managed_file_base64', {
+      input: {
+        userId: input.userId,
+        feature: 'enhancement',
+        filename: input.filename,
+        contentBase64: input.contentBase64,
+        jobId: input.jobId,
+        sourceRoute: '/resume-enhancement',
+        mimeType: input.mimeType,
+        tags: input.tags
+      }
+    });
+  }
+
+
+  async function downloadUpdatedResume(fileId: string) {
+    try {
+      isDownloading = true;
+      downloadSuccess = false;
+      downloadPath = '';
+      
+      const userId = user?.email || '';
+      if (!userId || !fileId) return;
+      
+      const result = await invoke<string>('save_managed_file_to_downloads', {
+        input: { userId, fileId }
+      });
+      
+      downloadPath = result.replace('Saved to:\n', '');
+      downloadSuccess = true;
+    } catch (error: any) {
+      console.error('Failed to save enhanced resume to Downloads:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      alert(`❌ Failed to save to Downloads:\n${message}`);
+    } finally {
+      isDownloading = false;
+    }
+  }
 
   async function getJwtToken() {
     try {
-      const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-      if (!sessionToken) {
-        console.error('No session token found');
+      // Preferred path: use auth service access token directly.
+      const directAccessToken = await authService.getAccessToken();
+      if (directAccessToken) {
+        jwtToken = directAccessToken;
         return;
       }
+
+      // Legacy fallback: convert older session tokens if present.
+      const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
+      if (!sessionToken) return;
 
       const res = await fetch(`${CORPUS_RAG_API}/api/auth/session-to-jwt`, {
         method: 'POST',
@@ -81,74 +192,136 @@
         if (data.success && data.accessToken) {
           jwtToken = data.accessToken;
         }
+      } else {
+        // Keep visible for debugging, but do not fail hard here.
+        console.warn('session-to-jwt failed with status:', res.status);
       }
     } catch (err) {
       console.error('Failed to get JWT token:', err);
     }
   }
 
-  async function loadAvailableResumes() {
+  async function loadConfiguredResume() {
     isLoadingResume = true;
     try {
       const userId = user?.email || '';
+      currentUserId = userId;
       if (!userId) {
-        availableResumes = [];
+        configuredResumeName = '';
+        configuredResumeStatus = 'No logged-in user found.';
+        configuredResumePath = '';
+        configuredResumeCleanPath = '';
+        configuredResumeFileId = '';
+        originalResume = '';
         return;
       }
-      const res = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userId)}`, {
-        headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}
-      });
-      if (!res.ok) {
-        availableResumes = [];
-        return;
-      }
-      const data = await res.json();
-      const files = (Array.isArray(data?.files) ? data.files : [])
-        .map((f: any) => f?.name)
-        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
-      availableResumes = files.map((file: string) => ({
-        name: file,
-        type: file.toLowerCase().endsWith('.pdf')
-          ? 'pdf'
-          : file.toLowerCase().endsWith('.docx')
-            ? 'docx'
-            : 'doc'
-      }));
 
-      if (availableResumes.length > 0 && !selectedResumeFile) {
-        selectedResumeFile = availableResumes[0].name;
-        await onResumeFileChange();
+      let preferredResumeFileName = '';
+      try {
+        const configContent = await invoke<string>('read_file_async', {
+          filename: 'src/bots/user-bots-config.json'
+        });
+        const parsed = JSON.parse(configContent);
+        preferredResumeFileName = String(parsed?.formData?.resumeFileName || '').trim();
+      } catch {
+        // Continue with managed-files fallback when config file cannot be read.
       }
+
+      const entries = await getManagedResumeEntries(userId);
+      const resumes = entries.filter((entry: any) => isSupportedResumeFile(entry.filename));
+      if (resumes.length === 0) {
+        configuredResumeName = '';
+        configuredResumeStatus = 'No resume found in canonical storage. Upload one from Configuration page.';
+        configuredResumePath = '';
+        configuredResumeCleanPath = '';
+        configuredResumeFileId = '';
+        originalResume = '';
+        return;
+      }
+
+      let selected = preferredResumeFileName
+        ? resumes.find((entry: any) => entry.filename === preferredResumeFileName)
+        : undefined;
+
+      if (!selected) {
+        selected =
+          resumes.find((entry: any) => entry.filename.toLowerCase().includes('resume')) ||
+          resumes[0];
+      }
+
+      configuredResumeName = selected.filename;
+      configuredResumeType = toResumeType(selected.filename);
+
+      // Load preview directly from the resume file (PDF, DOC, DOCX only)
+      try {
+        originalResume = await previewManagedResume(userId, selected.id);
+
+        // If it's a binary file message, make it more user-friendly
+        if (originalResume.startsWith('[Binary file:')) {
+          originalResume = `📄 ${selected.filename}\n\nThis is a ${selected.filename.split('.').pop()?.toUpperCase() || 'document'} file. Click the location link above to open and view the full content.`;
+        }
+      } catch (previewError) {
+        console.warn('Failed to load resume preview:', previewError);
+        originalResume = `📄 ${selected.filename}\n\nPreview not available. Click the location link above to open and view the file content.`;
+      }
+      
+      // Get full file path
+      try {
+        const fullPath = await invoke<string>('get_managed_file_path', {
+          input: { userId, fileId: selected.id }
+        });
+        configuredResumePath = fullPath;
+        configuredResumeFileId = selected.id;
+
+        // Show clean path since working files are now in resumes/ folder
+        const pathParts = fullPath.split('/');
+        const userDir = pathParts.slice(0, -2).join('/'); // Remove storage/resume parts
+        configuredResumeCleanPath = `${userDir}/resumes/${selected.filename}`;
+      } catch (pathError) {
+        console.warn('Could not get file path:', pathError);
+        configuredResumePath = '';
+        configuredResumeCleanPath = '';
+        configuredResumeFileId = '';
+      }
+      
+      configuredResumeStatus = `Using configured resume: ${configuredResumeName}`;
+      resumeLoadSuccess = true;
     } catch (error: any) {
-      console.error('Failed to load resumes:', error);
+      console.error('Failed to load configured resume:', error);
+      configuredResumeName = '';
+      configuredResumeStatus = `Failed to load configured resume: ${error?.message || error}`;
+      configuredResumePath = '';
+      configuredResumeCleanPath = '';
+      configuredResumeFileId = '';
+      originalResume = '';
+      resumeLoadSuccess = false;
     } finally {
       isLoadingResume = false;
     }
   }
 
-  async function onResumeFileChange() {
-    if (!selectedResumeFile) return;
 
+  async function openFilePathHandler(filePath: string) {
     try {
-      const userId = user?.email || '';
-      const res = await fetch(
-        `${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userId)}&filename=${encodeURIComponent(selectedResumeFile)}`,
-        {
-          headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}
-        }
-      );
-      if (!res.ok) {
-        alert('Failed to load resume file');
-        return;
-      }
-      const data = await res.json();
-      originalResume = typeof data?.content === 'string' ? data.content : '';
-    } catch (error: any) {
-      console.error('Failed to load resume:', error);
-      alert('Failed to load resume: ' + error.message);
+      const result = await invoke<string>('open_file_path', { path: filePath });
+      console.log(result);
+    } catch (error) {
+      console.error('Failed to open file:', error);
+      alert('Failed to open file: ' + error);
     }
   }
 
+  async function openManagedFileHandler(userId: string, fileId: string) {
+    try {
+      const result = await invoke('open_managed_file', {
+        input: { userId, fileId }
+      });
+      console.log(result);
+    } catch (error) {
+      console.error('Failed to open managed file:', error);
+      alert('Failed to open managed file: ' + error);
+    }
+  }
 
   function toggleJobForm() {
     showJobForm = !showJobForm;
@@ -331,7 +504,7 @@
     }
 
     if (!originalResume.trim()) {
-      alert('Please select a resume file first');
+      alert('Please configure and upload a valid resume in Configuration page first.');
       return;
     }
 
@@ -381,6 +554,23 @@
         enhancedFitScore = data.enhancedFitScore || 0;
 
         await analyzeEnhancement();
+        const savedFile = await saveEnhancedResumeToLocalFiles(false);
+        if (savedFile) {
+          lastEnhancedResumeFile = savedFile;
+          // Get the file path for the enhanced resume
+          try {
+            const fullPath = await invoke<string>('get_managed_file_path', {
+              input: { userId: currentUserId, fileId: savedFile.id }
+            });
+            // Show the actual path where the enhanced resume is stored
+            lastEnhancedResumeFilePath = fullPath;
+          } catch (error) {
+            console.warn('Could not get enhanced resume file path:', error);
+            lastEnhancedResumeFilePath = '';
+          }
+        } else {
+          console.warn('Enhanced resume generated but auto-save failed.');
+        }
       } else {
         alert('Failed to enhance resume: ' + data.error);
       }
@@ -456,112 +646,6 @@
     return diff;
   }
 
-  async function downloadAsDocx() {
-    if (!enhancedResume) return;
-    
-    try {
-      const lines = enhancedResume.split('\n').filter((line: string) => line.trim());
-      
-      const paragraphs = lines.map((line: string) => {
-        const isHeading = line.length < 50 && (
-          line === line.toUpperCase() ||
-          /^(SUMMARY|EXPERIENCE|EDUCATION|SKILLS|PROJECTS|CERTIFICATIONS)/i.test(line)
-        );
-        
-        if (isHeading) {
-          return new Paragraph({
-            text: line,
-            heading: HeadingLevel.HEADING_2,
-            spacing: { before: 240, after: 120 }
-          });
-        } else {
-          return new Paragraph({
-            children: [new TextRun(line)],
-            spacing: { after: 120 }
-          });
-        }
-      });
-
-      const doc = new Document({
-        sections: [{
-          properties: {},
-          children: paragraphs
-        }]
-      });
-
-      const blob = await Packer.toBlob(doc);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `enhanced_resume_${selectedJob?.company?.replace(/\s+/g, '_') || 'generic'}.docx`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Failed to generate DOCX:', error);
-      alert('Failed to generate DOCX file. Please try again.');
-    }
-  }
-
-  function downloadAsPdf() {
-    if (!enhancedResume) return;
-    
-    try {
-      const doc = new jsPDF();
-      const pageWidth = doc.internal.pageSize.getWidth();
-      const pageHeight = doc.internal.pageSize.getHeight();
-      const margin = 15;
-      const maxWidth = pageWidth - (margin * 2);
-      
-      let yPosition = margin;
-      const lineHeight = 7;
-      
-      const lines = enhancedResume.split('\n');
-      
-      lines.forEach((line: string) => {
-        if (!line.trim()) {
-          yPosition += lineHeight / 2;
-          return;
-        }
-        
-        const isHeading = line.length < 50 && (
-          line === line.toUpperCase() ||
-          /^(SUMMARY|EXPERIENCE|EDUCATION|SKILLS|PROJECTS|CERTIFICATIONS)/i.test(line)
-        );
-        
-        if (isHeading) {
-          doc.setFontSize(14);
-          doc.setFont('helvetica', 'bold');
-        } else {
-          doc.setFontSize(10);
-          doc.setFont('helvetica', 'normal');
-        }
-        
-        const splitLines = doc.splitTextToSize(line, maxWidth);
-        
-        splitLines.forEach((splitLine: string) => {
-          if (yPosition > pageHeight - margin) {
-            doc.addPage();
-            yPosition = margin;
-          }
-          
-          doc.text(splitLine, margin, yPosition);
-          yPosition += lineHeight;
-        });
-        
-        if (isHeading) {
-          yPosition += lineHeight / 2;
-        }
-      });
-      
-      doc.save(`enhanced_resume_${selectedJob?.company?.replace(/\s+/g, '_') || 'generic'}.pdf`);
-    } catch (error) {
-      console.error('Failed to generate PDF:', error);
-      alert('Failed to generate PDF file. Please try again.');
-    }
-  }
-
   function formatFileSize(bytes: number) {
     if (bytes === 0) return '0 KB';
     const k = 1024;
@@ -570,25 +654,144 @@
     return Math.round(bytes / Math.pow(k, i)) + ' ' + sizes[i];
   }
 
-  async function saveEnhancedResumeToLocalFiles() {
-    if (!enhancedResume?.trim() || !user?.email) return;
-    const company = (selectedJob?.company || 'company').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filename = `enhanced-resume-${company}-${Date.now()}.txt`;
-    try {
-      await registerManagedFile({
-        userId: user.email,
-        feature: 'enhancement',
-        filename,
-        content: enhancedResume,
-        jobId: selectedJob?.jobId || selectedJob?.filename,
-        sourceRoute: '/resume-enhancement',
-        mimeType: 'text/plain',
-        tags: ['generated', 'resume-enhancement']
+  function formatDateTime(dateText: string) {
+    const d = new Date(dateText);
+    if (Number.isNaN(d.getTime())) return dateText || '-';
+    return d.toLocaleString();
+  }
+
+  function arrayBufferToBase64(buffer: ArrayBuffer): string {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, i + chunkSize);
+      binary += String.fromCharCode(...chunk);
+    }
+    return btoa(binary);
+  }
+
+  async function buildEnhancedResumeDocxBlob(text: string): Promise<Blob> {
+    const lines = text.split('\n').filter((line: string) => line.trim());
+    const paragraphs = lines.map((line: string) => {
+      const isHeading = line.length < 50 && (
+        line === line.toUpperCase() ||
+        /^(SUMMARY|EXPERIENCE|EDUCATION|SKILLS|PROJECTS|CERTIFICATIONS)/i.test(line)
+      );
+      if (isHeading) {
+        return new Paragraph({
+          text: line,
+          heading: HeadingLevel.HEADING_2,
+          spacing: { before: 240, after: 120 }
+        });
+      }
+      return new Paragraph({
+        children: [new TextRun(line)],
+        spacing: { after: 120 }
       });
-      alert('Saved to local Files Manager');
+    });
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: paragraphs
+      }]
+    });
+    return Packer.toBlob(doc);
+  }
+
+  function buildEnhancedResumePdfArrayBuffer(text: string): ArrayBuffer {
+    const doc = new jsPDF();
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const margin = 15;
+    const maxWidth = pageWidth - (margin * 2);
+    let yPosition = margin;
+    const lineHeight = 7;
+
+    const lines = text.split('\n');
+    lines.forEach((line: string) => {
+      if (!line.trim()) {
+        yPosition += lineHeight / 2;
+        return;
+      }
+
+      const isHeading = line.length < 50 && (
+        line === line.toUpperCase() ||
+        /^(SUMMARY|EXPERIENCE|EDUCATION|SKILLS|PROJECTS|CERTIFICATIONS)/i.test(line)
+      );
+
+      if (isHeading) {
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+      } else {
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'normal');
+      }
+
+      const splitLines = doc.splitTextToSize(line, maxWidth);
+      splitLines.forEach((splitLine: string) => {
+        if (yPosition > pageHeight - margin) {
+          doc.addPage();
+          yPosition = margin;
+        }
+        doc.text(splitLine, margin, yPosition);
+        yPosition += lineHeight;
+      });
+
+      if (isHeading) {
+        yPosition += lineHeight / 2;
+      }
+    });
+
+    return doc.output('arraybuffer');
+  }
+
+  async function saveEnhancedResumeToLocalFiles(showAlert = true) {
+    if (!enhancedResume?.trim() || !user?.email) return false;
+    const company = (selectedJob?.company || 'company').replace(/[^a-zA-Z0-9._-]/g, '_');
+    try {
+      const selectedType = configuredResumeType === 'pdf' ? 'pdf' : 'docx';
+      const extension = selectedType === 'pdf' ? 'pdf' : 'docx';
+      const filename = `enhanced-resume-${company}-${Date.now()}.${extension}`;
+
+      let base64Payload = '';
+      let mimeType = '';
+      if (selectedType === 'pdf') {
+        const pdfBuffer = buildEnhancedResumePdfArrayBuffer(enhancedResume);
+        base64Payload = arrayBufferToBase64(pdfBuffer);
+        mimeType = 'application/pdf';
+      } else {
+        const docxBlob = await buildEnhancedResumeDocxBlob(enhancedResume);
+        const docxBuffer = await docxBlob.arrayBuffer();
+        base64Payload = arrayBufferToBase64(docxBuffer);
+        mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      }
+
+      const managedFileEntry = await registerManagedBinaryEnhancement({
+        userId: user.email,
+        filename,
+        contentBase64: base64Payload,
+        jobId: selectedJob?.jobId || selectedJob?.filename,
+        mimeType,
+        tags: ['generated', 'resume-enhancement', selectedType]
+      });
+      if (showAlert) {
+        alert('Saved to local Files Manager');
+      }
+
+      const fileSize = Math.ceil(base64Payload.length * 0.75);
+      return {
+        id: managedFileEntry.id,
+        filename: managedFileEntry.filename,
+        size: fileSize
+      };
     } catch (error: any) {
       console.error('Failed saving enhanced resume locally:', error);
-      alert(`Failed to save locally: ${error?.message || error}`);
+      if (showAlert) {
+        alert(`Failed to save locally: ${error?.message || error}`);
+      }
+      return false;
     }
   }
 </script>
@@ -600,47 +803,121 @@
   </div>
 
   <div class="main-content">
-    <!-- Resume Selection -->
+    <!-- Configured Resume -->
     <div class="resume-selector-section">
       {#if isLoadingResume}
-        <div class="resume-loading">
-          <div class="spinner"></div>
-          <span>Loading resumes...</span>
+        <div style="padding: 14px; background: rgba(102, 126, 234, 0.05); border: 1px solid rgba(102, 126, 234, 0.2); border-radius: 8px;">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="spinner"></div>
+            <span>Loading configured resume...</span>
+          </div>
+          <div style="margin-top: 12px;">
+            <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden;">
+              <div class="progress-bar"></div>
+            </div>
+          </div>
         </div>
-      {:else if availableResumes.length === 0}
-        <div class="resume-empty">
-          <span class="empty-icon">📄</span>
-          <p>No resumes found. <a href="/upload">Upload your resume</a> to get started.</p>
-        </div>
-      {:else}
-        <div class="resume-selector">
-          <label for="resume-select" class="selector-label">
-            <span class="label-icon">📄</span>
-            <span class="label-text">Select Resume</span>
-          </label>
-          <div class="selector-wrapper">
-            <select
-              id="resume-select"
-              class="resume-dropdown"
-              bind:value={selectedResumeFile}
-              on:change={onResumeFileChange}
+      {:else if configuredResumePath}
+        <div style="padding: 14px; background: rgba(102, 126, 234, 0.1); border: 2px solid rgba(102, 126, 234, 0.4); border-radius: 8px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <div style="font-weight: 700; font-size: 1.05rem; color: #667eea;">
+              📄 Using Resume
+            </div>
+            <button 
+              onclick={loadConfiguredResume}
+              disabled={isLoadingResume}
+              style="padding: 4px 12px; background: rgba(102, 126, 234, 0.2); border: 1px solid rgba(102, 126, 234, 0.4); border-radius: 4px; color: #667eea; cursor: pointer; font-size: 0.85rem; font-weight: 600;"
+              title="Refresh resume data"
             >
-              {#each availableResumes as file}
-                <option value={file.name}>
-                  {file.name} ({file.type.toUpperCase()})
-                </option>
-              {/each}
-            </select>
-            <button class="refresh-icon-btn" on:click={loadAvailableResumes} disabled={isLoadingResume} title="Refresh files">
-              🔄
+              🔄 Refresh
+            </button>
+          </div>
+          <div style="font-size: 0.95rem; margin-bottom: 6px;">
+            <strong>File:</strong> {configuredResumeName}
+          </div>
+          <div style="font-size: 0.85rem; word-break: break-all; margin-bottom: 6px; opacity: 0.9;">
+            <strong>Location:</strong>
+            <button
+              onclick={() => openManagedFileHandler(currentUserId, configuredResumeFileId)}
+              style="background: none; border: none; color: #667eea; text-decoration: underline; cursor: pointer; padding: 0; font-size: inherit; text-align: left; word-break: break-all;"
+              title="Click to open file"
+            >
+              {configuredResumeCleanPath}
             </button>
           </div>
           {#if originalResume}
-            <div class="resume-loaded-indicator">
-              <span class="indicator-icon">✓</span>
-              <span class="indicator-text">
-                {originalResume.split('\n').length} lines · {originalResume.length} characters
-              </span>
+            <div style="font-size: 0.85rem; opacity: 0.8;">
+              {originalResume.split('\n').length} lines · {originalResume.length} characters
+            </div>
+          {/if}
+        </div>
+      {:else if configuredResumeStatus}
+        <div class="indicator-text" style="font-size: 0.85rem;">{configuredResumeStatus}</div>
+      {/if}
+
+      {#if lastEnhancedResumeFile}
+        <div style="margin-top: 12px;">
+          <div class="selector-label">
+            <span class="label-icon">✅</span>
+            <span class="label-text">Last Enhanced Resume</span>
+          </div>
+          <div class="jobs-list" style="margin-top: 8px;">
+            <div class="job-item" style="cursor: default;">
+              <div>
+                <h3 class="job-company">{lastEnhancedResumeFile.filename}</h3>
+                <p class="job-title">{formatFileSize(lastEnhancedResumeFile.size)}</p>
+                {#if lastEnhancedResumeFilePath}
+                  <div style="font-size: 0.85rem; word-break: break-all; margin-top: 6px; opacity: 0.9;">
+                    <strong>Location:</strong>
+                    <button
+                      onclick={() => openManagedFileHandler(currentUserId, lastEnhancedResumeFile?.id || '')}
+                      style="background: none; border: none; color: #667eea; text-decoration: underline; cursor: pointer; padding: 0; font-size: inherit; text-align: left; word-break: break-all; margin-left: 4px;"
+                      title="Click to open file"
+                    >
+                      {lastEnhancedResumeFilePath}
+                    </button>
+                  </div>
+                {/if}
+              </div>
+              <div class="header-buttons">
+                <button 
+                  class="download-btn" 
+                  onclick={() => downloadUpdatedResume(lastEnhancedResumeFile?.id || '')}
+                  disabled={isDownloading}
+                >
+                  {#if isDownloading}
+                    ⏳ Downloading...
+                  {:else}
+                    ⬇️ Download Updated Resume
+                  {/if}
+                </button>
+              </div>
+            </div>
+          </div>
+          
+          {#if isDownloading}
+            <div style="margin-top: 12px;">
+              <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden;">
+                <div class="progress-bar"></div>
+              </div>
+            </div>
+          {/if}
+          
+          {#if downloadSuccess && downloadPath}
+            <div style="margin-top: 12px; padding: 12px; background: rgba(40, 167, 69, 0.2); border: 1px solid rgba(40, 167, 69, 0.4); border-radius: 6px;">
+              <div style="font-weight: 600; color: #28a745; margin-bottom: 4px;">
+                ✅ Downloaded Successfully!
+              </div>
+              <div style="font-size: 0.9rem; word-break: break-all;">
+                <strong>Location:</strong> 
+                <button 
+                  onclick={() => openFilePathHandler(downloadPath)}
+                  style="background: none; border: none; color: #28a745; text-decoration: underline; cursor: pointer; padding: 0; font-size: inherit; text-align: left; word-break: break-all;"
+                  title="Click to open file"
+                >
+                  {downloadPath}
+                </button>
+              </div>
             </div>
           {/if}
         </div>
@@ -652,10 +929,10 @@
       <div class="sidebar-header">
         <h2>💼 Available Jobs</h2>
         <div class="header-buttons">
-          <button class="add-job-btn" on:click={toggleJobForm}>
+          <button class="add-job-btn" onclick={toggleJobForm}>
             {#if showJobForm}✖️ Cancel{:else}➕ New Job{/if}
           </button>
-          <button class="refresh-btn" on:click={loadJobs} disabled={isLoading}>
+          <button class="refresh-btn" onclick={loadJobs} disabled={isLoading}>
             {#if isLoading}⏳{:else}🔄{/if}
           </button>
         </div>
@@ -686,7 +963,7 @@
               rows="10"
             ></textarea>
           </div>
-          <button class="save-job-btn" on:click={saveNewJob}>
+          <button class="save-job-btn" onclick={saveNewJob}>
             💾 Save Job
           </button>
         </div>
@@ -704,8 +981,8 @@
             <div
               class="job-item"
               class:selected={selectedJob?.filename === job.filename}
-              on:click={() => selectJob(job)}
-              on:keydown={(e) => e.key === 'Enter' && selectJob(job)}
+              onclick={() => selectJob(job)}
+              onkeydown={(e) => e.key === 'Enter' && selectJob(job)}
               role="button"
               tabindex="0"
             >
@@ -749,7 +1026,7 @@
           <div class="generate-section">
             <button
               class="generate-btn"
-              on:click={enhanceResume}
+              onclick={enhanceResume}
               disabled={isGenerating || !jobContent || !originalResume}
               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"
             >
@@ -770,15 +1047,15 @@
                 <span class="meta-item">📝 Job Description</span>
                 <span class="meta-item">{jobDescription.length} characters</span>
                 {#if !isEditingJob}
-                  <button class="edit-btn" on:click={startEditingJob}>
+                  <button class="edit-btn" onclick={startEditingJob}>
                     ✏️ Edit
                   </button>
                 {:else}
                   <div class="edit-actions">
-                    <button class="save-btn" on:click={saveEditedJob}>
+                    <button class="save-btn" onclick={saveEditedJob}>
                       ✅ Save
                     </button>
-                    <button class="cancel-btn" on:click={cancelEditingJob}>
+                    <button class="cancel-btn" onclick={cancelEditingJob}>
                       ❌ Cancel
                     </button>
                   </div>
@@ -936,27 +1213,16 @@
                   <button 
                     class="view-btn" 
                     class:active={comparisonView === 'sidebyside'}
-                    on:click={() => comparisonView = 'sidebyside'}
+                    onclick={() => comparisonView = 'sidebyside'}
                   >
                     📊 Side by Side
                   </button>
                   <button 
                     class="view-btn" 
                     class:active={comparisonView === 'unified'}
-                    on:click={() => comparisonView = 'unified'}
+                    onclick={() => comparisonView = 'unified'}
                   >
                     📄 Unified
-                  </button>
-                </div>
-                <div class="download-actions">
-                  <button class="download-btn" on:click={saveEnhancedResumeToLocalFiles}>
-                    💾 Save Local
-                  </button>
-                  <button class="download-btn" on:click={downloadAsDocx}>
-                    📄 DOCX
-                  </button>
-                  <button class="download-btn" on:click={downloadAsPdf}>
-                    📕 PDF
                   </button>
                 </div>
               </div>
@@ -1050,19 +1316,6 @@
   .empty-icon {
     font-size: 2.5rem;
     opacity: 0.5;
-  }
-
-  .resume-empty p {
-    margin: 0;
-    font-size: 0.95rem;
-    color: inherit;
-    opacity: 0.7;
-  }
-
-  .resume-empty a {
-    color: #667eea;
-    text-decoration: underline;
-    font-weight: 600;
   }
 
   .resume-selector {
@@ -1927,6 +2180,23 @@
   .placeholder-icon {
     font-size: 4rem;
     margin-bottom: 20px;
+  }
+
+  /* Progress Bar */
+  .progress-bar {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #28a745, #20c997);
+    animation: progress 1.5s ease-in-out infinite;
+  }
+
+  @keyframes progress {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
   }
 
   /* Responsive */

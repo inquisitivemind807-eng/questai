@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { invoke } from "@tauri-apps/api/core"
   import { env } from '$env/dynamic/public';
-  import { registerManagedFile } from '$lib/file-manager';
+  import { getManagedFiles, registerManagedFile, registerManagedBinaryFile } from '$lib/file-manager';
   
   let formData = {
     fullName: '',
@@ -40,7 +40,7 @@
   let resumeUploaded = false;
   let availableResumeFiles: string[] = [];
   let uploadValidationMessage = '';
-  const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+  const CORPUS_RAG_API = env?.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
   const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
 
   function isSupportedResumeFile(name: string): boolean {
@@ -126,19 +126,22 @@
       return;
     }
     try {
-      const listRes = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}`);
-      if (!listRes.ok) {
-        availableResumeFiles = [];
-        return;
-      }
-      const listData = await listRes.json();
-      const fileNames = (Array.isArray(listData?.files) ? listData.files : [])
-        .map((f: any) => f?.name)
-        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+      const entries = await getManagedFiles({ userId: userEmail, feature: 'resume' });
+      const fileNames = entries
+        .map((entry) => entry.filename)
+        .filter((name): name is string => typeof name === 'string' && isSupportedResumeFile(name));
       availableResumeFiles = fileNames;
     } catch (error) {
-      console.error('Failed to list uploaded resumes:', error);
+      console.error('Failed to list canonical resumes:', error);
       availableResumeFiles = [];
+    }
+  }
+
+  function handleResumeSelection() {
+    if (formData.resumeFileName) {
+      resumeFile = { name: formData.resumeFileName };
+      resumeUploaded = true;
+      console.log('Resume selected:', formData.resumeFileName);
     }
   }
 
@@ -148,60 +151,94 @@
     if (file) {
       if (!isSupportedResumeFile(file.name)) {
         alert('Only .doc, .docx, and .pdf resume files are supported.');
+        if (target) target.value = '';
         return;
       }
       const userEmail = (formData.email || '').trim();
       if (!userEmail) {
         alert('Please add your Email in Profile & Contact before uploading resume.');
+        if (target) target.value = '';
         return;
       }
       try {
         const fileName = String(file.name || 'resume.docx');
-        const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const uploadFormData = new FormData();
-        uploadFormData.append('file', file, sanitizedFileName);
-        uploadFormData.append('userId', userEmail);
-        const uploadRes = await fetch(`${CORPUS_RAG_API}/api/upload`, {
-          method: 'POST',
-          body: uploadFormData
-        });
-        const uploadData = await uploadRes.json().catch(() => ({}));
-        if (!uploadRes.ok || uploadData?.success !== true) {
-          throw new Error(uploadData?.error || `Upload failed (${uploadRes.status})`);
-        }
 
-        formData.resumeFileName = sanitizedFileName;
-        resumeFile = { name: sanitizedFileName };
+        // Show uploading status
+        uploadValidationMessage = 'Uploading and processing resume...';
+
+        // Step 1: Extract text content from the document
+        const extractFormData = new FormData();
+        extractFormData.append('file', file, fileName);
+        const extractRes = await fetch(`${CORPUS_RAG_API}/api/extract-document`, {
+          method: 'POST',
+          body: extractFormData
+        });
+        const extractData = await extractRes.json().catch(() => ({}));
+        if (!extractRes.ok || extractData?.success !== true) {
+          throw new Error(extractData?.error || `Document extraction failed (${extractRes.status})`);
+        }
+        const extractedContent = typeof extractData?.content === 'string' ? extractData.content : '';
+        if (!extractedContent.trim()) throw new Error('Extracted resume text is empty');
+        
+        // Step 2: Read the file as ArrayBuffer and convert to base64
+        const arrayBuffer = await file.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+        let binary = '';
+        for (let i = 0; i < uint8Array.length; i++) {
+          binary += String.fromCharCode(uint8Array[i]);
+        }
+        const base64Content = btoa(binary);
+        
+        // Step 3: Save the original binary file with extracted text as metadata
+        await registerManagedBinaryFile({
+          userId: userEmail,
+          feature: 'resume',
+          filename: fileName,
+          contentBase64: base64Content,
+          sourceRoute: '/frontend-form',
+          mimeType: file.type || 'application/octet-stream',
+          tags: ['source-resume', 'canonical', 'binary-with-text']
+        });
+
+        // Step 4: Also save extracted text separately for AI processing
+        const textFileName = fileName.replace(/\.(pdf|docx?|doc)$/i, '.txt');
+        await registerManagedFile({
+          userId: userEmail,
+          feature: 'resume',
+          filename: textFileName,
+          content: extractedContent,
+          sourceRoute: '/frontend-form',
+          mimeType: 'text/plain',
+          tags: ['extracted-text', 'canonical']
+        });
+
+        formData.resumeFileName = fileName;
+        resumeFile = { name: fileName };
         resumeUploaded = true;
+
+        // Reload the list of available resumes
         await loadUploadedResumes();
-        await syncUploadedResumeToLocalFiles(userEmail, sanitizedFileName);
+
+        uploadValidationMessage = `✓ Resume uploaded successfully: ${fileName}`;
+        
+        // Reset the file input
+        if (target) target.value = '';
+        
+        // Clear success message after 5 seconds
+        setTimeout(() => {
+          uploadValidationMessage = '';
+        }, 5000);
       } catch (error) {
         console.error('Failed to upload resume:', error);
-        alert('Failed to upload resume file');
+        uploadValidationMessage = `✗ Failed to upload resume: ${error}`;
+        alert('Failed to upload resume file: ' + error);
+        if (target) target.value = '';
+        
+        // Clear error message after 5 seconds
+        setTimeout(() => {
+          uploadValidationMessage = '';
+        }, 5000);
       }
-    }
-  }
-
-  async function syncUploadedResumeToLocalFiles(userEmail: string, filename: string) {
-    try {
-      const contentRes = await fetch(
-        `${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(filename)}`
-      );
-      if (!contentRes.ok) return;
-      const contentData = await contentRes.json();
-      const content = typeof contentData?.content === 'string' ? contentData.content : '';
-      if (!content.trim()) return;
-      await registerManagedFile({
-        userId: userEmail,
-        feature: 'resume',
-        filename: `${filename}.txt`,
-        content,
-        sourceRoute: '/frontend-form',
-        mimeType: 'text/plain',
-        tags: ['uploaded-resume', 'snapshot']
-      });
-    } catch (error) {
-      console.warn('Unable to mirror uploaded resume to local Files Manager:', error);
     }
   }
 
@@ -368,22 +405,15 @@
     }
 
     try {
-      const listRes = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}`);
-      if (!listRes.ok) {
-        return {
-          success: false,
-          message: `Could not verify uploads for ${userEmail} (status ${listRes.status}).`
-        };
-      }
-      const listData = await listRes.json();
-      const fileNames = (Array.isArray(listData?.files) ? listData.files : [])
-        .map((f: any) => f?.name)
-        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+      const entries = await getManagedFiles({ userId: userEmail, feature: 'resume' });
+      const fileNames = entries
+        .map((entry) => entry.filename)
+        .filter((name): name is string => typeof name === 'string' && isSupportedResumeFile(name));
 
       if (fileNames.length === 0) {
         return {
           success: false,
-          message: `No uploaded .doc/.docx/.pdf resume found for ${userEmail}. Please upload resume first.`
+          message: `No canonical .doc/.docx/.pdf resume found for ${userEmail}. Please upload resume first.`
         };
       }
 
@@ -392,7 +422,7 @@
         if (!fileNames.includes(formData.resumeFileName)) {
           return {
             success: false,
-            message: `Selected resume "${formData.resumeFileName}" was not found in corpus uploads for ${userEmail}. Upload/select that same file first.`
+            message: `Selected resume "${formData.resumeFileName}" was not found in canonical storage for ${userEmail}. Upload/select that same file first.`
           };
         }
         selectedResumeName = formData.resumeFileName;
@@ -400,23 +430,6 @@
         selectedResumeName =
           fileNames.find((name: string) => name.toLowerCase().includes('resume')) ||
           fileNames[0];
-      }
-
-      const contentRes = await fetch(
-        `${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}&filename=${encodeURIComponent(selectedResumeName)}`
-      );
-      if (!contentRes.ok) {
-        return {
-          success: false,
-          message: `Uploaded resume check failed for ${selectedResumeName} (status ${contentRes.status}).`
-        };
-      }
-      const contentData = await contentRes.json();
-      if (typeof contentData?.content !== 'string' || contentData.content.trim().length === 0) {
-        return {
-          success: false,
-          message: `Uploaded resume ${selectedResumeName} is empty. Please upload a valid resume.`
-        };
       }
 
       formData.resumeFileName = selectedResumeName;
@@ -459,28 +472,21 @@
     }
 
     try {
-      const listRes = await fetch(`${CORPUS_RAG_API}/api/upload?userId=${encodeURIComponent(userEmail)}`);
-      if (!listRes.ok) {
-        return {
-          success: false,
-          message: `Could not verify uploads for ${userEmail} (status ${listRes.status}).`
-        };
-      }
-      const listData = await listRes.json();
-      const fileNames = (Array.isArray(listData?.files) ? listData.files : [])
-        .map((f: any) => f?.name)
-        .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
+      const entries = await getManagedFiles({ userId: userEmail, feature: 'resume' });
+      const fileNames = entries
+        .map((entry) => entry.filename)
+        .filter((name): name is string => typeof name === 'string' && isSupportedResumeFile(name));
 
       if (!fileNames.includes(selectedResumeName)) {
         return {
           success: false,
-          message: `Selected resume "${selectedResumeName}" was not found in corpus uploads for ${userEmail}. Please upload it first.`
+          message: `Selected resume "${selectedResumeName}" was not found in canonical storage for ${userEmail}. Please upload it first.`
         };
       }
 
       return {
         success: true,
-        message: `Resume synced in corpus: ${selectedResumeName}`
+        message: `Resume available in canonical storage: ${selectedResumeName}`
       };
     } catch (error) {
       return {
@@ -729,6 +735,33 @@
                 <div class="text-sm opacity-80 mt-1">
                   Migration update: only `.doc`, `.docx`, and `.pdf` are supported. `.txt` is no longer allowed.
                 </div>
+                
+                {#if availableResumeFiles.length > 0}
+                  <div style="margin-bottom: 16px;">
+                    <label for="resume-select" class="form-label" style="display: block; margin-bottom: 8px;">
+                      <span class="label-text">Select from uploaded resumes:</span>
+                    </label>
+                    <select 
+                      id="resume-select" 
+                      bind:value={formData.resumeFileName} 
+                      onchange={handleResumeSelection}
+                      class="select select-bordered w-full"
+                      style="max-width: 100%;"
+                    >
+                      <option value="" disabled>Choose a resume</option>
+                      {#each availableResumeFiles as fileName}
+                        <option value={fileName}>{fileName}</option>
+                      {/each}
+                    </select>
+                    {#if formData.resumeFileName}
+                      <div class="file-upload-status" style="margin-top: 8px;">
+                        <span class="upload-success">✓ Selected: {formData.resumeFileName}</span>
+                      </div>
+                    {/if}
+                  </div>
+                  <div style="text-align: center; margin: 12px 0; opacity: 0.6;">— OR —</div>
+                {/if}
+                
                 <div class="file-upload-wrapper">
                   <input
                     type="file"
@@ -738,11 +771,11 @@
                     onchange={handleResumeUpload}
                   />
                   <label for="resume-upload" class="file-upload-label">
-                    Choose File
+                    {availableResumeFiles.length > 0 ? 'Upload New Resume' : 'Choose File'}
                   </label>
-                  {#if resumeUploaded}
-                    <div class="file-upload-status">
-                      <span class="upload-success">✓ Uploaded: {resumeFile?.name || 'filename.pdf'}</span>
+                  {#if uploadValidationMessage}
+                    <div style="margin-top: 8px; padding: 8px; border-radius: 4px; font-size: 0.9rem; {uploadValidationMessage.includes('✓') ? 'background: rgba(40, 167, 69, 0.1); color: #28a745; border: 1px solid rgba(40, 167, 69, 0.3);' : uploadValidationMessage.includes('✗') ? 'background: rgba(220, 53, 69, 0.1); color: #dc3545; border: 1px solid rgba(220, 53, 69, 0.3);' : 'background: rgba(0, 123, 255, 0.1); color: #007bff; border: 1px solid rgba(0, 123, 255, 0.3);'}">
+                      {uploadValidationMessage}
                     </div>
                   {/if}
                 </div>

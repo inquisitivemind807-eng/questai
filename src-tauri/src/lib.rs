@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
+use base64::Engine;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -64,6 +65,19 @@ struct RegisterManagedFileInput {
     feature: String,
     filename: String,
     content: String,
+    job_id: Option<String>,
+    source_route: Option<String>,
+    mime_type: Option<String>,
+    tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RegisterManagedFileBase64Input {
+    user_id: String,
+    feature: String,
+    filename: String,
+    content_base64: String,
     job_id: Option<String>,
     source_route: Option<String>,
     mime_type: Option<String>,
@@ -313,25 +327,32 @@ fn resolve_entry_path(user_id: &str, entry: &ManagedFileEntry) -> Result<PathBuf
     if rel.is_absolute() {
         return Err("Managed file path must be relative".to_string());
     }
-    let mut has_storage_prefix = false;
-    for (idx, component) in rel.components().enumerate() {
+
+    // Check for path traversal attacks
+    for component in rel.components() {
         match component {
             Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
                 return Err("Invalid managed file path component".to_string());
             }
-            Component::Normal(seg) if idx == 0 && seg == "storage" => {
-                has_storage_prefix = true;
-            }
             _ => {}
         }
     }
-    if !has_storage_prefix {
-        return Err("Managed file path must start with storage/".to_string());
+
+    // First, try the clean format: resumes/filename.pdf (now contains correct binary files)
+    let clean_path = root.join("resumes").join(&entry.filename);
+    if clean_path.exists() {
+        return Ok(clean_path);
     }
+
+    // Fall back to the old format stored in relative_path
     let full = root.join(rel);
     if !full.starts_with(&root) {
         return Err("Managed file path escaped user root".to_string());
     }
+    if full.exists() {
+        return Ok(full);
+    }
+
     Ok(full)
 }
 
@@ -808,12 +829,8 @@ async fn run_bot_streaming(
 #[tauri::command]
 async fn register_managed_file(input: RegisterManagedFileInput) -> Result<ManagedFileEntry, String> {
     let user_root = get_user_root(&input.user_id)?;
-    let safe_feature = sanitize_segment(&input.feature);
-    let safe_job = input.job_id.as_ref().map(|v| sanitize_segment(v));
-    let safe_name = sanitize_segment(&input.filename);
-    let stored_name = format!("{}-{}", epoch_seconds(), safe_name);
-    let rel_path = build_storage_rel_path(&safe_feature, safe_job.as_deref(), &stored_name);
-    let full_path = user_root.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let stored_name = input.filename.clone();
+    let full_path = user_root.join("resumes").join(&stored_name);
 
     if let Some(parent) = full_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -837,15 +854,85 @@ async fn register_managed_file(input: RegisterManagedFileInput) -> Result<Manage
         .map_err(|e| format!("Failed reading managed file metadata: {}", e))?;
 
     let now = now_iso_like();
-    let id = format!("mf_{}_{}", epoch_seconds(), sanitize_segment(&safe_name));
+    let id = format!("mf_{}_{}", epoch_seconds(), sanitize_segment(&input.filename));
     let entry = ManagedFileEntry {
         id,
         user_id: input.user_id.clone(),
-        feature: safe_feature,
+        feature: input.feature.clone(),
         job_id: input.job_id.clone(),
         filename: input.filename,
-        stored_name,
-        relative_path: rel_path,
+        stored_name: stored_name.clone(),
+        relative_path: format!("resumes/{}", stored_name),
+        source_route: input.source_route,
+        mime_type: input.mime_type,
+        size: metadata.len(),
+        created_at: now.clone(),
+        updated_at: now,
+        tags: input.tags.unwrap_or_default(),
+    };
+
+    update_index(&input.user_id, |index| {
+        if index.entries.len() >= MAX_MANAGED_FILES_PER_USER {
+            return Err(format!(
+                "Managed files limit reached (max {})",
+                MAX_MANAGED_FILES_PER_USER
+            ));
+        }
+        let used_bytes: u64 = index.entries.iter().map(|e| e.size).sum();
+        if used_bytes.saturating_add(metadata.len()) > MAX_MANAGED_FILES_TOTAL_BYTES {
+            return Err(format!(
+                "Managed files storage limit reached (max {} bytes)",
+                MAX_MANAGED_FILES_TOTAL_BYTES
+            ));
+        }
+        index.entries.push(entry.clone());
+        Ok(())
+    })?;
+
+    Ok(entry)
+}
+
+#[tauri::command]
+async fn register_managed_file_base64(input: RegisterManagedFileBase64Input) -> Result<ManagedFileEntry, String> {
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(input.content_base64.as_bytes())
+        .map_err(|e| format!("Invalid base64 payload: {}", e))?;
+
+    if bytes.len() > MAX_MANAGED_FILE_CONTENT_BYTES {
+        return Err(format!(
+            "Managed file exceeds max size ({} bytes)",
+            MAX_MANAGED_FILE_CONTENT_BYTES
+        ));
+    }
+
+    let user_root = get_user_root(&input.user_id)?;
+    let stored_name = input.filename.clone();
+    let full_path = user_root.join("resumes").join(&stored_name);
+
+    if let Some(parent) = full_path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed creating managed-file directory: {}", e))?;
+    }
+
+    tokio::fs::write(&full_path, &bytes)
+        .await
+        .map_err(|e| format!("Failed writing managed file: {}", e))?;
+
+    let metadata = tokio::fs::metadata(&full_path)
+        .await
+        .map_err(|e| format!("Failed reading managed file metadata: {}", e))?;
+
+    let now = now_iso_like();
+    let id = format!("mf_{}_{}", epoch_seconds(), sanitize_segment(&input.filename));
+    let entry = ManagedFileEntry {
+        id,
+        user_id: input.user_id.clone(),
+        feature: input.feature.clone(),
+        job_id: input.job_id.clone(),
+        filename: input.filename,
+        stored_name: stored_name.clone(),
+        relative_path: format!("resumes/{}", stored_name),
         source_route: input.source_route,
         mime_type: input.mime_type,
         size: metadata.len(),
@@ -1003,13 +1090,30 @@ async fn preview_managed_file(query: ManagedFilePreviewQuery) -> Result<String, 
         .find(|f| f.id == query.file_id)
         .ok_or_else(|| "Managed file not found".to_string())?;
     let full_path = resolve_entry_path(&query.user_id, entry)?;
+    // Check if this is a binary file that shouldn't be previewed as text
+    let file_name = full_path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    if file_name.ends_with(".pdf") || file_name.ends_with(".doc") || file_name.ends_with(".docx") {
+        return Ok(format!("[Binary file: {}. Use file opening to view content.]",
+                         full_path.file_name().unwrap_or_default().to_string_lossy()));
+    }
+
     let content = tokio::fs::read_to_string(&full_path)
         .await
         .or_else(|_| std::fs::read(&full_path).map(|bytes| String::from_utf8_lossy(&bytes).to_string()))
         .map_err(|e| format!("Failed reading file preview {}: {}", full_path.display(), e))?;
+
     let limit = query.max_chars.unwrap_or(8000);
     if content.len() > limit {
-        Ok(format!("{}...", &content[..limit]))
+        // Use char_indices to find safe UTF-8 boundary
+        let truncated = content.char_indices()
+            .nth(limit)
+            .map(|(i, _)| &content[..i])
+            .unwrap_or(&content);
+        Ok(format!("{}...", truncated))
     } else {
         Ok(content)
     }
@@ -1080,6 +1184,53 @@ async fn open_managed_file(input: ManagedFileOpenInput) -> Result<String, String
     let full_path = resolve_entry_path(&input.user_id, entry)?;
     open_path_in_os(&full_path)?;
     Ok(format!("Opened {}", full_path.display()))
+}
+
+#[tauri::command]
+async fn get_managed_file_path(input: ManagedFileOpenInput) -> Result<String, String> {
+    let index = load_index(&input.user_id)?;
+    let entry = index
+        .entries
+        .iter()
+        .find(|f| f.id == input.file_id)
+        .ok_or_else(|| "Managed file not found".to_string())?;
+    let full_path = resolve_entry_path(&input.user_id, entry)?;
+    Ok(full_path.display().to_string())
+}
+
+#[tauri::command]
+async fn save_managed_file_to_downloads(input: ManagedFileOpenInput) -> Result<String, String> {
+    let index = load_index(&input.user_id)?;
+    let entry = index
+        .entries
+        .iter()
+        .find(|f| f.id == input.file_id)
+        .ok_or_else(|| "Managed file not found".to_string())?;
+    let full_path = resolve_entry_path(&input.user_id, entry)?;
+    
+    // Get the Downloads folder
+    let downloads_dir = dirs::download_dir()
+        .ok_or_else(|| "Could not find Downloads folder".to_string())?;
+    
+    // Get the filename from the entry
+    let filename = entry.filename.clone();
+    let dest_path = downloads_dir.join(&filename);
+    
+    // Copy the file to Downloads
+    std::fs::copy(&full_path, &dest_path)
+        .map_err(|e| format!("Failed to copy file to Downloads: {}", e))?;
+    
+    Ok(format!("Saved to:\n{}", dest_path.display()))
+}
+
+#[tauri::command]
+async fn open_file_path(path: String) -> Result<String, String> {
+    let file_path = PathBuf::from(&path);
+    if !file_path.exists() {
+        return Err(format!("File does not exist: {}", path));
+    }
+    open_path_in_os(&file_path)?;
+    Ok(format!("Opened {}", path))
 }
 
 #[tauri::command]
@@ -1211,11 +1362,15 @@ pub fn run() {
             run_javascript_script,
             run_bot_streaming,
             register_managed_file,
+            register_managed_file_base64,
             get_managed_files,
             preview_managed_file,
             delete_managed_files,
             move_managed_files,
             open_managed_file,
+            open_file_path,
+            get_managed_file_path,
+            save_managed_file_to_downloads,
             open_managed_file_parent,
             export_managed_files_backup,
             import_managed_files_backup,

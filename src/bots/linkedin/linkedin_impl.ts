@@ -13,6 +13,7 @@ import { Document, Paragraph, TextRun, Packer } from 'docx';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
+import { readCanonicalResumeText } from '../../lib/canonical-resume';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,12 +21,6 @@ const __dirname = path.dirname(__filename);
 const printLog = (message: string) => {
   console.log(message);
 };
-const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
-
-function isSupportedResumeFile(name: string): boolean {
-  const lower = String(name || '').toLowerCase();
-  return ALLOWED_RESUME_EXTENSIONS.some((ext) => lower.endsWith(ext));
-}
 
 // #region agent log
 const DEBUG_LOG = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
@@ -956,39 +951,19 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
 }
 
 async function resolveResumeTextForLinkedIn(ctx: WorkflowContext): Promise<string> {
-  const { apiRequest } = await import('../core/api_client.js');
   const clientEmail =
     getClientEmailFromContext(ctx) ||
     (ctx as any)?.config?.formData?.email ||
     '';
 
   if (!clientEmail) {
-    throw new Error('Missing client email. Uploaded resume lookup requires user email in config.');
-  }
-
-  const listData = await apiRequest(`/api/upload?userId=${encodeURIComponent(clientEmail)}`, 'GET');
-  const files = Array.isArray(listData?.files) ? listData.files : [];
-  const names = files
-    .map((f: any) => f?.name)
-    .filter((name: unknown): name is string => typeof name === 'string' && isSupportedResumeFile(name));
-  if (names.length === 0) {
-    throw new Error(`No uploaded .doc/.docx/.pdf resume found for ${clientEmail}`);
+    throw new Error('Missing client email. Canonical resume lookup requires user email in config.');
   }
 
   const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
-  const selectedName =
-    (preferredResumeFileName && names.includes(preferredResumeFileName) ? preferredResumeFileName : '') ||
-    names.find((name: string) => name.toLowerCase().includes('resume')) ||
-    names[0];
-  const fileData = await apiRequest(
-    `/api/upload?userId=${encodeURIComponent(clientEmail)}&filename=${encodeURIComponent(selectedName)}`,
-    'GET'
-  );
-  if (typeof fileData?.content !== 'string' || fileData.content.trim().length === 0) {
-    throw new Error(`Uploaded resume ${selectedName} is empty for ${clientEmail}`);
-  }
-  printLog(`📄 Using uploaded resume: ${selectedName}`);
-  return fileData.content;
+  const resume = readCanonicalResumeText(clientEmail, preferredResumeFileName);
+  printLog(`📄 Using canonical resume: ${resume.filename}`);
+  return resume.content;
 }
 
 // Generate AI cover letter for LinkedIn (same API as Seek, platform: linkedin)

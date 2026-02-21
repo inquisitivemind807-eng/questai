@@ -4,7 +4,9 @@
   import { authService } from '$lib/authService.js';
   import { env } from '$env/dynamic/public';
   import '$styles/shared.css';
-  import { registerManagedFile } from '$lib/file-manager';
+  import { invoke } from '@tauri-apps/api/core';
+  import { Document, Paragraph, TextRun, Packer } from 'docx';
+  import { jsPDF } from 'jspdf';
 
   // all variables
   let user = null;
@@ -29,6 +31,16 @@
   let defaultPrompt = '';
   let jobsWithSavedResponses = new Set();
   let isSavingPrompt = false;
+  let lastSavedCoverLetter = null;
+  let configuredResumeType = 'docx';
+  let configuredResumeName = '';
+  let configuredResumePath = '';
+  let configuredResumeCleanPath = '';
+  let configuredResumeFileId = '';
+  let currentUserId = '';
+  let isDownloading = false;
+  let downloadSuccess = false;
+  let downloadPath = '';
 
   // Comparison mode variables
   let isComparing = false;
@@ -41,7 +53,7 @@
 
   const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
 
-  onMount(async () => {
+  onMount(() => {
     // Check authentication
     if (!$authService.isLoggedIn) {
       goto('/login');
@@ -49,9 +61,103 @@
     }
 
     user = $authService.user;
-    await getJwtToken();
+    getJwtToken();
     loadJobs();
+    loadConfiguredResumeType();
+    
+    // Auto-refresh resume when page becomes visible (e.g., after switching tabs)
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        console.log('Page visible, refreshing resume data...');
+        loadConfiguredResumeType();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Cleanup
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   });
+
+  async function loadConfiguredResumeType() {
+    try {
+      const userId = user?.email || '';
+      currentUserId = userId;
+      if (!userId) return;
+
+      const response = await fetch(`/api/user-config?userId=${encodeURIComponent(userId)}`);
+      if (!response.ok) {
+        console.warn('Failed to load user config');
+        return;
+      }
+
+      const data = await response.json();
+      if (data.success && data.config?.resumeFileName) {
+        configuredResumeName = data.config.resumeFileName;
+        const resumeName = data.config.resumeFileName.toLowerCase();
+        if (resumeName.endsWith('.pdf')) {
+          configuredResumeType = 'pdf';
+        } else if (resumeName.endsWith('.docx')) {
+          configuredResumeType = 'docx';
+        } else if (resumeName.endsWith('.doc')) {
+          configuredResumeType = 'doc';
+        }
+        
+        // Get the full file path
+        try {
+          const entries = await invoke('get_managed_files', {
+            query: {
+              userId,
+              feature: 'resume'
+            }
+          });
+
+          const resumeFile = entries.find((entry) => entry.filename === data.config.resumeFileName);
+          if (resumeFile) {
+            // Get full file path
+            const fullPath = await invoke('get_managed_file_path', {
+              input: { userId, fileId: resumeFile.id }
+            });
+            configuredResumePath = fullPath;
+            configuredResumeFileId = resumeFile.id;
+
+            // Show clean path since working files are now in resumes/ folder
+            const pathParts = fullPath.split('/');
+            const userDir = pathParts.slice(0, -2).join('/'); // Remove storage/resume parts
+            configuredResumeCleanPath = `${userDir}/resumes/${resumeFile.filename}`;
+          }
+        } catch (pathError) {
+          console.warn('Could not get resume file path:', pathError);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to load configured resume type:', error);
+    }
+  }
+
+  async function openFilePathHandler(filePath) {
+    try {
+      const result = await invoke('open_file_path', { path: filePath });
+      console.log(result);
+    } catch (error) {
+      console.error('Failed to open file:', error);
+      alert('Failed to open file: ' + error);
+    }
+  }
+
+  async function openManagedFileHandler(userId, fileId) {
+    try {
+      const result = await invoke('open_managed_file', {
+        input: { userId, fileId }
+      });
+      console.log(result);
+    } catch (error) {
+      console.error('Failed to open managed file:', error);
+      alert('Failed to open managed file: ' + error);
+    }
+  }
 
   async function getJwtToken() {
     try {
@@ -223,6 +329,7 @@
     qualityControl = null;
     generationWarning = '';
     contactProfileUsed = null;
+    lastSavedCoverLetter = null;
 
     try {
       // Ensure we have JWT token
@@ -259,6 +366,12 @@
         qualityControl = data?.metadata?.qualityControl || null;
         generationWarning = data?.metadata?.warning || '';
         contactProfileUsed = data?.metadata?.contactProfileUsed || null;
+        
+        // Auto-save the cover letter
+        const savedFile = await autoSaveCoverLetter();
+        if (savedFile) {
+          lastSavedCoverLetter = savedFile;
+        }
       } else {
         alert('Failed to generate cover letter: ' + data.error);
       }
@@ -270,26 +383,141 @@
     }
   }
 
-  async function saveCoverLetterToLocalFiles() {
-    if (!generatedCoverLetter?.trim() || !user?.email) return;
+  function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+  }
+
+  async function buildCoverLetterDocxBlob(text) {
+    const paragraphs = text.split('\n').map(line => 
+      new Paragraph({
+        children: [new TextRun(line || ' ')]
+      })
+    );
+
+    const doc = new Document({
+      sections: [{
+        properties: {},
+        children: paragraphs
+      }]
+    });
+
+    return await Packer.toBlob(doc);
+  }
+
+  function buildCoverLetterPdfArrayBuffer(text) {
+    const doc = new jsPDF();
+    const lines = text.split('\n');
+    let y = 20;
+    const lineHeight = 7;
+    const pageHeight = doc.internal.pageSize.height;
+    const margin = 20;
+
+    lines.forEach((line) => {
+      if (y + lineHeight > pageHeight - margin) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.text(line, 20, y);
+      y += lineHeight;
+    });
+
+    return doc.output('arraybuffer');
+  }
+
+  async function registerManagedBinaryCoverLetter(input) {
+    return invoke('register_managed_file_base64', {
+      input: {
+        userId: input.userId,
+        feature: input.feature,
+        filename: input.filename,
+        contentBase64: input.contentBase64,
+        jobId: input.jobId,
+        sourceRoute: input.sourceRoute,
+        mimeType: input.mimeType,
+        tags: input.tags ?? []
+      }
+    });
+  }
+
+  async function autoSaveCoverLetter() {
+    if (!generatedCoverLetter?.trim() || !user?.email) {
+      return null;
+    }
+    
     const company = (selectedJob?.company || 'company').replace(/[^a-zA-Z0-9._-]/g, '_');
-    const filename = `cover-letter-${company}-${Date.now()}.txt`;
+    const selectedType = configuredResumeType === 'pdf' ? 'pdf' : 'docx';
+    const extension = selectedType === 'pdf' ? 'pdf' : 'docx';
+    const filename = `cover-letter-${company}-${Date.now()}.${extension}`;
+    
     try {
-      await registerManagedFile({
+      console.log('Auto-saving cover letter...', { userId: user.email, filename, type: selectedType });
+      
+      let base64Payload = '';
+      let mimeType = '';
+      
+      if (selectedType === 'pdf') {
+        const pdfBuffer = buildCoverLetterPdfArrayBuffer(generatedCoverLetter);
+        base64Payload = arrayBufferToBase64(pdfBuffer);
+        mimeType = 'application/pdf';
+      } else {
+        const docxBlob = await buildCoverLetterDocxBlob(generatedCoverLetter);
+        const docxBuffer = await docxBlob.arrayBuffer();
+        base64Payload = arrayBufferToBase64(docxBuffer);
+        mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      }
+
+      const result = await registerManagedBinaryCoverLetter({
         userId: user.email,
         feature: 'cover-letter',
         filename,
-        content: generatedCoverLetter,
+        contentBase64: base64Payload,
         jobId: selectedJob?.jobId || selectedJob?.filename,
         sourceRoute: '/cover-letters',
-        mimeType: 'text/plain',
-        tags: ['generated']
+        mimeType,
+        tags: ['generated', selectedType]
       });
-      alert('Saved to local Files Manager');
+      
+      console.log('Cover letter auto-saved successfully:', result);
+      
+      const fileSize = Math.ceil(base64Payload.length * 0.75);
+      return {
+        id: result.id || filename,
+        filename: result.filename || filename,
+        size: fileSize
+      };
     } catch (error) {
-      console.error('Failed to save cover letter locally:', error);
+      console.error('Failed to auto-save cover letter:', error);
+      return null;
+    }
+  }
+
+  async function downloadCoverLetter(fileId) {
+    try {
+      isDownloading = true;
+      downloadSuccess = false;
+      downloadPath = '';
+      
+      const userId = user?.email || '';
+      if (!userId || !fileId) return;
+      
+      const result = await invoke('save_managed_file_to_downloads', {
+        input: { userId, fileId }
+      });
+      
+      downloadPath = result.replace('Saved to:\n', '');
+      downloadSuccess = true;
+    } catch (error) {
+      console.error('Failed to save cover letter to Downloads:', error);
       const message = error instanceof Error ? error.message : String(error);
-      alert(`Failed to save locally: ${message}`);
+      alert(`❌ Failed to save to Downloads:\n${message}`);
+    } finally {
+      isDownloading = false;
     }
   }
 
@@ -351,11 +579,45 @@
   </div>
 
   <div class="main-content">
+    {#if configuredResumePath || configuredResumeName}
+      <div style="grid-column: 1 / -1; margin-bottom: 16px; padding: 14px; background: rgba(102, 126, 234, 0.1); border: 2px solid rgba(102, 126, 234, 0.4); border-radius: 8px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <div style="font-weight: 700; font-size: 1.05rem; color: #667eea;">
+            📄 Using Resume for Cover Letter
+          </div>
+          <button 
+            onclick={loadConfiguredResumeType}
+            style="padding: 4px 12px; background: rgba(102, 126, 234, 0.2); border: 1px solid rgba(102, 126, 234, 0.4); border-radius: 4px; color: #667eea; cursor: pointer; font-size: 0.85rem; font-weight: 600;"
+            title="Refresh resume data"
+          >
+            🔄 Refresh
+          </button>
+        </div>
+        {#if configuredResumeName}
+          <div style="font-size: 0.95rem; margin-bottom: 6px;">
+            <strong>File:</strong> {configuredResumeName} ({configuredResumeType.toUpperCase()})
+          </div>
+        {/if}
+        {#if configuredResumePath}
+          <div style="font-size: 0.85rem; word-break: break-all; opacity: 0.9;">
+            <strong>Location:</strong>
+            <button
+              onclick={() => openManagedFileHandler(currentUserId, configuredResumeFileId)}
+              style="background: none; border: none; color: #667eea; text-decoration: underline; cursor: pointer; padding: 0; font-size: inherit; text-align: left; word-break: break-all;"
+              title="Click to open file"
+            >
+              {configuredResumeCleanPath}
+            </button>
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <!-- Jobs List - Horizontal -->
     <div class="jobs-sidebar">
       <div class="sidebar-header">
         <h2>💼 Jobs with Descriptions</h2>
-        <button class="refresh-btn" on:click={loadJobs} disabled={isLoading}>
+        <button class="refresh-btn" onclick={loadJobs} disabled={isLoading}>
           {#if isLoading}⏳{:else}🔄{/if}
         </button>
       </div>
@@ -374,8 +636,8 @@
               class="job-item"
               class:selected={selectedJob?.filename === job.filename}
               class:has-saved={jobsWithSavedResponses.has(job.filename)}
-              on:click={() => selectJob(job)}
-              on:keydown={(e) => e.key === 'Enter' && selectJob(job)}
+              onclick={() => selectJob(job)}
+              onkeydown={(e) => e.key === 'Enter' && selectJob(job)}
               role="button"
               tabindex="0"
             >
@@ -425,7 +687,7 @@
           <div class="generate-section">
             <button
               class="generate-btn"
-              on:click={generateCoverLetter}
+              onclick={generateCoverLetter}
               disabled={isGenerating || !jobContent}
               style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"
             >
@@ -438,6 +700,62 @@
           </div>
         </div>
 
+        {#if lastSavedCoverLetter}
+          <div style="margin: 16px 0; padding: 16px; background: rgba(40, 167, 69, 0.1); border: 2px solid rgba(40, 167, 69, 0.3); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+              <div>
+                <div style="font-weight: 700; font-size: 1.05rem; color: #28a745; margin-bottom: 6px;">
+                  ✅ Cover Letter Saved Successfully
+                </div>
+                <div style="font-size: 0.95rem; margin-bottom: 4px;">
+                  <strong>File:</strong> {lastSavedCoverLetter.filename}
+                </div>
+                <div style="font-size: 0.9rem; opacity: 0.8;">
+                  <strong>Size:</strong> {formatFileSize(lastSavedCoverLetter.size)}
+                </div>
+              </div>
+              <button 
+                class="copy-btn" 
+                onclick={() => downloadCoverLetter(lastSavedCoverLetter.id)}
+                disabled={isDownloading}
+                style="background: #28a745; padding: 12px 24px; font-size: 1rem; font-weight: 600;"
+              >
+                {#if isDownloading}
+                  ⏳ Downloading...
+                {:else}
+                  ⬇️ Download Cover Letter
+                {/if}
+              </button>
+            </div>
+            
+            {#if isDownloading}
+              <div style="margin-top: 12px;">
+                <div style="width: 100%; height: 6px; background: rgba(0,0,0,0.1); border-radius: 3px; overflow: hidden;">
+                  <div class="progress-bar"></div>
+                </div>
+              </div>
+            {/if}
+            
+            {#if downloadSuccess && downloadPath}
+              <div style="margin-top: 12px; padding: 12px; background: rgba(40, 167, 69, 0.2); border: 1px solid rgba(40, 167, 69, 0.4); border-radius: 6px;">
+                <div style="font-weight: 600; color: #28a745; margin-bottom: 4px;">
+                  ✅ Downloaded Successfully!
+                </div>
+                <div style="font-size: 0.9rem; word-break: break-all;">
+                  <strong>Location:</strong> 
+                  <button 
+                    onclick={() => openFilePathHandler(downloadPath)}
+                    style="background: none; border: none; color: #28a745; text-decoration: underline; cursor: pointer; padding: 0; font-size: inherit; text-align: left; word-break: break-all;"
+                    title="Click to open file"
+                  >
+                    {downloadPath}
+                  </button>
+                </div>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
         {#if jobContent}
           <div class="content-section">
             <!-- Generated Cover Letter -->
@@ -446,10 +764,7 @@
                 <div class="section-header">
                   <h3>📝 Your Cover Letter</h3>
                   <div class="actions">
-                    <button class="copy-btn" on:click={saveCoverLetterToLocalFiles}>
-                      💾 Save Local
-                    </button>
-                    <button class="copy-btn" on:click={() => copyToClipboard(generatedCoverLetter)}>
+                    <button class="copy-btn" onclick={() => copyToClipboard(generatedCoverLetter)}>
                       📋 Copy
                     </button>
                   </div>
@@ -523,7 +838,7 @@
                         </div>
                         <button
                           class="copy-btn"
-                          on:click={() => copyToClipboard(result.answer)}
+                          onclick={() => copyToClipboard(result.answer)}
                           style="width: 100%; margin-bottom: 1rem;"
                         >
                           📋 Copy
@@ -579,15 +894,15 @@
                 <div class="job-meta">
                   <span class="meta-item">📝 Job Description</span>
                   {#if !isEditingJob}
-                    <button class="edit-btn" on:click={startEditingJob}>
+                    <button class="edit-btn" onclick={startEditingJob}>
                       ✏️ Edit
                     </button>
                   {:else}
                     <div class="edit-actions">
-                      <button class="save-btn" on:click={saveEditedJob}>
+                      <button class="save-btn" onclick={saveEditedJob}>
                         ✅ Save
                       </button>
-                      <button class="cancel-btn" on:click={cancelEditingJob}>
+                      <button class="cancel-btn" onclick={cancelEditingJob}>
                         ❌ Cancel
                       </button>
                     </div>
@@ -1004,6 +1319,22 @@
     border-radius: 4px;
     font-size: 0.85rem;
     color: inherit;
+  }
+
+  .progress-bar {
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, #28a745, #20c997);
+    animation: progress 1.5s ease-in-out infinite;
+  }
+
+  @keyframes progress {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
   }
 
   @media (max-width: 768px) {

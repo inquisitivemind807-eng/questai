@@ -14,11 +14,13 @@ describe('Frontend Form Page', () => {
     mockInvoke.mockImplementation((command: string) => {
       switch (command) {
         case 'read_file_async':
-          return Promise.resolve('{"formData": {"keywords": "test"}}');
+          return Promise.resolve('{"formData": {"email": "tester@example.com"}}');
         case 'create_directory_async':
           return Promise.resolve();
         case 'write_file_async':
           return Promise.resolve();
+        case 'get_managed_files':
+          return Promise.resolve([]);
         default:
           return Promise.resolve();
       }
@@ -45,7 +47,7 @@ describe('Frontend Form Page', () => {
       expect(screen.getByPlaceholderText('Sydney, Melbourne, Remote')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('80000')).toBeInTheDocument();
       expect(screen.getByPlaceholderText('150000')).toBeInTheDocument();
-      expect(screen.getByDisplayValue('any')).toBeInTheDocument();
+      expect(screen.getByLabelText('Job Types')).toBeInTheDocument();
 
       // Application Settings
       expect(screen.getByLabelText('Rewrite resume for each Job?')).toBeInTheDocument();
@@ -107,7 +109,7 @@ describe('Frontend Form Page', () => {
       const user = userEvent.setup();
       render(FrontendFormPage);
 
-      const jobTypeSelect = screen.getByDisplayValue('Any');
+      const jobTypeSelect = screen.getByRole('combobox', { name: 'Job Types' });
       await user.selectOptions(jobTypeSelect, 'full-time');
 
       expect(jobTypeSelect).toHaveValue('full-time');
@@ -134,6 +136,15 @@ describe('Frontend Form Page', () => {
       const user = userEvent.setup();
       render(FrontendFormPage);
 
+      const emailInput = screen.getByPlaceholderText('you@example.com');
+      await user.type(emailInput, 'tester@example.com');
+
+      const originalFetch = globalThis.fetch;
+      (globalThis as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, content: 'Extracted resume content' })
+      });
+
       const file = new File(['test resume content'], 'resume.pdf', { type: 'application/pdf' });
       const fileInput = screen.getByLabelText('Choose File');
 
@@ -142,6 +153,8 @@ describe('Frontend Form Page', () => {
       await waitFor(() => {
         expect(screen.getByText('✓ Uploaded: resume.pdf')).toBeInTheDocument();
       });
+
+      (globalThis as any).fetch = originalFetch;
     });
   });
 
@@ -414,6 +427,15 @@ describe('Frontend Form Page', () => {
       const user = userEvent.setup();
       render(FrontendFormPage);
 
+      const emailInput = screen.getByPlaceholderText('you@example.com');
+      await user.type(emailInput, 'tester@example.com');
+
+      const originalFetch = globalThis.fetch;
+      (globalThis as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ success: true, content: 'Extracted resume content' })
+      });
+
       // Upload a file
       const file = new File(['test'], 'test.pdf', { type: 'application/pdf' });
       const fileInput = screen.getByLabelText('Choose File');
@@ -428,6 +450,8 @@ describe('Frontend Form Page', () => {
       await user.click(resetButton);
 
       expect(screen.queryByText('✓ Uploaded: test.pdf')).not.toBeInTheDocument();
+
+      (globalThis as any).fetch = originalFetch;
     });
   });
 
@@ -458,7 +482,7 @@ describe('Frontend Form Page', () => {
     it('renders all industry options', async () => {
       render(FrontendFormPage);
 
-      const industrySelect = screen.getByDisplayValue('Select an industry');
+      const industrySelect = screen.getByRole('combobox', { name: 'Industries' });
       expect(industrySelect).toBeInTheDocument();
 
       // Check a few key industries
@@ -471,7 +495,7 @@ describe('Frontend Form Page', () => {
       const user = userEvent.setup();
       render(FrontendFormPage);
 
-      const industrySelect = screen.getByDisplayValue('Select an industry');
+      const industrySelect = screen.getByRole('combobox', { name: 'Industries' });
       await user.selectOptions(industrySelect, '18_information');
 
       expect(industrySelect).toHaveValue('18_information');
@@ -490,7 +514,7 @@ describe('Frontend Form Page', () => {
       const user = userEvent.setup();
       render(FrontendFormPage);
 
-      const workRightsSelect = screen.getByDisplayValue("I'm an Australian citizen");
+      const workRightsSelect = document.querySelector('select[name="right_to_work_in_aus"]') as HTMLSelectElement;
       await user.selectOptions(workRightsSelect, 'permanent_resident');
 
       expect(workRightsSelect).toHaveValue('permanent_resident');
@@ -539,7 +563,7 @@ describe('Frontend Form Page', () => {
       render(FrontendFormPage);
 
       // Test job type dropdown
-      const jobTypeSelect = screen.getByDisplayValue('Any');
+      const jobTypeSelect = screen.getByRole('combobox', { name: 'Job Types' });
       await user.selectOptions(jobTypeSelect, 'full-time');
       expect(jobTypeSelect).toHaveValue('full-time');
 
@@ -647,7 +671,7 @@ describe('Frontend Form Page', () => {
       const user = userEvent.setup();
       render(FrontendFormPage);
 
-      const listedDateSelect = screen.getByDisplayValue('Select listing date range');
+      const listedDateSelect = screen.getByRole('combobox', { name: 'Job Listed On' });
       
       await user.selectOptions(listedDateSelect, 'last_7_days');
       expect(listedDateSelect).toHaveValue('last_7_days');
@@ -746,7 +770,7 @@ describe('Frontend Form Page', () => {
       await user.type(screen.getByPlaceholderText('80000'), '90000');
       await user.type(screen.getByPlaceholderText('150000'), '140000');
       
-      const jobTypeSelect = screen.getByDisplayValue('Any');
+      const jobTypeSelect = screen.getByRole('combobox', { name: 'Job Types' });
       await user.selectOptions(jobTypeSelect, 'full-time');
 
       await user.click(screen.getByLabelText('Rewrite resume for each Job?'));
