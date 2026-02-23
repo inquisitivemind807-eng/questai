@@ -16,13 +16,29 @@ function createAuthStore() {
   });
 
   async function writeCache(filename, content) {
-    await invoke('write_file_async', { filename, content: String(content) });
+    try {
+      await invoke('write_file_async', { filename, content: String(content) });
+    } catch {
+      // Fallback for browser dev without Tauri
+      if (filename.includes('auth_access_token')) localStorage.setItem('auth_access_token', content);
+      else if (filename.includes('auth_refresh_token')) localStorage.setItem('auth_refresh_token', content);
+      else if (filename.includes('auth_expires_at')) localStorage.setItem('auth_expires_at', content);
+      else if (filename.includes('auth_user')) localStorage.setItem('auth_user', content);
+      else if (filename.includes('auth_remember_me')) localStorage.setItem('auth_remember_me', content);
+    }
   }
 
   async function readCache(filename) {
     try {
-      return await invoke('read_file_async', { filename });
+      const result = await invoke('read_file_async', { filename });
+      return result;
     } catch {
+      // Fallback for browser dev without Tauri
+      if (filename.includes('auth_access_token')) return localStorage.getItem('auth_access_token');
+      if (filename.includes('auth_refresh_token')) return localStorage.getItem('auth_refresh_token');
+      if (filename.includes('auth_expires_at')) return localStorage.getItem('auth_expires_at');
+      if (filename.includes('auth_user')) return localStorage.getItem('auth_user');
+      if (filename.includes('auth_remember_me')) return localStorage.getItem('auth_remember_me');
       return null;
     }
   }
@@ -30,7 +46,33 @@ function createAuthStore() {
   async function deleteCache(filename) {
     try {
       await invoke('delete_file_async', { filename });
-    } catch { /* ignore if file doesn't exist */ }
+    } catch {
+      if (filename.includes('auth_access_token')) localStorage.removeItem('auth_access_token');
+      else if (filename.includes('auth_refresh_token')) localStorage.removeItem('auth_refresh_token');
+      else if (filename.includes('auth_expires_at')) localStorage.removeItem('auth_expires_at');
+      else if (filename.includes('auth_user')) localStorage.removeItem('auth_user');
+      else if (filename.includes('auth_remember_me')) localStorage.removeItem('auth_remember_me');
+    }
+  }
+
+  /** Exchange session token for JWT access + refresh tokens */
+  async function exchangeSessionForJwt(sessionToken) {
+    const res = await fetch(`${API_BASE_URL}/api/auth/session-to-jwt`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${sessionToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.error || 'Failed to get JWT tokens');
+    }
+    const data = await res.json();
+    if (!data.success || !data.accessToken || !data.refreshToken) {
+      throw new Error('Invalid session-to-jwt response');
+    }
+    return data;
   }
 
   async function refreshAccessToken() {
@@ -102,19 +144,14 @@ function createAuthStore() {
 
       if (response.ok && data.success) {
         if (browser) {
-          const expiresAt = new Date().getTime() + 30 * 24 * 60 * 60 * 1000;
-          await writeCache('.cache/auth_access_token.txt', data.token);
-          await writeCache('.cache/auth_user.json', JSON.stringify(data.user));
-          await writeCache('.cache/auth_expires_at.txt', expiresAt);
+          const jwtData = await exchangeSessionForJwt(data.token);
+          await setTokens({
+            accessToken: jwtData.accessToken,
+            refreshToken: jwtData.refreshToken,
+            expiresIn: jwtData.expiresIn,
+            user: { ...data.user, ...jwtData.user }
+          });
           await writeCache('.cache/auth_remember_me.txt', rememberMe ? 'true' : 'false');
-        }
-
-        // Save token for bot processes
-        try {
-          await invoke('write_file_async', { filename: TOKEN_CACHE_FILE, content: data.token });
-          console.log('✅ Token saved to shared cache for bot processes.');
-        } catch (e) {
-          console.error('Failed to save token to shared cache:', e);
         }
 
         set({
@@ -147,19 +184,14 @@ function createAuthStore() {
 
       if (response.ok && data.success) {
         if (browser) {
-          const expiresAt = new Date().getTime() + 30 * 24 * 60 * 60 * 1000;
-          await writeCache('.cache/auth_access_token.txt', data.token);
-          await writeCache('.cache/auth_user.json', JSON.stringify(data.user));
-          await writeCache('.cache/auth_expires_at.txt', expiresAt);
+          const jwtData = await exchangeSessionForJwt(data.token);
+          await setTokens({
+            accessToken: jwtData.accessToken,
+            refreshToken: jwtData.refreshToken,
+            expiresIn: jwtData.expiresIn,
+            user: { ...data.user, ...jwtData.user }
+          });
           await writeCache('.cache/auth_remember_me.txt', rememberMe ? 'true' : 'false');
-        }
-
-        // Save token for bot processes
-        try {
-          await invoke('write_file_async', { filename: TOKEN_CACHE_FILE, content: data.token });
-          console.log('✅ Token saved to shared cache for bot processes.');
-        } catch (e) {
-          console.error('Failed to save token to shared cache:', e);
         }
 
         set({
@@ -183,12 +215,18 @@ function createAuthStore() {
   async function logout() {
     if (!browser) return;
 
-    // Clear all auth cache files
+    // Clear all auth cache files (and localStorage fallback)
     await deleteCache('.cache/auth_access_token.txt');
     await deleteCache('.cache/auth_refresh_token.txt');
     await deleteCache('.cache/auth_expires_at.txt');
     await deleteCache('.cache/auth_user.json');
     await deleteCache('.cache/auth_remember_me.txt');
+    localStorage.removeItem('auth_access_token');
+    localStorage.removeItem('auth_refresh_token');
+    localStorage.removeItem('auth_expires_at');
+    localStorage.removeItem('auth_user');
+    localStorage.removeItem('accessToken');
+    sessionStorage.removeItem('accessToken');
 
     // Reset store
     set({ user: null, isLoggedIn: false, loading: false });
@@ -198,7 +236,6 @@ function createAuthStore() {
       await invoke('delete_file_async', { filename: TOKEN_CACHE_FILE });
       console.log('✅ Cleared shared token cache.');
     } catch (e) {
-      // It might fail if the file doesn't exist, which is fine.
       console.log('Could not clear shared token cache (it may not exist):', e);
     }
 
@@ -209,15 +246,37 @@ function createAuthStore() {
   async function getAccessToken() {
     if (!browser) return null;
 
+    let accessToken = await readCache('.cache/auth_access_token.txt');
     const expiresAt = await readCache('.cache/auth_expires_at.txt');
-    const accessToken = await readCache('.cache/auth_access_token.txt');
 
-    if (!accessToken || !expiresAt) {
-      return null;
+    // Fallback: legacy session token in localStorage
+    if (!accessToken) {
+      accessToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
     }
 
-    // Check if token is expired or close to expiring (e.g., within 60 seconds)
-    if (new Date().getTime() > parseInt(expiresAt) - 60 * 1000) {
+    if (!accessToken) return null;
+
+    // Legacy session token (not JWT): convert to JWT once and store
+    if (!accessToken.startsWith('eyJ')) {
+      try {
+        const jwtData = await exchangeSessionForJwt(accessToken);
+        await setTokens({
+          accessToken: jwtData.accessToken,
+          refreshToken: jwtData.refreshToken,
+          expiresIn: jwtData.expiresIn,
+          user: jwtData.user
+        });
+        return jwtData.accessToken;
+      } catch (e) {
+        console.warn('session-to-jwt failed, token may be invalid:', e.message);
+        return null;
+      }
+    }
+
+    if (!expiresAt) return accessToken;
+
+    // Check if token is expired or close to expiring (within 60 seconds)
+    if (new Date().getTime() > parseInt(expiresAt, 10) - 60 * 1000) {
       console.log('Access token expired or nearing expiration, refreshing...');
       return await refreshAccessToken();
     }
@@ -228,7 +287,7 @@ function createAuthStore() {
   async function initialize() {
     if (!browser) return;
 
-    const rememberMe = await readCache('.cache/auth_remember_me.txt');
+    const rememberMe = await readCache('.cache/auth_remember_me.txt') || localStorage.getItem('auth_remember_me');
 
     // If user explicitly chose not to be remembered, treat as session-only:
     // clear tokens and return unauthenticated (mirrors old sessionStorage behaviour).
@@ -242,35 +301,27 @@ function createAuthStore() {
       return;
     }
 
-    const token = await readCache('.cache/auth_access_token.txt');
-    const userStr = await readCache('.cache/auth_user.json');
-    const expiresAt = await readCache('.cache/auth_expires_at.txt');
+    const token = await readCache('.cache/auth_access_token.txt') || localStorage.getItem('auth_access_token') || localStorage.getItem('accessToken');
+    const userStr = await readCache('.cache/auth_user.json') || localStorage.getItem('auth_user');
+    const expiresAt = await readCache('.cache/auth_expires_at.txt') || localStorage.getItem('auth_expires_at');
 
-    if (token && userStr && expiresAt) {
-      // Check if token is expired
+    if (token && userStr) {
       const now = new Date().getTime();
-      const expiry = parseInt(expiresAt);
+      const expiry = expiresAt ? parseInt(expiresAt, 10) : null;
 
-      if (now < expiry) {
-        // Token is still valid
+      if (!expiry || now < expiry) {
         try {
-          const user = JSON.parse(userStr);
+          const user = typeof userStr === 'string' ? JSON.parse(userStr) : userStr;
           set({ user, isLoggedIn: true, loading: false });
         } catch (e) {
           console.error('Failed to parse user data:', e);
           await logout();
         }
       } else {
-        // Token is expired, clear everything
         console.log('Session expired, clearing auth state');
-        await deleteCache('.cache/auth_access_token.txt');
-        await deleteCache('.cache/auth_user.json');
-        await deleteCache('.cache/auth_expires_at.txt');
-        await deleteCache('.cache/auth_remember_me.txt');
-        set({ user: null, isLoggedIn: false, loading: false });
+        await logout();
       }
     } else {
-      // No valid session data
       set({ user: null, isLoggedIn: false, loading: false });
     }
   }

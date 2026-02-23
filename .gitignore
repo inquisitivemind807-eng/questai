@@ -46,6 +46,7 @@ data/
 logs/
 *.log
 *-debug.log
+bot-logs.txt
 .cursor/
 
 # Additional sensitive patterns

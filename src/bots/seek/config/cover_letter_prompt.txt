@@ -1,1 +1,0 @@
-Based on my resume and background in your context, write a personalized cover letter for this job posting. Make it professional, concise, and highlight relevant skills and experience. Job details: {jobDescription}

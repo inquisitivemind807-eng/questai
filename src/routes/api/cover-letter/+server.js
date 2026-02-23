@@ -250,6 +250,22 @@ export async function POST({ request }) {
     // Generate a job_id if not provided (required by corpus-rag API)
     const generatedJobId = jobId || `job_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+    // Fetch cover letter prompt from corpus-rag
+    let prompt = '';
+    try {
+      const promptRes = await fetch(`${API_BASE}/api/prompts/cover-letter`, {
+        headers: { Authorization: authHeader }
+      });
+      const promptData = await promptRes.json().catch(() => ({}));
+      prompt = promptData?.content || '';
+    } catch (e) {
+      console.warn('Failed to fetch cover-letter prompt, using fallback:', e);
+      prompt = 'Write a compelling, professional cover letter for this job posting. Highlight relevant experience and skills. Keep it concise (300-400 words) and personalized.';
+    }
+    if (!prompt.trim()) {
+      prompt = 'Write a compelling, professional cover letter for this job posting. Highlight relevant experience and skills. Keep it concise (300-400 words) and personalized.';
+    }
+
     // Prepare request for corpus-rag API
     const requestBody = {
       job_id: generatedJobId,  // Required field
@@ -263,10 +279,7 @@ export async function POST({ request }) {
       qualityThreshold: 92,
       strictQualityRetries: 1,
       contact_profile: contactProfile,
-      prompt: `Write a compelling, professional cover letter for this job posting.
-Highlight relevant experience and skills that match the job requirements.
-Keep it concise (300-400 words) and personalized.
-Focus on demonstrating value and enthusiasm for the role.`
+      prompt
     };
 
     console.log('🔄 Calling corpus-rag API for cover letter generation...');

@@ -109,8 +109,17 @@ Keep formatting clean and professional. Focus on quantifiable achievements.`
     JSON.stringify(requestBody, null, 2)
   );
 
-  // Use apiRequest helper for authenticated calls
+  // Fetch resume tailor prompt from corpus-rag
   const { apiRequest } = await import('../../core/api_client.js');
+  try {
+    const promptRes = await apiRequest('/api/prompts/resume-tailor', 'GET');
+    if (promptRes?.content) {
+      requestBody.prompt = promptRes.content;
+    }
+  } catch (e) {
+    console.log('⚠️ Could not fetch resume-tailor prompt, using embedded fallback');
+  }
+
   const data = await apiRequest('/api/resume', 'POST', requestBody);
 
   fs.writeFileSync(

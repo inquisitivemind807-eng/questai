@@ -1020,6 +1020,15 @@ Focus on demonstrating value and enthusiasm for the role.`
   );
 
   const { apiRequest } = await import('../core/api_client.js');
+  try {
+    const promptRes = await apiRequest('/api/prompts/cover-letter', 'GET');
+    if (promptRes?.content) {
+      requestBody.prompt = promptRes.content;
+    }
+  } catch (e) {
+    printLog(`⚠️ Could not fetch cover-letter prompt, using embedded fallback`);
+  }
+
   let data: any;
   try {
     data = await apiRequest('/api/cover_letter', 'POST', requestBody);
@@ -1139,6 +1148,14 @@ async function generateAIResumeLinkedIn(ctx: WorkflowContext): Promise<string> {
 
   fs.writeFileSync(path.join(jobDirPath, 'resume_request.json'), JSON.stringify(requestBody, null, 2));
   const { apiRequest } = await import('../core/api_client.js');
+  try {
+    const promptRes = await apiRequest('/api/prompts/resume-tailor', 'GET');
+    if (promptRes?.content) {
+      requestBody.prompt = promptRes.content;
+    }
+  } catch (e) {
+    printLog('⚠️ Could not fetch resume-tailor prompt, using embedded fallback');
+  }
   const data: any = await apiRequest('/api/resume', 'POST', requestBody);
   fs.writeFileSync(path.join(jobDirPath, 'resume_response.json'), JSON.stringify(data, null, 2));
 

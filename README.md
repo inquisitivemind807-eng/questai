@@ -151,9 +151,10 @@ finalboss/
 │   │   ├── core/            # Workflow engine, browser manager, humanization, overlay
 │   │   ├── bot_starter.ts   # Entry point
 │   │   ├── user-bots-config.json
-│   │   ├── seek/            # *_impl.ts, *_steps.yaml, config/*_selectors.json
+│   │   ├── seek/
 │   │   ├── linkedin/
-│   │   └── indeed/
+│   │   ├── indeed/
+│   │   └── indeed_bot/       # Standalone Camoufox Indeed bot
 │   ├── lib/                 # Shared code
 │   │   ├── corpus-rag-client.js, corpus-rag-auth.js, api-config.js
 │   │   ├── job-application-handler.js, authService.js

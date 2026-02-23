@@ -32,7 +32,7 @@ export class BotRegistry {
 
       for (const entry of entries) {
         // Skip non-bot directories: core, sessions, and data folders
-        const skipDirs = ['core', 'sessions', 'all-resumes', 'jobs'];
+        const skipDirs = ['core', 'sessions', 'all-resumes', 'jobs', 'indeed_bot'];
 
         if (entry.isDirectory() && !entry.name.startsWith('.') && !skipDirs.includes(entry.name)) {
           const bot_name = entry.name;

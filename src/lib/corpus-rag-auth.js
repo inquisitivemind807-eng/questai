@@ -12,18 +12,13 @@ const API_BASE_URL = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'ht
 
 export class CorpusRagAuth {
   /**
-   * Get current authentication token
+   * Get current authentication token (JWT or session)
+   * Uses authService for refresh logic and session-to-JWT conversion.
    * @returns {string|null} - Bearer token for API requests
    */
   static async getToken() {
     if (!browser) return null;
-
-    try {
-      const { invoke } = await import('@tauri-apps/api/core');
-      return await invoke('read_file_async', { filename: '.cache/auth_access_token.txt' });
-    } catch {
-      return null;
-    }
+    return await authService.getAccessToken();
   }
 
   /**

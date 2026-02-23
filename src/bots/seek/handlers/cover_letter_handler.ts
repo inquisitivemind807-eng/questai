@@ -77,8 +77,16 @@ Focus on demonstrating value and enthusiasm for the role.`
     JSON.stringify(requestBody, null, 2)
   );
 
-  // Use apiRequest helper for authenticated calls
+  // Fetch cover letter prompt from corpus-rag
   const { apiRequest } = await import('../../core/api_client');
+  try {
+    const promptRes = await apiRequest('/api/prompts/cover-letter', 'GET');
+    if (promptRes?.content) {
+      requestBody.prompt = promptRes.content;
+    }
+  } catch (e) {
+    printLog(`⚠️ Could not fetch cover-letter prompt, using embedded fallback`);
+  }
 
   let data;
   try {

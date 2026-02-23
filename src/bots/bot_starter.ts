@@ -3,6 +3,7 @@ import { WorkflowEngine, type WorkflowContext } from './core/workflow_engine.js'
 import { killAllChromeProcesses } from './core/browser_manager.js';
 import { logger } from './core/logger.js';
 import * as path from 'path';
+import { fileURLToPath } from 'url';
 
 // Ensure stdout is not buffered for real-time event streaming
 if (process.stdout.setDefaultEncoding) {
@@ -120,6 +121,25 @@ export class BotStarter {
     try {
       print_log(`🚀 Starting bot runner for: ${bot_name}`);
       logger.info('bot.start', 'Bot runner started', { bot_name, headless, keep_open });
+
+      // Indeed: run standalone Camoufox bot (same UI flow as Seek/LinkedIn)
+      if (bot_name === 'indeed') {
+        const { spawn } = await import('child_process');
+        const botsDir = path.dirname(fileURLToPath(import.meta.url));
+        const indeedBotDir = path.resolve(botsDir, 'indeed_bot');
+        print_log(`▶️ Running Indeed Camoufox bot from ${indeedBotDir}`);
+        const child = spawn('bun', ['run', 'dev'], {
+          cwd: indeedBotDir,
+          stdio: 'inherit',
+          shell: process.platform === 'win32'
+        });
+        await new Promise<void>((resolve, reject) => {
+          child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`indeed_bot exited with ${code}`))));
+          child.on('error', reject);
+        });
+        print_log(`✅ Indeed bot completed`);
+        return;
+      }
 
       // 1. Discover and validate bot
       this.registry.discover_bots();

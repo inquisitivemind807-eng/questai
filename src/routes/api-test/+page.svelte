@@ -1,6 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { env } from '$env/dynamic/public';
+	import { authService } from '$lib/authService.js';
 
 	// Use local proxy to avoid CORS
 	const API_BASE = '/api-test/proxy';
@@ -10,59 +11,33 @@
 	let selectedJob = '';
 	let jobs = [];
 	let jobData = null;
-	let loading = false;
+	/** Which action is loading: 'coverLetter' | 'resume' | 'qna' | null */
+	let loadingAction = null;
 	let response = '';
 	let error = '';
 	let jwtToken = '';
 	let authStatus = 'checking'; // checking, authenticated, unauthenticated
 
 	onMount(async () => {
-		// Get JWT token first
 		await getJwtToken();
-		// Load available jobs
 		await loadJobs();
 	});
 
 	async function getJwtToken() {
 		authStatus = 'checking';
+		error = '';
 		try {
-			// Get session token from localStorage
-			const sessionToken = localStorage.getItem('accessToken') || sessionStorage.getItem('accessToken');
-			
-			if (!sessionToken) {
-				authStatus = 'unauthenticated';
-				error = 'No session token found. Please login first.';
-				return;
-			}
-
-			// Convert session token to JWT
-			const res = await fetch(`${CORPUS_RAG_API}/api/auth/session-to-jwt`, {
-				method: 'POST',
-				headers: {
-					'Authorization': `Bearer ${sessionToken}`,
-					'Content-Type': 'application/json'
-				}
-			});
-
-			if (!res.ok) {
-				const data = await res.json();
-				authStatus = 'unauthenticated';
-				error = `Failed to get JWT token: ${data.error || 'Authentication failed'}`;
-				return;
-			}
-
-			const data = await res.json();
-			if (data.success && data.accessToken) {
-				jwtToken = data.accessToken;
+			const token = await authService.getAccessToken();
+			if (token) {
+				jwtToken = token;
 				authStatus = 'authenticated';
-				error = '';
 			} else {
 				authStatus = 'unauthenticated';
-				error = 'Failed to get JWT token';
+				error = 'Please log in first to use the API test.';
 			}
 		} catch (err) {
 			authStatus = 'unauthenticated';
-			error = `Error getting JWT token: ${err.message}`;
+			error = `Authentication failed: ${err instanceof Error ? err.message : 'Please log in first.'}`;
 		}
 	}
 
@@ -105,7 +80,7 @@
 			error = 'No JWT token available. Please login first.';
 			return;
 		}
-		loading = true;
+		loadingAction = 'coverLetter';
 		error = '';
 		response = '';
 
@@ -137,7 +112,7 @@
 		} catch (err) {
 			error = err.message;
 		} finally {
-			loading = false;
+			loadingAction = null;
 		}
 	}
 
@@ -147,7 +122,7 @@
 			error = 'No JWT token available. Please login first.';
 			return;
 		}
-		loading = true;
+		loadingAction = 'resume';
 		error = '';
 		response = '';
 
@@ -179,7 +154,7 @@
 		} catch (err) {
 			error = err.message;
 		} finally {
-			loading = false;
+			loadingAction = null;
 		}
 	}
 
@@ -189,7 +164,7 @@
 			error = 'No JWT token available. Please login first.';
 			return;
 		}
-		loading = true;
+		loadingAction = 'qna';
 		error = '';
 		response = '';
 
@@ -222,7 +197,7 @@
 		} catch (err) {
 			error = err.message;
 		} finally {
-			loading = false;
+			loadingAction = null;
 		}
 	}
 </script>
@@ -259,9 +234,10 @@
 				<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
 				<div>
 					<h3 class="font-bold">Authentication Required</h3>
-					<div class="text-sm">{error || 'Please login to use the API tester.'}</div>
-					<div class="mt-2">
-						<button class="btn btn-sm btn-primary" on:click={getJwtToken}>Retry Authentication</button>
+					<div class="text-sm">{error || 'Please log in to use the API tester.'}</div>
+					<div class="mt-2 flex gap-2">
+						<a href="/login" class="btn btn-sm btn-primary">Log in</a>
+						<button class="btn btn-sm btn-ghost" on:click={getJwtToken}>Retry</button>
 					</div>
 				</div>
 			</div>
@@ -300,25 +276,25 @@
 				<h2 class="card-title text-lg">Test APIs</h2>
 				<div class="grid grid-cols-3 gap-4">
 					<button
-						class="btn btn-primary {loading ? 'loading' : ''}"
+						class="btn btn-primary {loadingAction === 'coverLetter' ? 'loading' : ''}"
 						on:click={testCoverLetter}
-						disabled={loading || !jobData}
+						disabled={loadingAction !== null || !jobData}
 					>
-						{loading ? '' : '📝 Cover Letter'}
+						{loadingAction === 'coverLetter' ? '' : '📝 Cover Letter'}
 					</button>
 					<button
-						class="btn btn-secondary {loading ? 'loading' : ''}"
+						class="btn btn-secondary {loadingAction === 'resume' ? 'loading' : ''}"
 						on:click={testResume}
-						disabled={loading || !jobData}
+						disabled={loadingAction !== null || !jobData}
 					>
-						{loading ? '' : '📄 Resume'}
+						{loadingAction === 'resume' ? '' : '📄 Resume'}
 					</button>
 					<button
-						class="btn btn-accent {loading ? 'loading' : ''}"
+						class="btn btn-accent {loadingAction === 'qna' ? 'loading' : ''}"
 						on:click={testQnA}
-						disabled={loading || !jobData || !jobData.questions}
+						disabled={loadingAction !== null || !jobData || !jobData.questions}
 					>
-						{loading ? '' : '❓ Q&A'}
+						{loadingAction === 'qna' ? '' : '❓ Q&A'}
 					</button>
 				</div>
 			</div>

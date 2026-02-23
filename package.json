@@ -16,14 +16,18 @@
     "logs:bundle": "node scripts/bundle-logs.mjs",
     "logs:tail": "node scripts/tail-logs.mjs",
     "tauri": "tauri",
-    "tauri:dev": "set -a && . .env && tauri dev"
+    "tauri:dev": "set -a && . .env && tauri dev",
+    "indeed:install": "cd src/bots/indeed_bot && npm install",
+    "indeed:build": "cd src/bots/indeed_bot && npm run build",
+    "indeed:dev": "cd src/bots/indeed_bot && npm run dev",
+    "indeed:start": "cd src/bots/indeed_bot && npm start"
   },
   "license": "MIT",
   "dependencies": {
     "@auth/core": "^0.40.0",
     "@auth/sveltekit": "^1.10.0",
     "@tailwindcss/typography": "^0.5.19",
-    "@tauri-apps/api": "^2.4.0",
+    "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-fs": "^2.4.5",
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@tauri-apps/plugin-shell": "^2.3.5",

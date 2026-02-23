@@ -94,6 +94,22 @@ export async function POST({ request }) {
     // Generate a job_id if not provided (required by corpus-rag API)
     const jobId = body.jobId || `job_${Date.now()}_${Math.random().toString(36).substring(7)}`;
 
+    // Fetch resume enhancement prompt from corpus-rag
+    let prompt = '';
+    try {
+      const promptRes = await fetch(`${API_BASE}/api/prompts/resume-enhancement`, {
+        headers: { Authorization: authHeader }
+      });
+      const promptData = await promptRes.json().catch(() => ({}));
+      prompt = (promptData?.content || '').replace(/\{\{enhancementFocus\}\}/g, enhancementFocus);
+    } catch (e) {
+      console.warn('Failed to fetch resume-enhancement prompt, using fallback:', e);
+      prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Provide Original Fit Score, Enhanced Fit Score, and the complete enhanced resume text.`;
+    }
+    if (!prompt.trim()) {
+      prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Provide Original Fit Score, Enhanced Fit Score, and the complete enhanced resume text.`;
+    }
+
     // Prepare request for corpus-rag API
     const requestBody = {
       job_id: jobId,
@@ -103,27 +119,7 @@ export async function POST({ request }) {
       platform: "manual",
       job_title: "",
       company: "",
-      prompt: `You are an expert resume enhancement specialist. I will provide you with my current resume and a job description.
-
-Your task: Enhance my resume to maximize fit for this specific job.
-
-Instructions:
-1. Calculate ORIGINAL FIT SCORE (0-100%) based on current resume match
-2. Enhance the resume with focus on: ${enhancementFocus}
-3. Calculate ENHANCED FIT SCORE (0-100%) after improvements
-4. Provide the complete ENHANCED RESUME text
-
-Enhancement Focus Areas:
-- ATS Optimization: Keywords, formatting, ATS-friendly structure
-- Skills Matching: Highlight relevant technical and soft skills
-- Keyword Enhancement: Industry terminology and buzzwords
-- Experience Boost: Quantify achievements, action verbs, impact
-- General: Overall professional presentation
-
-Format your response clearly showing:
-- Original Fit Score: XX%
-- Enhanced Fit Score: XX%
-- [Then provide the complete enhanced resume text]`
+      prompt
     };
 
     console.log('🔄 Calling corpus-rag API for resume enhancement...');
