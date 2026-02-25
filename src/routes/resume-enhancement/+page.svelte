@@ -48,6 +48,13 @@
   let isDownloading: boolean = false;
   let downloadSuccess: boolean = false;
   let downloadPath: string = '';
+  let activeTab: 'original' | 'enhanced' | 'final' = 'original';
+  let originalAtsResult: Record<string, unknown> | null = null;
+  let originalAtsLoading: boolean = false;
+  let originalAtsError: string = '';
+  let finalAtsResult: Record<string, unknown> | null = null;
+  let finalAtsLoading: boolean = false;
+  let finalAtsError: string = '';
 
   const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
   const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
@@ -403,6 +410,13 @@
     jobContent = null;
     jobDescription = '';
     isEditingJob = false;
+    originalAtsResult = null;
+    originalAtsError = '';
+    finalAtsResult = null;
+    finalAtsError = '';
+    enhancedResume = null;
+    analysisResult = null;
+    activeTab = 'original';
 
     try {
       // Load job details from corpus-rag API
@@ -486,6 +500,33 @@
   }
   
   // Helper function to check if a field should be readonly
+  function formatAtsLabel(key: string): string {
+    return key
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+
+  function atsArray(arr: unknown): string[] {
+    return Array.isArray(arr) ? arr.map((x) => String(x ?? '')) : [];
+  }
+
+  function atsRecommendationsBullets(arr: unknown): string[] {
+    return atsArray(arr).flatMap((r) =>
+      String(r)
+        .split(/\n+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    );
+  }
+
+  function scoreClass(score: unknown): 'high' | 'medium' | 'low' | 'none' {
+    const n = typeof score === 'number' ? score : parseInt(String(score ?? ''), 10);
+    if (Number.isNaN(n)) return 'none';
+    if (n >= 80) return 'high';
+    if (n >= 60) return 'medium';
+    return 'low';
+  }
+
   function isReadonlyField(key: string): boolean {
     const readonlyFields = [
       'jobId', 'jobid', 'job_id',
@@ -495,6 +536,78 @@
       'scrapedAt', 'scrapedat', 'scraped_at'
     ];
     return readonlyFields.includes(key.toLowerCase()) || key.toLowerCase().startsWith('custom_');
+  }
+
+  async function fetchOriginalAts() {
+    if (!originalResume?.trim() || !jobDescription?.trim()) return;
+    if (!jwtToken) await getJwtToken();
+    if (!jwtToken) {
+      originalAtsError = 'Authentication required. Please refresh the page or log in again.';
+      return;
+    }
+    originalAtsLoading = true;
+    originalAtsError = '';
+    try {
+      const res = await fetch('/api/resume/ats-score', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${jwtToken}`
+        },
+        body: JSON.stringify({
+          resume_text: originalResume,
+          job_desc: jobDescription
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        originalAtsResult = data.data;
+      } else {
+        originalAtsError = res.status === 401
+          ? 'Session expired. Please refresh the page and try again.'
+          : (data.error || 'Failed to fetch original fit score');
+      }
+    } catch (err: any) {
+      originalAtsError = err?.message || 'Request failed';
+    } finally {
+      originalAtsLoading = false;
+    }
+  }
+
+  async function fetchFinalAts() {
+    if (!enhancedResume?.trim() || !jobDescription?.trim()) return;
+    if (!jwtToken) await getJwtToken();
+    if (!jwtToken) {
+      finalAtsError = 'Authentication required. Please refresh the page or log in again.';
+      return;
+    }
+    finalAtsLoading = true;
+    finalAtsError = '';
+    try {
+      const res = await fetch('/api/resume/ats-score', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${jwtToken}`
+        },
+        body: JSON.stringify({
+          resume_text: enhancedResume,
+          job_desc: jobDescription
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.data) {
+        finalAtsResult = data.data;
+      } else {
+        finalAtsError = res.status === 401
+          ? 'Session expired. Please refresh the page and try again.'
+          : (data.error || 'Failed to fetch final fit score');
+      }
+    } catch (err: any) {
+      finalAtsError = err?.message || 'Request failed';
+    } finally {
+      finalAtsLoading = false;
+    }
   }
 
   async function enhanceResume() {
@@ -552,6 +665,7 @@
         enhancedResume = data.enhancedResume;
         fitScore = data.originalFitScore || 0;
         enhancedFitScore = data.enhancedFitScore || 0;
+        activeTab = 'enhanced';
 
         await analyzeEnhancement();
         const savedFile = await saveEnhancedResumeToLocalFiles(false);
@@ -585,38 +699,13 @@
   async function analyzeEnhancement() {
     if (!enhancedResume) return;
 
-    // Skip diff analysis since we don't have the original resume loaded
-    // The fit scores are already extracted from the API response
-    return;
-    
-    try {
-      const lines1 = originalResume.split('\n');
-      const lines2 = (enhancedResume || '').split('\n');
-      
-      analysisResult = {
-        totalLines: lines2.length,
-        linesAdded: 0,
-        linesRemoved: 0,
-        fitScoreImprovement: enhancedFitScore - fitScore
-      };
-      
-      const originalLines = new Set(lines1);
-      const enhancedLines = new Set(lines2);
-      
-      lines2.forEach(line => {
-        if (!originalLines.has(line) && line.trim()) {
-          analysisResult.linesAdded++;
-        }
-      });
-      
-      lines1.forEach(line => {
-        if (!enhancedLines.has(line) && line.trim()) {
-          analysisResult.linesRemoved++;
-        }
-      });
-    } catch (error: any) {
-      console.error('Failed to analyze:', error);
-    }
+    // Fit scores come from API; set minimal analysis for Tab 2 display
+    analysisResult = {
+      totalLines: enhancedResume.split('\n').length,
+      linesAdded: 0,
+      linesRemoved: 0,
+      fitScoreImprovement: Math.max(0, (enhancedFitScore || 0) - (fitScore || 0))
+    };
   }
 
   function generateDiff() {
@@ -1025,6 +1114,18 @@
 
           <div class="generate-section">
             <button
+              class="calculate-fit-btn"
+              onclick={() => { activeTab = 'original'; fetchOriginalAts(); }}
+              disabled={originalAtsLoading || !jobContent || !originalResume}
+              title="Calculate original resume fit score"
+            >
+              {#if originalAtsLoading}
+                ⏳ Calculating...
+              {:else}
+                📊 Calculate Fit Score
+              {/if}
+            </button>
+            <button
               class="generate-btn"
               onclick={enhanceResume}
               disabled={isGenerating || !jobContent || !originalResume}
@@ -1037,6 +1138,33 @@
               {/if}
             </button>
           </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="resume-tabs">
+          <button
+            class="resume-tab"
+            class:active={activeTab === 'original'}
+            onclick={() => { activeTab = 'original'; if (!originalAtsResult && !originalAtsLoading && originalResume && jobDescription) fetchOriginalAts(); }}
+          >
+            1. Original Fit Score
+          </button>
+          <button
+            class="resume-tab"
+            class:active={activeTab === 'enhanced'}
+            onclick={() => activeTab = 'enhanced'}
+          >
+            2. Enhanced Resume
+          </button>
+          <button
+            class="resume-tab"
+            class:active={activeTab === 'final'}
+            class:disabled={!enhancedResume}
+            onclick={() => { activeTab = 'final'; if (enhancedResume && !finalAtsResult && !finalAtsLoading) fetchFinalAts(); }}
+            title={!enhancedResume ? 'Run enhancement first' : ''}
+          >
+            3. Final Fit Score
+          </button>
         </div>
 
         <!-- Job Description Preview -->
@@ -1174,94 +1302,258 @@
           </div>
         {/if}
 
-        <!-- Analysis Results -->
-        {#if analysisResult}
-          <div class="analysis-stats">
-            <h3 class="section-title">📊 Enhancement Analysis</h3>
-            <div class="stats-grid">
-              <div class="stat-card">
-                <div class="stat-label">Original Fit Score</div>
-                <div class="stat-value">{fitScore}%</div>
+        <!-- Tab 1: Original Fit Score -->
+        {#if activeTab === 'original'}
+          <div class="ats-tab-content">
+            {#if originalAtsLoading}
+              <div class="ats-loading">
+                <div class="spinner"></div>
+                <span>Calculating original fit score...</span>
               </div>
-              <div class="stat-card improvement">
-                <div class="stat-label">Enhanced Fit Score</div>
-                <div class="stat-value">{enhancedFitScore}%</div>
+            {:else if originalAtsError}
+              <div class="ats-error">
+                <p>{originalAtsError}</p>
+                <button class="retry-btn" onclick={fetchOriginalAts}>Retry</button>
               </div>
-              <div class="stat-card">
-                <div class="stat-label">Improvement</div>
-                <div class="stat-value success">+{analysisResult.fitScoreImprovement}%</div>
+            {:else if originalAtsResult}
+              {@const d = originalAtsResult}
+              {@const overallNum = typeof d.overall_score === 'number' ? d.overall_score : parseInt(String(d.overall_score ?? ''), 10)}
+              {@const overallCls = scoreClass(d.overall_score)}
+              {@const reqArr = atsArray(d.required_skills).length ? atsArray(d.required_skills) : [...new Set([...atsArray(d.matching_skills), ...atsArray(d.missing_skills)])]}
+              {@const matchArr = atsArray(d.matching_skills)}
+              {@const missArr = atsArray(d.missing_skills)}
+              <div class="ats-result">
+                <h3 class="section-title">📊 Original Fit Score</h3>
+
+                <div class="ats-hero ats-hero-{overallCls}">
+                  <div class="ats-hero-gauge">
+                    <div class="ats-gauge-ring" style="--score: {Number.isNaN(overallNum) ? 0 : Math.min(100, Math.max(0, overallNum))};"></div>
+                    <div class="ats-hero-score">{d.overall_score ?? '—'}</div>
+                  </div>
+                  <div class="ats-hero-label">Overall Score / 100</div>
+                </div>
+
+                <div class="ats-section">
+                  <h4 class="ats-section-title">Category Scores</h4>
+                  <div class="ats-bar-grid">
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Skills Match</span><span class="ats-score-val {scoreClass(d.skills_match)}">{d.skills_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.skills_match)}" style="width: {typeof d.skills_match === 'number' ? d.skills_match : parseInt(String(d.skills_match ?? 0), 10)}%"></div></div>
+                    </div>
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Experience Match</span><span class="ats-score-val {scoreClass(d.experience_match)}">{d.experience_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.experience_match)}" style="width: {typeof d.experience_match === 'number' ? d.experience_match : parseInt(String(d.experience_match ?? 0), 10)}%"></div></div>
+                    </div>
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Keyword Match</span><span class="ats-score-val {scoreClass(d.keyword_match)}">{d.keyword_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.keyword_match)}" style="width: {typeof d.keyword_match === 'number' ? d.keyword_match : parseInt(String(d.keyword_match ?? 0), 10)}%"></div></div>
+                    </div>
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Education Match</span><span class="ats-score-val {scoreClass(d.education_match)}">{d.education_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.education_match)}" style="width: {typeof d.education_match === 'number' ? d.education_match : parseInt(String(d.education_match ?? 0), 10)}%"></div></div>
+                    </div>
+                  </div>
+                </div>
+
+                {#if d.score_breakdown && typeof d.score_breakdown === 'object'}
+                  <div class="ats-section">
+                    <h4 class="ats-section-title">Score Breakdown</h4>
+                    <div class="ats-bar-grid">
+                      {#each Object.entries(d.score_breakdown as Record<string, unknown>) as [k, v]}
+                        {@const vNum = typeof v === 'number' ? v : parseInt(String(v ?? 0), 10)}
+                        <div class="ats-bar-item">
+                          <div class="ats-bar-header"><span>{formatAtsLabel(k)}</span><span class="ats-score-val {scoreClass(v)}">{v ?? '—'}</span></div>
+                          <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(v)}" style="width: {Number.isNaN(vNum) ? 0 : Math.min(100, Math.max(0, vNum))}%"></div></div>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">📋 Required Skills</h4>
+                  {#if reqArr.length}
+                    <ul class="ats-skills-list ats-required-skills">
+                      {#each reqArr as skill}
+                        <li class="ats-skill-item {matchArr.some((m) => String(m).toLowerCase() === String(skill).toLowerCase()) ? 'skill-match' : 'skill-missing'}">{skill}</li>
+                      {/each}
+                    </ul>
+                  {:else}
+                    <p class="ats-empty-msg">None identified</p>
+                  {/if}
+                </div>
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">✅ Matching Skills</h4>
+                  {#if matchArr.length}
+                    <ul class="ats-skills-list">{#each matchArr as m}<li class="ats-skill-item skill-match">{m}</li>{/each}</ul>
+                  {:else}
+                    <p class="ats-empty-msg">None identified</p>
+                  {/if}
+                </div>
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">❌ Missing Skills</h4>
+                  {#if missArr.length}
+                    <ul class="ats-skills-list">{#each missArr as m}<li class="ats-skill-item skill-missing">{m}</li>{/each}</ul>
+                  {:else}
+                    <p class="ats-empty-msg">None identified</p>
+                  {/if}
+                </div>
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">💡 Recommendations</h4>
+                  {#if atsRecommendationsBullets(d.recommendations).length}
+                    <ul class="ats-list-ul">{#each atsRecommendationsBullets(d.recommendations) as r}<li>{r}</li>{/each}</ul>
+                  {:else}
+                    <p class="ats-empty-msg">None provided</p>
+                  {/if}
+                </div>
+
+                <button class="refresh-ats-btn" onclick={fetchOriginalAts}>🔄 Refresh</button>
               </div>
-              <div class="stat-card">
-                <div class="stat-label">Lines Added</div>
-                <div class="stat-value added">{analysisResult.linesAdded}</div>
+            {:else}
+              <div class="ats-empty">
+                <p>Click <strong>"📊 Calculate Fit Score"</strong> in the top right to analyze your original resume against this job.</p>
+                <button class="load-ats-btn" onclick={fetchOriginalAts} disabled={!originalResume || !jobDescription}>
+                  Or click here to calculate
+                </button>
               </div>
-              <div class="stat-card">
-                <div class="stat-label">Lines Removed</div>
-                <div class="stat-value removed">{analysisResult.linesRemoved}</div>
-              </div>
-            </div>
+            {/if}
           </div>
         {/if}
 
-        <!-- Enhanced Resume Result -->
-        {#if enhancedResume}
+        <!-- Tab 2: Enhanced Resume -->
+        {#if activeTab === 'enhanced'}
+          {#if enhancedResume}
           <div class="result-container">
-            <div class="result-header">
-              <h3 class="section-title">📝 Enhanced Resume</h3>
-              <div class="header-actions">
-                <div class="view-toggle">
-                  <button 
-                    class="view-btn" 
-                    class:active={comparisonView === 'sidebyside'}
-                    onclick={() => comparisonView = 'sidebyside'}
-                  >
-                    📊 Side by Side
-                  </button>
-                  <button 
-                    class="view-btn" 
-                    class:active={comparisonView === 'unified'}
-                    onclick={() => comparisonView = 'unified'}
-                  >
-                    📄 Unified
-                  </button>
-                </div>
-              </div>
+            <div class="generated-content">
+              <pre class="cover-letter-text">{enhancedResume}</pre>
             </div>
+          </div>
+          {:else}
+            <div class="tab-empty">
+              <p>Click "Enhance Resume" above to generate your tailored resume.</p>
+            </div>
+          {/if}
+        {/if}
 
-            {#if comparisonView === 'sidebyside'}
-              <div class="comparison-view">
-                <div class="comparison-grid">
-                  <div class="comparison-column">
-                    <h4>Original Resume</h4>
+        <!-- Tab 3: Final Fit Score -->
+        {#if activeTab === 'final'}
+          <div class="ats-tab-content">
+            {#if finalAtsLoading}
+              <div class="ats-loading">
+                <div class="spinner"></div>
+                <span>Calculating final fit score...</span>
+              </div>
+            {:else if finalAtsError}
+              <div class="ats-error">
+                <p>{finalAtsError}</p>
+                <button class="retry-btn" onclick={fetchFinalAts}>Retry</button>
+              </div>
+            {:else if finalAtsResult}
+              {@const d = finalAtsResult}
+              {@const overallNum = typeof d.overall_score === 'number' ? d.overall_score : parseInt(String(d.overall_score ?? ''), 10)}
+              {@const overallCls = scoreClass(d.overall_score)}
+              {@const reqArr = atsArray(d.required_skills).length ? atsArray(d.required_skills) : [...new Set([...atsArray(d.matching_skills), ...atsArray(d.missing_skills)])]}
+              {@const matchArr = atsArray(d.matching_skills)}
+              {@const missArr = atsArray(d.missing_skills)}
+              <div class="ats-result">
+                <h3 class="section-title">📊 Final Fit Score</h3>
+
+                <div class="ats-hero ats-hero-{overallCls}">
+                  <div class="ats-hero-gauge">
+                    <div class="ats-gauge-ring" style="--score: {Number.isNaN(overallNum) ? 0 : Math.min(100, Math.max(0, overallNum))};"></div>
+                    <div class="ats-hero-score">{d.overall_score ?? '—'}</div>
                   </div>
-                  <div class="comparison-column">
-                    <h4>Enhanced Resume</h4>
-                  </div>
+                  <div class="ats-hero-label">Overall Score / 100</div>
                 </div>
-                <div class="comparison-content">
-                  {#each generateDiff() as diffLine, i}
-                    <div class="diff-row {diffLine.type}">
-                      <div class="diff-cell">
-                        <span class="line-num">{i + 1}</span>
-                        <pre class="line-text">{diffLine.original}</pre>
-                      </div>
-                      <div class="diff-cell">
-                        <span class="line-num">{i + 1}</span>
-                        <pre class="line-text">{diffLine.enhanced}</pre>
-                      </div>
+
+                <div class="ats-section">
+                  <h4 class="ats-section-title">Category Scores</h4>
+                  <div class="ats-bar-grid">
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Skills Match</span><span class="ats-score-val {scoreClass(d.skills_match)}">{d.skills_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.skills_match)}" style="width: {typeof d.skills_match === 'number' ? d.skills_match : parseInt(String(d.skills_match ?? 0), 10)}%"></div></div>
                     </div>
-                  {/each}
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Experience Match</span><span class="ats-score-val {scoreClass(d.experience_match)}">{d.experience_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.experience_match)}" style="width: {typeof d.experience_match === 'number' ? d.experience_match : parseInt(String(d.experience_match ?? 0), 10)}%"></div></div>
+                    </div>
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Keyword Match</span><span class="ats-score-val {scoreClass(d.keyword_match)}">{d.keyword_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.keyword_match)}" style="width: {typeof d.keyword_match === 'number' ? d.keyword_match : parseInt(String(d.keyword_match ?? 0), 10)}%"></div></div>
+                    </div>
+                    <div class="ats-bar-item">
+                      <div class="ats-bar-header"><span>Education Match</span><span class="ats-score-val {scoreClass(d.education_match)}">{d.education_match ?? '—'}</span></div>
+                      <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(d.education_match)}" style="width: {typeof d.education_match === 'number' ? d.education_match : parseInt(String(d.education_match ?? 0), 10)}%"></div></div>
+                    </div>
+                  </div>
                 </div>
-                <div class="diff-legend">
-                  <span class="legend-item added">Added</span>
-                  <span class="legend-item removed">Removed</span>
-                  <span class="legend-item modified">Modified</span>
-                  <span class="legend-item unchanged">Unchanged</span>
+
+                {#if d.score_breakdown && typeof d.score_breakdown === 'object'}
+                  <div class="ats-section">
+                    <h4 class="ats-section-title">Score Breakdown</h4>
+                    <div class="ats-bar-grid">
+                      {#each Object.entries(d.score_breakdown as Record<string, unknown>) as [k, v]}
+                        {@const vNum = typeof v === 'number' ? v : parseInt(String(v ?? 0), 10)}
+                        <div class="ats-bar-item">
+                          <div class="ats-bar-header"><span>{formatAtsLabel(k)}</span><span class="ats-score-val {scoreClass(v)}">{v ?? '—'}</span></div>
+                          <div class="ats-bar-track"><div class="ats-bar-fill {scoreClass(v)}" style="width: {Number.isNaN(vNum) ? 0 : Math.min(100, Math.max(0, vNum))}%"></div></div>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">📋 Required Skills</h4>
+                  {#if reqArr.length}
+                    <ul class="ats-skills-list ats-required-skills">
+                      {#each reqArr as skill}
+                        <li class="ats-skill-item {matchArr.some((m) => String(m).toLowerCase() === String(skill).toLowerCase()) ? 'skill-match' : 'skill-missing'}">{skill}</li>
+                      {/each}
+                    </ul>
+                  {:else}
+                    <p class="ats-empty-msg">None identified</p>
+                  {/if}
                 </div>
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">✅ Matching Skills</h4>
+                  {#if matchArr.length}
+                    <ul class="ats-skills-list">{#each matchArr as m}<li class="ats-skill-item skill-match">{m}</li>{/each}</ul>
+                  {:else}
+                    <p class="ats-empty-msg">None identified</p>
+                  {/if}
+                </div>
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">❌ Missing Skills</h4>
+                  {#if missArr.length}
+                    <ul class="ats-skills-list">{#each missArr as m}<li class="ats-skill-item skill-missing">{m}</li>{/each}</ul>
+                  {:else}
+                    <p class="ats-empty-msg">None identified</p>
+                  {/if}
+                </div>
+
+                <div class="ats-section ats-section-list">
+                  <h4 class="ats-section-title">💡 Recommendations</h4>
+                  {#if atsRecommendationsBullets(d.recommendations).length}
+                    <ul class="ats-list-ul">{#each atsRecommendationsBullets(d.recommendations) as r}<li>{r}</li>{/each}</ul>
+                  {:else}
+                    <p class="ats-empty-msg">None provided</p>
+                  {/if}
+                </div>
+
+                <button class="refresh-ats-btn" onclick={fetchFinalAts}>🔄 Refresh</button>
               </div>
             {:else}
-              <div class="generated-content">
-                <pre class="cover-letter-text">{enhancedResume}</pre>
+              <div class="ats-empty">
+                <p>Load the final fit score for your enhanced resume.</p>
+                <button class="load-ats-btn" onclick={fetchFinalAts} disabled={!enhancedResume}>
+                  Load Final Fit Score
+                </button>
               </div>
             {/if}
           </div>
@@ -1423,11 +1715,46 @@
     color: inherit;
   }
 
-  /* Generate Section */
+  /* Job Header - top of right panel */
+  .job-header-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .job-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  /* Generate Section - top right of panel */
   .generate-section {
     display: flex;
     gap: 10px;
     align-items: center;
+    flex-shrink: 0;
+  }
+
+  .calculate-fit-btn {
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.95rem;
+    font-weight: 600;
+    box-shadow: 0 2px 6px rgba(34, 197, 94, 0.3);
+    transition: all 0.2s;
+  }
+  .calculate-fit-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.4);
+  }
+  .calculate-fit-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   .generate-btn {
@@ -2182,6 +2509,283 @@
     margin-bottom: 20px;
   }
 
+  /* Resume Tabs */
+  .resume-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 2px solid rgba(128, 128, 128, 0.3);
+    padding-bottom: 0;
+  }
+  .resume-tab {
+    padding: 10px 20px;
+    background: transparent;
+    border: none;
+    border-bottom: 3px solid transparent;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    color: inherit;
+    opacity: 0.7;
+    transition: all 0.2s;
+  }
+  .resume-tab:hover:not(:disabled) {
+    opacity: 1;
+    color: #667eea;
+  }
+  .resume-tab.active {
+    opacity: 1;
+    color: #667eea;
+    border-bottom-color: #667eea;
+  }
+  .resume-tab:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .ats-tab-content {
+    padding: 25px;
+    background: rgba(102, 126, 234, 0.03);
+    border: 2px solid rgba(102, 126, 234, 0.2);
+    border-radius: 8px;
+  }
+  .ats-loading {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 40px;
+    justify-content: center;
+    color: inherit;
+    opacity: 0.8;
+  }
+  .ats-error {
+    padding: 20px;
+    background: rgba(220, 53, 69, 0.1);
+    border: 1px solid rgba(220, 53, 69, 0.3);
+    border-radius: 8px;
+    color: inherit;
+  }
+  .ats-error p { margin: 0 0 12px 0; }
+  .retry-btn {
+    background: #dc3545;
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .ats-result {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+  .ats-hero {
+    text-align: center;
+    padding: 24px;
+    background: linear-gradient(135deg, rgba(102, 126, 234, 0.15) 0%, rgba(118, 75, 162, 0.1) 100%);
+    border-radius: 12px;
+    border: 2px solid rgba(102, 126, 234, 0.3);
+  }
+  .ats-hero-gauge {
+    position: relative;
+    width: 120px;
+    height: 120px;
+    margin: 0 auto 12px;
+  }
+  .ats-gauge-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+      #22c55e calc(var(--score, 0) * 3.6deg),
+      rgba(128, 128, 128, 0.2) calc(var(--score, 0) * 3.6deg)
+    );
+  }
+  .ats-hero-gauge .ats-gauge-ring::after {
+    content: '';
+    position: absolute;
+    inset: 8px;
+    border-radius: 50%;
+    background: var(--panel-bg, rgba(255, 255, 255, 0.95));
+  }
+  .ats-hero-gauge .ats-hero-score {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 2rem;
+    margin: 0;
+    z-index: 2;
+  }
+  .ats-hero.ats-hero-high .ats-gauge-ring { background: conic-gradient(#22c55e calc(var(--score, 0) * 3.6deg), rgba(128, 128, 128, 0.2) calc(var(--score, 0) * 3.6deg)); }
+  .ats-hero.ats-hero-high .ats-hero-score { color: #16a34a; }
+  .ats-hero.ats-hero-medium .ats-gauge-ring { background: conic-gradient(#f59e0b calc(var(--score, 0) * 3.6deg), rgba(128, 128, 128, 0.2) calc(var(--score, 0) * 3.6deg)); }
+  .ats-hero.ats-hero-medium .ats-hero-score { color: #d97706; }
+  .ats-hero.ats-hero-low .ats-gauge-ring { background: conic-gradient(#ef4444 calc(var(--score, 0) * 3.6deg), rgba(128, 128, 128, 0.2) calc(var(--score, 0) * 3.6deg)); }
+  .ats-hero.ats-hero-low .ats-hero-score { color: #dc2626; }
+  .ats-hero.ats-hero-none .ats-gauge-ring { background: conic-gradient(#6b7280 calc(var(--score, 0) * 3.6deg), rgba(128, 128, 128, 0.2) calc(var(--score, 0) * 3.6deg)); }
+  .ats-hero.ats-hero-none .ats-hero-score { color: #6b7280; }
+  .ats-hero-score {
+    font-size: 3rem;
+    font-weight: 800;
+    color: #667eea;
+    line-height: 1;
+  }
+  .ats-hero-label {
+    font-size: 0.9rem;
+    opacity: 0.85;
+    margin-top: 4px;
+    color: inherit;
+  }
+  .ats-section {
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.4);
+    border-radius: 8px;
+    border: 1px solid rgba(128, 128, 128, 0.15);
+  }
+  .ats-section-title {
+    margin: 0 0 12px 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: inherit;
+  }
+  .ats-section-list {
+    min-height: 60px;
+  }
+  .ats-bar-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .ats-bar-item {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .ats-bar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+  }
+  .ats-bar-header span:first-child { opacity: 0.9; }
+  .ats-bar-track {
+    height: 8px;
+    background: rgba(128, 128, 128, 0.2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .ats-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+  }
+  .ats-bar-fill.high { background: linear-gradient(90deg, #22c55e, #16a34a); }
+  .ats-bar-fill.medium { background: linear-gradient(90deg, #f59e0b, #d97706); }
+  .ats-bar-fill.low { background: linear-gradient(90deg, #ef4444, #dc2626); }
+  .ats-bar-fill.none { background: linear-gradient(90deg, #6b7280, #4b5563); }
+  .ats-score-val.high { color: #16a34a; }
+  .ats-score-val.medium { color: #d97706; }
+  .ats-score-val.low { color: #dc2626; }
+  .ats-score-val.none { color: #6b7280; }
+  .ats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+  }
+  .ats-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 12px;
+    background: rgba(255,255,255,0.6);
+    border-radius: 8px;
+    border: 1px solid rgba(128,128,128,0.2);
+  }
+  .ats-item span:first-child { font-size: 0.85rem; opacity: 0.85; }
+  .ats-score-val { font-weight: 700; font-size: 1.15rem; }
+  .ats-breakdown-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .ats-breakdown-item {
+    padding: 10px 16px;
+    background: rgba(102, 126, 234, 0.12);
+    border-radius: 8px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .ats-breakdown-item span:first-child { font-size: 0.9rem; }
+  .ats-list-ul {
+    margin: 0;
+    padding-left: 24px;
+    line-height: 1.7;
+    color: inherit;
+    list-style-type: disc;
+  }
+  .ats-list-ul li {
+    margin-bottom: 6px;
+  }
+  .ats-skills-list {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .ats-skills-list li {
+    margin-bottom: 0;
+  }
+  .ats-skill-item {
+    display: inline-block;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    font-weight: 500;
+  }
+  .ats-skill-item.skill-match {
+    background: rgba(34, 197, 94, 0.2);
+    color: #16a34a;
+    border: 1px solid rgba(34, 197, 94, 0.4);
+  }
+  .ats-skill-item.skill-missing {
+    background: rgba(239, 68, 68, 0.2);
+    color: #dc2626;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+  }
+  .ats-empty-msg {
+    margin: 0;
+    font-size: 0.9rem;
+    opacity: 0.7;
+  }
+  .ats-empty, .tab-empty {
+    padding: 40px;
+    text-align: center;
+    color: inherit;
+    opacity: 0.8;
+  }
+  .load-ats-btn, .refresh-ats-btn {
+    margin-top: 12px;
+    background: #667eea;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+  }
+  .load-ats-btn:hover:not(:disabled), .refresh-ats-btn:hover {
+    background: #5568d3;
+  }
+  .load-ats-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
   /* Progress Bar */
   .progress-bar {
     width: 100%;
@@ -2201,6 +2805,17 @@
 
   /* Responsive */
   @media (max-width: 768px) {
+    .job-header-section {
+      flex-direction: column;
+    }
+    .generate-section {
+      width: 100%;
+      justify-content: flex-end;
+    }
+    .ats-grid {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
     .comparison-grid,
     .diff-row {
       grid-template-columns: 1fr;

@@ -104,10 +104,10 @@ export async function POST({ request }) {
       prompt = (promptData?.content || '').replace(/\{\{enhancementFocus\}\}/g, enhancementFocus);
     } catch (e) {
       console.warn('Failed to fetch resume-enhancement prompt, using fallback:', e);
-      prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Provide Original Fit Score, Enhanced Fit Score, and the complete enhanced resume text.`;
+      prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Return ONLY the complete enhanced resume text—no scores, no analysis, no commentary.`;
     }
     if (!prompt.trim()) {
-      prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Provide Original Fit Score, Enhanced Fit Score, and the complete enhanced resume text.`;
+      prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Return ONLY the complete enhanced resume text—no scores, no analysis, no commentary.`;
     }
 
     // Prepare request for corpus-rag API
