@@ -767,7 +767,8 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
 #[tauri::command]
 async fn run_bot_streaming(
     app: tauri::AppHandle,
-    bot_name: String
+    bot_name: String,
+    extract_limit: Option<u32>
 ) -> Result<String, String> {
     use tokio::process::Command;
     use tokio::io::{BufReader, AsyncBufReadExt};
@@ -787,12 +788,18 @@ async fn run_bot_streaming(
     }
 
     // Spawn bot process with piped stdout
-    let mut child = Command::new("bun")
-        .arg(script_path.to_str().unwrap())
-        .arg(&bot_name)
-        .current_dir(&project_root)
+    let mut cmd = Command::new("bun");
+    cmd.arg(script_path.to_str().unwrap())
+       .arg(&bot_name);
+
+    if let Some(limit) = extract_limit {
+        // Pass limit via env var — avoids any CLI arg serialization issues
+        cmd.env("BOT_EXTRACT_LIMIT", limit.to_string());
+    }
+
+    let mut child = cmd.current_dir(&project_root)
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit()) // Debug logs show in terminal
+        .stderr(Stdio::inherit())
         .spawn()
         .map_err(|e| format!("Failed to spawn bot process: {}", e))?;
 
@@ -824,6 +831,70 @@ async fn run_bot_streaming(
     });
 
     Ok(format!("Bot '{}' started successfully", bot_name))
+}
+
+#[tauri::command]
+async fn run_bot_for_job(
+    app: tauri::AppHandle,
+    bot_name: String,
+    job_url: String
+) -> Result<String, String> {
+    use tokio::process::Command;
+    use tokio::io::{BufReader, AsyncBufReadExt};
+    use std::process::Stdio;
+    use std::env;
+
+    // Resolve project root
+    let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+    if project_root.ends_with("src-tauri") {
+        project_root.pop();
+    }
+
+    let script_path = project_root.join("src/bots/bot_starter.ts");
+
+    if !script_path.exists() {
+        return Err(format!("Bot starter script not found: {}", script_path.display()));
+    }
+
+    // Spawn bot process with piped stdout and explicit `--url` param
+    let mut child = Command::new("bun")
+        .arg(script_path.to_str().unwrap())
+        .arg(&bot_name)
+        .arg(format!("--url={}", job_url))
+        .current_dir(&project_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit()) // Debug logs show in terminal
+        .spawn()
+        .map_err(|e| format!("Failed to spawn bot process: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let reader = BufReader::new(stdout);
+    let mut lines = reader.lines();
+
+    let app_handle = app.clone();
+    
+    // Background task to read output and emit to frontend
+    tauri::async_runtime::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            // Check if the line is JSON
+            if line.starts_with('{') && line.ends_with('}') {
+                // If the frontend parsing breaks, this will still parse as a string
+                // But typically, emitting standard text blocks or custom Event objects happens here
+                let _ = app_handle.emit("bot-log", line.clone());
+            } else {
+                let _ = app_handle.emit("bot-log", line.clone());
+            }
+            // Also print to Tauri console
+            println!("[BOT]: {}", line);
+        }
+    });
+
+    // Wait for bot process to complete
+    tokio::spawn(async move {
+        let _ = child.wait().await;
+    });
+
+    Ok(format!("Bot {} started for job {}", bot_name, job_url))
 }
 
 #[tauri::command]
@@ -1090,13 +1161,39 @@ async fn preview_managed_file(query: ManagedFilePreviewQuery) -> Result<String, 
         .find(|f| f.id == query.file_id)
         .ok_or_else(|| "Managed file not found".to_string())?;
     let full_path = resolve_entry_path(&query.user_id, entry)?;
-    // Check if this is a binary file that shouldn't be previewed as text
     let file_name = full_path.file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_lowercase();
 
-    if file_name.ends_with(".pdf") || file_name.ends_with(".doc") || file_name.ends_with(".docx") {
+    // Extract text from PDF files for resume preview and comparison
+    if file_name.ends_with(".pdf") {
+        let bytes = tokio::fs::read(&full_path)
+            .await
+            .map_err(|e| format!("Failed reading PDF {}: {}", full_path.display(), e))?;
+        match pdf_extract::extract_text_from_mem(&bytes) {
+            Ok(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    return Ok(format!("[PDF {}: No extractable text found. The file may be image-based or scanned.]",
+                        full_path.file_name().unwrap_or_default().to_string_lossy()));
+                }
+                let limit = query.max_chars.unwrap_or(1_000_000);
+                if trimmed.len() > limit {
+                    let truncated: String = trimmed.chars().take(limit).collect();
+                    return Ok(format!("{}...", truncated));
+                }
+                return Ok(trimmed.to_string());
+            }
+            Err(e) => {
+                return Ok(format!("[PDF {}: Text extraction failed: {}. Click the location link above to open and view the full content.]",
+                    full_path.file_name().unwrap_or_default().to_string_lossy(), e));
+            }
+        }
+    }
+
+    // DOC/DOCX: still return binary message (no Rust crate in use for docx extraction)
+    if file_name.ends_with(".doc") || file_name.ends_with(".docx") {
         return Ok(format!("[Binary file: {}. Use file opening to view content.]",
                          full_path.file_name().unwrap_or_default().to_string_lossy()));
     }
@@ -1361,6 +1458,7 @@ pub fn run() {
             run_python_script,
             run_javascript_script,
             run_bot_streaming,
+            run_bot_for_job,
             register_managed_file,
             register_managed_file_base64,
             get_managed_files,

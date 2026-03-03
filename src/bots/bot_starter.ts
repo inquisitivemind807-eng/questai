@@ -72,7 +72,7 @@ export class BotStarter {
             // Wait for Chrome to actually exit
             await new Promise(resolve => setTimeout(resolve, 2000));
           } catch (quitError) {
-            print_log(`⚠️ Graceful quit failed: ${quitError.message}`);
+            print_log(`⚠️ Graceful quit failed: ${(quitError as Error).message}`);
           }
         }
 
@@ -321,8 +321,41 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const headless = args.includes('--headless');
   const no_keep_open = args.includes('--close');
 
-  // Handle test mode for seek bot
-  if (is_test_mode && bot_name === 'seek') {
+  // Extract optional extraction limit — env var (from Tauri) takes priority, CLI arg is fallback
+  const env_limit = process.env.BOT_EXTRACT_LIMIT;
+  const limit_arg = args.find(a => a.startsWith('--limit='));
+  const maxJobsToProcess = env_limit
+    ? parseInt(env_limit, 10)
+    : limit_arg ? parseInt(limit_arg.split('=')[1], 10) : undefined;
+
+  // Extract specific --url= parameter for Direct Apply from the UI
+  const url_arg = args.find(a => a.startsWith('--url='));
+  const job_url = url_arg ? url_arg.split('=')[1] : null;
+
+  // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
+  if (job_url && bot_name === 'seek') {
+    (async () => {
+      try {
+        print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
+        const { runQuickApplyE2ETest } = await import('./seek/tests/seek_quick_apply_e2e_test.js');
+        await runQuickApplyE2ETest(job_url);
+      } catch (error) {
+        console.error('Direct Apply execution failed:', error);
+        process.exit(1);
+      }
+    })();
+  } else if (job_url && bot_name === 'linkedin') {
+    (async () => {
+      try {
+        print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
+        // For LinkedIn, we just pass directApplyUrl into the config and let the standard runner handle it
+        await run_bot('linkedin', { directApplyUrl: job_url }, { headless, keep_open: !no_keep_open });
+      } catch (error) {
+        console.error('LinkedIn Direct Apply execution failed:', error);
+        process.exit(1);
+      }
+    })();
+  } else if (is_test_mode && bot_name === 'seek') {
     (async () => {
       try {
         const { runQuickApplyTests } = await import('./seek/tests/seek_quick_apply_test');
@@ -344,7 +377,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       }
     })();
   } else {
-    run_bot(bot_name, undefined, {
+    run_bot(bot_name, { maxJobsToProcess }, {
       headless,
       keep_open: !no_keep_open
     }).catch(error => {

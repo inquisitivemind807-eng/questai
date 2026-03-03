@@ -169,11 +169,15 @@ function build_search_url(base_url: string, keywords: string, location: string):
 // Step 0: Initialize Context
 export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const selectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'config/seek_selectors.json'), 'utf8'));
-  const config = JSON.parse(fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8'));
+  const fileConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8'));
+
+  // Capture maxJobsToProcess from runtime config BEFORE overwriting ctx.config
+  const runtimeLimit = (ctx.config as any)?.maxJobsToProcess;
+  ctx.maxJobsLimit = runtimeLimit ? Number(runtimeLimit) : 0;  // 0 = no limit
 
   ctx.selectors = selectors;
-  ctx.config = config;
-  ctx.seek_url = build_search_url(BASE_URL, config.formData.keywords || "", config.formData.locations || "");
+  ctx.config = fileConfig;
+  ctx.seek_url = build_search_url(BASE_URL, fileConfig.formData.keywords || "", fileConfig.formData.locations || "");
 
   // Initialize retry counters to prevent infinite loops
   ctx.retry_counts = {
@@ -185,7 +189,13 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
     MAX_COLLECT_CARDS_RETRIES: 5
   };
 
+  // Initialize jobs extracted counter (tracks across pages)
+  ctx.jobs_extracted = 0;
+
   printLog(`Search URL: ${ctx.seek_url}`);
+  if (ctx.maxJobsLimit > 0) {
+    printLog(`🎯 Will extract up to ${ctx.maxJobsLimit} jobs`);
+  }
   yield "ctx_ready";
 }
 
@@ -393,29 +403,60 @@ export async function* collectJobCards(ctx: WorkflowContext): AsyncGenerator<str
 
 // Step 7: Click Job Card
 export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  const cards = ctx.job_cards || [];
   const index = ctx.job_index || 0;
-  const total = cards.length;
+  const total = ctx.total_jobs || 0;
+  const maxJobs = ctx.maxJobsLimit || 0;
 
-  if (!cards.length || index >= cards.length) {
+  // Stop if we've reached the user-requested extraction limit
+  if (maxJobs > 0 && (ctx.jobs_extracted || 0) >= maxJobs) {
+    printLog(`✅ Reached extraction limit of ${maxJobs} jobs. Stopping.`);
+    yield "max_jobs_reached";
+    return;
+  }
+
+  if (total === 0 || index >= total) {
     yield "job_cards_finished";
     return;
   }
 
   try {
+    // Dynamically re-fetch the cards to avoid StaleElementReferenceError
+    // since the DOM might have changed after closing a Quick Apply modal
+    const selectors = ctx.selectors?.job_cards || ['article[data-testid="job-card"]'];
+    let currentCard = null;
+
+    for (const selector of selectors) {
+      try {
+        const freshCards = await ctx.driver.findElements(By.css(selector));
+        if (freshCards.length > index) {
+          currentCard = freshCards[index];
+          break;
+        }
+      } catch { continue; }
+    }
+
+    if (!currentCard) {
+      printLog(`⚠️ Could not find job card at index ${index} - DOM might have changed`);
+      ctx.job_index = index + 1;
+      yield "job_card_skipped";
+      return;
+    }
+
     // Log which job card we're opening (snippet from card text)
     const snippet = (await ctx.driver.executeScript(
       "const t = (arguments[0].textContent || '').trim(); return t.length > 70 ? t.substring(0, 70) + '...' : t;",
-      cards[index]
+      currentCard
     )) as string;
     printLog(`\n📌 Opening job card ${index + 1}/${total}: ${snippet || '(no text)'}`);
 
-    await ctx.driver.executeScript("arguments[0].scrollIntoView(true);", cards[index]);
-    await cards[index].click();
+    await ctx.driver.executeScript("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", currentCard);
+    await ctx.driver.sleep(1000); // Give it time to scroll
+    await ctx.driver.executeScript("arguments[0].click();", currentCard);
     await ctx.driver.sleep(2000); // Wait for details panel to load
     ctx.job_index = index + 1;
     yield "job_card_clicked";
-  } catch {
+  } catch (error) {
+    printLog(`Error clicking job card: ${error}`);
     ctx.job_index = index + 1;
     yield "job_card_skipped";
   }
@@ -735,13 +776,27 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
       printLog(`═══════════════════════════════════════════════════════════════\n`);
       printLog(`Quick Apply job saved: ${jobData.title} at ${jobData.company} (${filepath})`);
 
-      // Update progress counter and overlay
-      if (ctx.overlay && ctx.total_jobs) {
-        ctx.applied_jobs = (ctx.applied_jobs || 0) + 1;
+      // Increment extracted jobs counter
+      ctx.jobs_extracted = (ctx.jobs_extracted || 0) + 1;
+
+      // Update overlay progress and log
+      if (ctx.overlay) {
+        const maxJobs = ctx.maxJobsLimit || 0;
+        const displayTotal = maxJobs > 0 ? maxJobs : (ctx.total_jobs || 0);
+        const countMsg = maxJobs > 0
+          ? `> ${ctx.jobs_extracted}/${maxJobs} jobs extracted`
+          : `> ${ctx.jobs_extracted} jobs extracted`;
+
+        await ctx.overlay.addLogEvent(countMsg);
+        await ctx.overlay.addLogEvent(`  📋 ${ctx.currentJobTitle || 'Unknown Title'}`);
+        await ctx.overlay.addLogEvent(`  🏢 ${ctx.currentJobCompany || 'Unknown Company'}`);
+        if (jobData.url) {
+          await ctx.overlay.addLogEvent(`  🔗 ${jobData.url}`);
+        }
         await ctx.overlay.updateJobProgress(
-          ctx.applied_jobs,
-          ctx.total_jobs,
-          "Quick Apply job saved",
+          ctx.jobs_extracted,
+          displayTotal,
+          `Job extracted: ${ctx.currentJobTitle}`,
           9
         );
       }
@@ -753,6 +808,58 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
   } catch (error) {
     printLog(`Job parsing error: ${error}`);
     yield "parse_failed";
+  }
+}
+
+// Save successfully parsed job to external Database, then skip
+export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    printLog(`Saving scraped job to Database...`);
+
+    if (!ctx.currentJobFile || !fs.existsSync(ctx.currentJobFile)) {
+      throw new Error("No job details file found to save.");
+    }
+
+    const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
+
+    // Try extracting the explicit URL 
+    const explicitUrlMatch = jobData.url?.match(/job\/(\d+)/);
+    const platformJobId = explicitUrlMatch ? explicitUrlMatch[1] : (jobData.jobId || Date.now().toString());
+    const jobUrl = jobData.url || (platformJobId ? `https://www.seek.com.au/job/${platformJobId}` : undefined);
+
+    const payload = {
+      platform: 'seek',
+      platformJobId: platformJobId,
+      title: jobData.title || ctx.currentJobTitle || 'Unknown Job Title',
+      company: jobData.company || ctx.currentJobCompany || 'Unknown Company',
+      url: jobUrl,
+      location: jobData.location,
+      rawData: jobData
+    };
+
+    // Need to POST this to the corpus-rag server 
+    // Usually via apiRequest but we'll try a direct fetch to the corpus-rag port 3000
+    try {
+      const response = await fetch('http://localhost:3000/api/scraped-jobs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ctx.auth_token || process.env.CORPUS_RAG_TOKEN || ''}` },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errT = await response.text();
+        printLog(`⚠️ Failed to save to database (HTTP ${response.status}): ${errT}`);
+      } else {
+        printLog(`✅ Successfully saved scraped job: ${payload.title} at ${payload.company}`);
+      }
+    } catch (apiErr) {
+      printLog(`⚠️ Network error saving to database: ${apiErr}`);
+    }
+
+    yield "job_saved";
+  } catch (error) {
+    printLog(`Error saving scraped job: ${error}`);
+    yield "save_failed";
   }
 }
 
@@ -1102,19 +1209,25 @@ export async function* skipToNextCard(ctx: WorkflowContext): AsyncGenerator<stri
   const title = ctx.currentJobTitlePreview || ctx.currentJobTitle;
   const company = ctx.currentJobCompanyPreview || ctx.currentJobCompany;
   if (title || company) {
-    printLog(`⏭️ Skipping (regular apply): ${title || '?'} at ${company || '?'}`);
+    printLog(`\u23ed\ufe0f Skipping (regular apply): ${title || '?'} at ${company || '?'}`);
   } else {
     printLog("Regular Apply job found - skipping job details parsing and moving to next card...");
   }
 
+  ctx.jobs_scanned = (ctx.jobs_scanned || 0) + 1;
+
   // Update progress counter if overlay exists
-  if (ctx.overlay && ctx.total_jobs) {
+  if (ctx.overlay) {
     const skippedJobs = (ctx.skipped_jobs || 0) + 1;
     ctx.skipped_jobs = skippedJobs;
+    const displayTotal = (ctx.maxJobsLimit || 0) > 0 ? ctx.maxJobsLimit : (ctx.total_jobs || 0);
+    const numerator = ctx.jobs_extracted || 0;
+
+    await ctx.overlay.addLogEvent(`\u23ed\ufe0f Scanning (${ctx.jobs_scanned}): ${title || 'job'} @ ${company || '?'} — regular apply`);
     await ctx.overlay.updateJobProgress(
-      ctx.applied_jobs || 0,
-      ctx.total_jobs,
-      "Regular apply job skipped",
+      numerator,
+      displayTotal,
+      `Scanning job ${ctx.jobs_scanned}${displayTotal > 0 ? '/' + displayTotal : ''}: ${title || '?'}`,
       8
     );
   }
@@ -1222,6 +1335,7 @@ export const seekStepFunctions = {
   clickJobCard,
   detectApplyType,
   parseJobDetails,
+  saveScrapedJob,
   clickQuickApply,
   waitForQuickApplyPage,
   getCurrentStep,

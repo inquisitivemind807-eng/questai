@@ -25,14 +25,14 @@ const printLog = (message: string) => {
 // #region agent log
 const DEBUG_LOG = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
   const payload = { location, message, data, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId };
-  fetch('http://127.0.0.1:7242/ingest/e1922693-d436-4aba-b2d8-ded81d139fea', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => {});
+  fetch('http://127.0.0.1:7242/ingest/e1922693-d436-4aba-b2d8-ded81d139fea', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }).catch(() => { });
   try {
     const line = JSON.stringify(payload) + '\n';
     const logDir = path.join(process.cwd(), '.cursor');
     if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
     fs.appendFileSync(path.join(logDir, 'debug.log'), line);
     fs.appendFileSync(path.join(__dirname, 'linkedin-debug.log'), line);
-  } catch (_) {}
+  } catch (_) { }
 };
 // #endregion
 
@@ -99,42 +99,7 @@ async function waitForJobsSearchFormReady(driver: WebDriver, selectors: { jobs?:
   return false;
 }
 
-// Step 0: Initialize Context - Load config, selectors, and job IDs
-export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  try {
-    // #region agent log
-    DEBUG_LOG('linkedin_impl.ts:step0', 'step0 entered', { cwd: process.cwd(), __dirname }, 'H1');
-    // #endregion
-    const selectorsConfigPath = path.join(__dirname, 'config/linkedin_selectors.json');
-    const selectorsRootPath = path.join(__dirname, 'linkedin_selectors.json');
-    const selectorsPath = fs.existsSync(selectorsConfigPath) ? selectorsConfigPath : selectorsRootPath;
-    ctx.selectors = JSON.parse(fs.readFileSync(selectorsPath, 'utf-8'));
 
-    const configPath = path.join(__dirname, '../user-bots-config.json');
-    if (fs.existsSync(configPath)) {
-      ctx.config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-    } else {
-      ctx.config = {};
-    }
-
-    const jobIdsPath = path.join(process.cwd(), 'deknilJobsIds.json');
-    let jobIds: Set<string> = new Set();
-
-    if (fs.existsSync(jobIdsPath)) {
-      const data = JSON.parse(fs.readFileSync(jobIdsPath, 'utf-8'));
-      jobIds = new Set(Array.isArray(data) ? data : []);
-    }
-
-    ctx.applied_job_ids = jobIds;
-
-    // #region agent log
-    DEBUG_LOG('linkedin_impl.ts:step0', 'Context ready', { hasFormData: !!ctx.config?.formData, locations: ctx.config?.formData?.locations ?? null, keywords: ctx.config?.formData?.keywords ?? null, locationInputCandidates: (ctx.selectors?.jobs?.location_input_candidates ?? []).length, keywordInputCandidates: (ctx.selectors?.jobs?.keywords_input_candidates ?? []).length }, 'H1');
-    // #endregion
-    yield "ctx_ready";
-  } catch (error) {
-    yield "ctx_failed";
-  }
-}
 
 // Open LinkedIn and check login status
 export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
@@ -292,7 +257,7 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
       if (urlLocation && urlLocation.toLowerCase().includes(location.toLowerCase())) {
         printLog(`Location already in URL: ${urlLocation}, skipping form fill`);
         ctx.search_location = location;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location already set via URL", 7).catch(() => {});
+        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location already set via URL", 7).catch(() => { });
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Location already in URL, skipping', { urlLocation, yielded: 'search_location_set' }, 'H1');
         // #endregion
@@ -304,7 +269,7 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
     }
 
     // Hide overlay so it does not block interaction; dismiss any LinkedIn overlays
-    if (ctx.overlay) await ctx.overlay.hideOverlay().catch(() => {});
+    if (ctx.overlay) await ctx.overlay.hideOverlay().catch(() => { });
     await dismissLinkedInOverlays(driver);
     await driver.sleep(500);
 
@@ -330,7 +295,7 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
 
         printLog(`Location: ${location}`);
         ctx.search_location = location;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location set", 7).catch(() => {});
+        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location set", 7).catch(() => { });
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Location set', { selectorIndex: idx, yielded: 'search_location_set' }, 'H2');
         // #endregion
@@ -357,7 +322,7 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
         await locationInput.sendKeys(Key.ENTER);
         printLog(`Location (XPath): ${location}`);
         ctx.search_location = location;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location set", 7).catch(() => {});
+        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location set", 7).catch(() => { });
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Location set via XPath', { xpathIndex: idx, yielded: 'search_location_set' }, 'H2');
         // #endregion
@@ -369,13 +334,13 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
     }
 
     // Location input not found - yield outcome that transitions to set_search_keywords (so we always proceed without requiring YAML change / restart)
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location not set", 7).catch(() => {});
+    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location not set", 7).catch(() => { });
     // #region agent log
     DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Yield no_search_location_in_settings (proceed to keywords)', { yielded: 'no_search_location_in_settings' }, 'H2');
     // #endregion
     yield "no_search_location_in_settings";
   } catch (error) {
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Error setting location", 7).catch(() => {});
+    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Error setting location", 7).catch(() => { });
     yield "failed_setting_search_location";
   }
 }
@@ -404,7 +369,7 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
       if (urlKeywords && urlKeywords.toLowerCase().includes(keywords.toLowerCase())) {
         printLog(`Keywords already in URL: ${urlKeywords}, skipping form fill`);
         ctx.search_keywords = keywords;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords already set via URL", 6).catch(() => {});
+        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords already set via URL", 6).catch(() => { });
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchKeywords', 'Keywords already in URL, skipping', { urlKeywords, yielded: 'search_keywords_set' }, 'H1');
         // #endregion
@@ -416,7 +381,7 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
     }
 
     // Hide overlay so it does not block interaction; dismiss any LinkedIn overlays
-    if (ctx.overlay) await ctx.overlay.hideOverlay().catch(() => {});
+    if (ctx.overlay) await ctx.overlay.hideOverlay().catch(() => { });
     await dismissLinkedInOverlays(driver);
     await driver.sleep(500);
 
@@ -440,7 +405,7 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
 
         printLog(`Keywords: ${keywords}`);
         ctx.search_keywords = keywords;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords set", 6).catch(() => {});
+        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords set", 6).catch(() => { });
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchKeywords', 'Keywords set', { selectorIndex: idx, yielded: 'search_keywords_set' }, 'H2');
         // #endregion
@@ -454,13 +419,13 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
       }
     }
 
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords input not found", 6).catch(() => {});
+    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords input not found", 6).catch(() => { });
     // #region agent log
     DEBUG_LOG('linkedin_impl.ts:setSearchKeywords', 'Yield keywords_input_not_found', { yielded: 'keywords_input_not_found' }, 'H2');
     // #endregion
     yield "keywords_input_not_found";
   } catch (error) {
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Error setting keywords", 6).catch(() => {});
+    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Error setting keywords", 6).catch(() => { });
     yield "failed_setting_search_keywords";
   }
 }
@@ -737,10 +702,41 @@ export async function* processJobs(ctx: WorkflowContext): AsyncGenerator<string,
     return;
   }
 
-  ctx.current_job = extractedJobs[0];
-  ctx.current_job_index = 0;
+  printLog(`Processing ${extractedJobs.length} jobs to backend...`);
 
-  yield "starting_to_process_jobs";
+  for (const job of extractedJobs) {
+    const payload = {
+      platform: 'linkedin',
+      platformJobId: job.job_id || Date.now().toString(),
+      title: job.title || 'Unknown Title',
+      company: job.company || 'Unknown Company',
+      url: job.link || `https://www.linkedin.com/jobs/view/${job.job_id}`,
+      location: job.location,
+      rawData: job
+    };
+
+    try {
+      const response = await fetch('http://localhost:3000/api/scraped-jobs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${ctx.auth_token || process.env.CORPUS_RAG_TOKEN || ''}`
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errT = await response.text();
+        printLog(`⚠️ Failed to save job ${job.job_id} (HTTP ${response.status}): ${errT}`);
+      } else {
+        printLog(`✅ Saved scraped job: ${job.title} at ${job.company}`);
+      }
+    } catch (apiErr) {
+      printLog(`⚠️ Network error saving job ${job.job_id}: ${apiErr}`);
+    }
+  }
+
+  yield "jobs_saved";
 }
 
 // Attempt Easy Apply
@@ -806,8 +802,8 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
           try {
             const modalHtml = await modal.getAttribute('innerHTML');
             if (modalHtml.includes('Be sure to include an updated resume') ||
-                modalHtml.includes('Upload resume') ||
-                modalHtml.includes('DOC, DOCX, PDF')) {
+              modalHtml.includes('Upload resume') ||
+              modalHtml.includes('DOC, DOCX, PDF')) {
 
               printLog('⚠️ PROFILE SETUP REQUIRED');
               await ctx.overlay.showMessage(
@@ -1176,8 +1172,20 @@ async function generateAIResumeLinkedIn(ctx: WorkflowContext): Promise<string> {
   });
   const buffer = await Packer.toBuffer(doc);
   fs.writeFileSync(docxPath, buffer);
-  printLog(`✅ AI resume saved: ${docxPath}`);
   return docxPath;
+}
+
+export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  const config = ctx.config || {};
+  printLog("Starting step 0...");
+
+  if (config.directApplyUrl) {
+    printLog(`Direct Apply URL detected: ${config.directApplyUrl}. Bypassing login check and search.`);
+    yield "direct_apply_requested";
+    return;
+  }
+
+  yield "step0_complete";
 }
 
 // Upload resume (Easy Apply modal – use selectors; optional AI resume, else config path; no file input → resume_not_required)
@@ -1194,7 +1202,7 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
       try {
         resumePath = await generateAIResumeLinkedIn(ctx);
       } catch (err) {
-        printLog(`AI resume generation failed: ${err}`);
+        printLog(`AI resume generation failed: ${err} `);
         resumePath = (ctx.config?.formData?.resumePath || '').trim();
       }
     }
@@ -1246,7 +1254,7 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
       yield "proceeding_without_resume";
     }
   } catch (error) {
-    printLog(`Resume upload error: ${error}`);
+    printLog(`Resume upload error: ${error} `);
     yield "proceeding_without_resume";
   }
 }
@@ -1261,72 +1269,72 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
     await driver.sleep(1500);
 
     const questionsData = await driver.executeScript(`
-      const modal = document.querySelector(arguments[0]);
-      if (!modal) return { questionsFound: 0, questions: [] };
-      const containers = Array.from(modal.querySelectorAll(arguments[1]));
-      const questions = [];
-      const placeholderOpts = ['Select...', 'Please select', 'Choose...', ''];
+  const modal = document.querySelector(arguments[0]);
+  if (!modal) return { questionsFound: 0, questions: [] };
+  const containers = Array.from(modal.querySelectorAll(arguments[1]));
+  const questions = [];
+  const placeholderOpts = ['Select...', 'Please select', 'Choose...', ''];
 
-      containers.forEach((container, index) => {
-        container.setAttribute('data-linkedin-q-index', String(index));
-        const containerSelector = '[data-linkedin-q-index="' + index + '"]';
+  containers.forEach((container, index) => {
+    container.setAttribute('data-linkedin-q-index', String(index));
+    const containerSelector = '[data-linkedin-q-index="' + index + '"]';
 
-        let questionText = '';
-        const label = container.querySelector('label');
-        if (label) questionText = (label.textContent || '').trim();
-        const titleSpan = container.querySelector('[data-test-form-builder-radio-button-form-component__title], .artdeco-form-element__label');
-        if (!questionText && titleSpan) questionText = (titleSpan.textContent || '').trim();
-        const ariaLabel = container.querySelector('input[aria-label], textarea[aria-label], select');
-        if (!questionText && ariaLabel) questionText = (ariaLabel.getAttribute('aria-label') || '').trim();
-        if (!questionText) questionText = 'Question ' + (index + 1);
+    let questionText = '';
+    const label = container.querySelector('label');
+    if (label) questionText = (label.textContent || '').trim();
+    const titleSpan = container.querySelector('[data-test-form-builder-radio-button-form-component__title], .artdeco-form-element__label');
+    if (!questionText && titleSpan) questionText = (titleSpan.textContent || '').trim();
+    const ariaLabel = container.querySelector('input[aria-label], textarea[aria-label], select');
+    if (!questionText && ariaLabel) questionText = (ariaLabel.getAttribute('aria-label') || '').trim();
+    if (!questionText) questionText = 'Question ' + (index + 1);
 
-        const selectEl = container.querySelector('select');
-        if (selectEl) {
-          const options = Array.from(selectEl.options)
-            .map(o => (o.textContent || o.innerText || '').trim())
-            .filter(t => t && !placeholderOpts.includes(t));
-          questions.push({ type: 'select', question: questionText, options: options, containerSelector: containerSelector });
-          return;
-        }
+    const selectEl = container.querySelector('select');
+    if (selectEl) {
+      const options = Array.from(selectEl.options)
+        .map(o => (o.textContent || o.innerText || '').trim())
+        .filter(t => t && !placeholderOpts.includes(t));
+      questions.push({ type: 'select', question: questionText, options: options, containerSelector: containerSelector });
+      return;
+    }
 
-        const textareaEl = container.querySelector('textarea');
-        if (textareaEl) {
-          questions.push({ type: 'textarea', question: questionText, options: [], containerSelector: containerSelector });
-          return;
-        }
+    const textareaEl = container.querySelector('textarea');
+    if (textareaEl) {
+      questions.push({ type: 'textarea', question: questionText, options: [], containerSelector: containerSelector });
+      return;
+    }
 
-        const textInput = container.querySelector('input[type="text"]');
-        if (textInput) {
-          questions.push({ type: 'text', question: questionText, options: [], containerSelector: containerSelector });
-          return;
-        }
+    const textInput = container.querySelector('input[type="text"]');
+    if (textInput) {
+      questions.push({ type: 'text', question: questionText, options: [], containerSelector: containerSelector });
+      return;
+    }
 
-        const radioFieldset = container.querySelector('fieldset[data-test-form-builder-radio-button-form-component="true"]');
-        if (radioFieldset) {
-          const options = Array.from(radioFieldset.querySelectorAll('input[type="radio"]'))
-            .map(r => {
-              const labelEl = document.querySelector('label[for="' + r.id + '"]');
-              return labelEl ? (labelEl.textContent || '').trim() : r.value || '';
-            })
-            .filter(Boolean);
-          questions.push({ type: 'radio', question: questionText, options: options, containerSelector: containerSelector });
-          return;
-        }
+    const radioFieldset = container.querySelector('fieldset[data-test-form-builder-radio-button-form-component="true"]');
+    if (radioFieldset) {
+      const options = Array.from(radioFieldset.querySelectorAll('input[type="radio"]'))
+        .map(r => {
+          const labelEl = document.querySelector('label[for="' + r.id + '"]');
+          return labelEl ? (labelEl.textContent || '').trim() : r.value || '';
+        })
+        .filter(Boolean);
+      questions.push({ type: 'radio', question: questionText, options: options, containerSelector: containerSelector });
+      return;
+    }
 
-        const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-        if (checkboxes.length > 0) {
-          const options = Array.from(checkboxes).map(cb => {
-            const labelEl = document.querySelector('label[for="' + cb.id + '"]');
-            return labelEl ? (labelEl.textContent || '').trim() : (cb.getAttribute('aria-label') || '').trim();
-          }).filter(Boolean);
-          if (options.length > 0 || checkboxes.length > 0) {
-            questions.push({ type: 'checkbox', question: questionText, options: options.length ? options : ['Yes'], containerSelector: containerSelector });
-          }
-        }
-      });
+    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
+    if (checkboxes.length > 0) {
+      const options = Array.from(checkboxes).map(cb => {
+        const labelEl = document.querySelector('label[for="' + cb.id + '"]');
+        return labelEl ? (labelEl.textContent || '').trim() : (cb.getAttribute('aria-label') || '').trim();
+      }).filter(Boolean);
+      if (options.length > 0 || checkboxes.length > 0) {
+        questions.push({ type: 'checkbox', question: questionText, options: options.length ? options : ['Yes'], containerSelector: containerSelector });
+      }
+    }
+  });
 
-      return { questionsFound: questions.length, questions: questions };
-    `, modalCss, containerCss) as { questionsFound: number; questions: Array<{ type: string; question: string; options: string[]; containerSelector: string }> };
+  return { questionsFound: questions.length, questions: questions };
+  `, modalCss, containerCss) as { questionsFound: number; questions: Array<{ type: string; question: string; options: string[]; containerSelector: string }> };
 
     if (questionsData && questionsData.questionsFound > 0) {
       printLog(`Found ${questionsData.questionsFound} employer questions`);
@@ -1350,14 +1358,14 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
 
       const updated = { ...existingJobData, questions: cleanQuestions, lastUpdated: new Date().toISOString() };
       fs.writeFileSync(ctx.currentJobFile!, JSON.stringify(updated, null, 2));
-      printLog(`Saved questions to ${ctx.currentJobFile}`);
+      printLog(`Saved questions to ${ctx.currentJobFile} `);
       yield "employer_questions_saved";
     } else {
       printLog("No employer questions found");
       yield "no_employer_questions";
     }
   } catch (error) {
-    printLog(`Extract employer questions error: ${error}`);
+    printLog(`Extract employer questions error: ${error} `);
     yield "employer_questions_error";
   }
 }
@@ -1420,7 +1428,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
           answerDisplay = String(answer);
         }
         const source = (q as any).answerSource || "unknown";
-        printLog(`Q${i + 1} [${q.type}] ${q.question}`);
+        printLog(`Q${i + 1} [${q.type}] ${q.question} `);
         printLog(`    Answer: ${answerDisplay} [${source}]`);
         logger.debug('linkedin.qa.answer_resolved', 'Resolved LinkedIn answer before filling', {
           index: i,
@@ -1461,7 +1469,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
             failureReason: filled ? undefined : fillResult.failureReason,
             fillError: filled ? undefined : fillResult.error
           });
-          printLog(`    Filled: ${filled ? "yes" : "no"}`);
+          printLog(`    Filled: ${filled ? "yes" : "no"} `);
           logger[filled ? 'info' : 'warn'](
             'linkedin.qa.fill_result',
             filled ? 'LinkedIn question filled successfully' : 'LinkedIn question fill failed',
@@ -1612,7 +1620,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
     }
     yield "finished_answering_questions";
   } catch (error) {
-    printLog(`Error answering questions: ${error}`);
+    printLog(`Error answering questions: ${error} `);
     yield "error_answering_questions";
   }
 }
@@ -1668,7 +1676,7 @@ export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<s
       const buttonText = (await nextButton.getText())?.trim() || '';
       if (buttonText.includes('Submit') || buttonText.includes('Done')) break;
       await nextButton.click();
-      printLog(`Clicked "${buttonText}" button (${nextCount + 1})`);
+      printLog(`Clicked "${buttonText}" button(${nextCount + 1})`);
       await driver.sleep(2000);
       nextCount++;
     }
@@ -1685,9 +1693,9 @@ export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<s
         await ctx.overlay.updateJobProgress(
           ctx.applied_jobs,
           ctx.total_jobs || 0,
-          `Applied: ${currentJob?.title || 'Job'}`,
+          `Applied: ${currentJob?.title || 'Job'} `,
           17
-        ).catch(() => {});
+        ).catch(() => { });
       }
 
       yield "save_applied_job";
@@ -1696,7 +1704,7 @@ export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<s
       yield "application_failed";
     }
   } catch (error) {
-    printLog(`Submit error: ${error}`);
+    printLog(`Submit error: ${error} `);
     yield "application_failed";
   }
 }
@@ -1727,20 +1735,20 @@ export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<stri
             platform: 'linkedin'
           });
           if (!result.ok) {
-            printLog(`[JobRecorder] Backend record skipped: ${result.error}`);
+            printLog(`[JobRecorder] Backend record skipped: ${result.error} `);
           }
         } catch (recordErr) {
-          printLog(`[JobRecorder] Record failed (continuing): ${recordErr}`);
+          printLog(`[JobRecorder] Record failed(continuing): ${recordErr} `);
         }
       }
 
-      printLog(`Saved job ID: ${jobId}`);
+      printLog(`Saved job ID: ${jobId} `);
       yield "job_saved";
     } else {
       yield "save_job_failed";
     }
   } catch (error) {
-    printLog(`Error saving job: ${error}`);
+    printLog(`Error saving job: ${error} `);
     yield "save_job_failed";
   }
 }
@@ -1848,9 +1856,9 @@ export async function* navigateToNextPage(ctx: WorkflowContext): AsyncGenerator<
     const currentPage = ctx.pagination_current_page || 1;
 
     try {
-      const nextPageButton = await driver.findElement(By.css(`button[aria-label="Page ${currentPage + 1}"]`));
+      const nextPageButton = await driver.findElement(By.css(`button[aria - label= "Page ${currentPage + 1}"]`));
       await nextPageButton.click();
-      printLog(`Page ${currentPage + 1}`);
+      printLog(`Page ${currentPage + 1} `);
       await driver.sleep(3000);
 
       ctx.pagination_current_page = currentPage + 1;
@@ -1870,7 +1878,7 @@ export async function* finish(ctx: WorkflowContext): AsyncGenerator<string, void
     const skippedCount = ctx.skipped_jobs || 0;
     const totalCount = ctx.total_jobs || 0;
 
-    printLog(`Workflow complete: Applied ${appliedCount}, Skipped ${skippedCount}, Total ${totalCount}`);
+    printLog(`Workflow complete: Applied ${appliedCount}, Skipped ${skippedCount}, Total ${totalCount} `);
 
     if (ctx.overlay) {
       await ctx.overlay.updateJobProgress(
@@ -1881,7 +1889,7 @@ export async function* finish(ctx: WorkflowContext): AsyncGenerator<string, void
       );
     }
   } catch (error) {
-    printLog(`Finish error: ${error}`);
+    printLog(`Finish error: ${error} `);
   }
 
   yield "done";

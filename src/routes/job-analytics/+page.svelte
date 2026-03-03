@@ -1,25 +1,26 @@
 <script>
-  import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
-  import { authService } from '$lib/authService.js';
-  import { tokenService } from '$lib/services/tokenService.js';
-  import { goto } from '$app/navigation';
+  import { onMount } from "svelte";
+  import { get } from "svelte/store";
+  import { authService } from "$lib/authService.js";
+  import { tokenService } from "$lib/services/tokenService.js";
+  import { goto } from "$app/navigation";
+  import { invoke } from "@tauri-apps/api/core";
 
-  const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+  const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:3000";
 
   /** @type {any[]} */
   let applications = [];
   let isLoading = true;
-  let error = '';
-  let platformFilter = '';
-  let statusFilter = '';
-  let fromDate = '';
-  let toDate = '';
+  let error = "";
+  let platformFilter = "";
+  let statusFilter = "";
+  let fromDate = "";
+  let toDate = "";
 
   onMount(() => {
     const auth = get(authService);
     if (!auth || !auth.isLoggedIn) {
-      goto('/login');
+      goto("/login");
       return;
     }
     loadApplications();
@@ -27,16 +28,19 @@
 
   async function loadApplications() {
     isLoading = true;
-    error = '';
+    error = "";
     try {
       const params = new URLSearchParams();
-      if (platformFilter) params.set('platform', platformFilter);
-      if (statusFilter) params.set('status', statusFilter);
-      if (fromDate) params.set('from', fromDate);
-      if (toDate) params.set('to', toDate);
+      if (platformFilter) params.set("platform", platformFilter);
+      if (statusFilter) params.set("status", statusFilter);
+      if (fromDate) params.set("from", fromDate);
+      if (toDate) params.set("to", toDate);
 
       const headers = await tokenService.getHeaders();
-      const response = await fetch(`${API_BASE}/api/job-applications?${params.toString()}`, { headers });
+      const response = await fetch(
+        `${API_BASE}/api/job-applications?${params.toString()}`,
+        { headers },
+      );
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
@@ -50,7 +54,10 @@
         applications = [];
       }
     } catch (e) {
-      error = String((e && typeof e === 'object' && 'message' in e ? e.message : e) || 'Failed to load applications');
+      error = String(
+        (e && typeof e === "object" && "message" in e ? e.message : e) ||
+          "Failed to load applications",
+      );
       applications = [];
     } finally {
       isLoading = false;
@@ -62,18 +69,36 @@
    * @returns {string}
    */
   function formatDate(d) {
-    if (!d) return '—';
-    const date = typeof d === 'string' ? new Date(d) : d;
-    return date.toLocaleDateString(undefined, { dateStyle: 'medium' });
+    if (!d) return "—";
+    const date = typeof d === "string" ? new Date(d) : d;
+    return date.toLocaleDateString(undefined, { dateStyle: "medium" });
   }
 
-  /**
-   * @param {any} app
-   * @returns {string}
-   */
   function appliedAt(app) {
+    if (app.status === "scraped") return null;
     const t = app.application?.appliedAt ?? app.lastUpdatedAt;
     return formatDate(t);
+  }
+
+  async function triggerBotApply(app) {
+    if (!app.url || !app.platform) {
+      alert("This job is missing a URL or platform to run the bot.");
+      return;
+    }
+
+    try {
+      alert(
+        `Triggering Bot Apply for ${app.platform} job: ${app.title}... Watch the Tauri console!`,
+      );
+      const response = await invoke("run_bot_for_job", {
+        botName: app.platform,
+        jobUrl: app.url,
+      });
+      console.log("Bot trigger response:", response);
+    } catch (e) {
+      console.error("Failed to trigger bot:", e);
+      alert("Failed to trigger bot: " + e);
+    }
   }
 </script>
 
@@ -85,14 +110,22 @@
   <div class="flex flex-col gap-6">
     <div class="flex flex-wrap items-center justify-between gap-4">
       <h1 class="text-2xl font-bold">Job Analytics</h1>
-      <p class="text-base-content/70 text-sm">Applications recorded from Seek (and other bots).</p>
+      <p class="text-base-content/70 text-sm">
+        Applications recorded from Seek (and other bots).
+      </p>
     </div>
 
     <!-- Filters -->
     <div class="flex flex-wrap items-end gap-3 bg-base-200 rounded-lg p-4">
       <div class="form-control">
-        <label for="filter-platform" class="label py-0"><span class="label-text">Platform</span></label>
-        <select id="filter-platform" class="select select-bordered select-sm w-32" bind:value={platformFilter}>
+        <label for="filter-platform" class="label py-0"
+          ><span class="label-text">Platform</span></label
+        >
+        <select
+          id="filter-platform"
+          class="select select-bordered select-sm w-32"
+          bind:value={platformFilter}
+        >
           <option value="">All</option>
           <option value="seek">Seek</option>
           <option value="linkedin">LinkedIn</option>
@@ -100,8 +133,14 @@
         </select>
       </div>
       <div class="form-control">
-        <label for="filter-status" class="label py-0"><span class="label-text">Status</span></label>
-        <select id="filter-status" class="select select-bordered select-sm w-32" bind:value={statusFilter}>
+        <label for="filter-status" class="label py-0"
+          ><span class="label-text">Status</span></label
+        >
+        <select
+          id="filter-status"
+          class="select select-bordered select-sm w-32"
+          bind:value={statusFilter}
+        >
           <option value="">All</option>
           <option value="applied">Applied</option>
           <option value="pending">Pending</option>
@@ -111,20 +150,42 @@
         </select>
       </div>
       <div class="form-control">
-        <label for="filter-from" class="label py-0"><span class="label-text">From</span></label>
-        <input id="filter-from" type="date" class="input input-bordered input-sm w-40" bind:value={fromDate} />
+        <label for="filter-from" class="label py-0"
+          ><span class="label-text">From</span></label
+        >
+        <input
+          id="filter-from"
+          type="date"
+          class="input input-bordered input-sm w-40"
+          bind:value={fromDate}
+        />
       </div>
       <div class="form-control">
-        <label for="filter-to" class="label py-0"><span class="label-text">To</span></label>
-        <input id="filter-to" type="date" class="input input-bordered input-sm w-40" bind:value={toDate} />
+        <label for="filter-to" class="label py-0"
+          ><span class="label-text">To</span></label
+        >
+        <input
+          id="filter-to"
+          type="date"
+          class="input input-bordered input-sm w-40"
+          bind:value={toDate}
+        />
       </div>
-      <button type="button" class="btn btn-primary btn-sm" on:click={loadApplications}>Apply</button>
+      <button
+        type="button"
+        class="btn btn-primary btn-sm"
+        on:click={loadApplications}>Apply</button
+      >
     </div>
 
     {#if error}
       <div class="alert alert-error">
         <span>{error}</span>
-        <button type="button" class="btn btn-ghost btn-sm" on:click={loadApplications}>Retry</button>
+        <button
+          type="button"
+          class="btn btn-ghost btn-sm"
+          on:click={loadApplications}>Retry</button
+        >
       </div>
     {/if}
 
@@ -136,7 +197,9 @@
       <div class="card bg-base-200">
         <div class="card-body items-center text-center py-12">
           <p class="text-base-content/70">No applications found.</p>
-          <p class="text-sm text-base-content/60">Run the Seek bot and complete Quick Apply flows to see them here.</p>
+          <p class="text-sm text-base-content/60">
+            Run the Seek bot and complete Quick Apply flows to see them here.
+          </p>
         </div>
       </div>
     {:else}
@@ -156,14 +219,31 @@
           <tbody>
             {#each applications as app}
               <tr>
-                <td class="whitespace-nowrap">{appliedAt(app)}</td>
-                <td class="font-medium">{app.title || '—'}</td>
-                <td>{app.company || '—'}</td>
-                <td><span class="badge badge-ghost">{app.platform || '—'}</span></td>
-                <td class="text-sm text-base-content/70">{app.location || '—'}</td>
-                <td><span class="badge badge-sm">{app.status || '—'}</span></td>
+                <td class="whitespace-nowrap">
+                  {#if app.status === "scraped"}
+                    <button
+                      class="btn btn-primary btn-sm"
+                      on:click={() => triggerBotApply(app)}>Bot Apply</button
+                    >
+                  {:else}
+                    {appliedAt(app)}
+                  {/if}
+                </td>
+                <td class="font-medium">{app.title || "—"}</td>
+                <td>{app.company || "—"}</td>
+                <td
+                  ><span class="badge badge-ghost">{app.platform || "—"}</span
+                  ></td
+                >
+                <td class="text-sm text-base-content/70"
+                  >{app.location || "—"}</td
+                >
+                <td><span class="badge badge-sm">{app.status || "—"}</span></td>
                 <td>
-                  <a href="/job-analytics/{app._id}" class="btn btn-ghost btn-sm">View</a>
+                  <a
+                    href="/job-analytics/{app._id}"
+                    class="btn btn-ghost btn-sm">View</a
+                  >
                 </td>
               </tr>
             {/each}

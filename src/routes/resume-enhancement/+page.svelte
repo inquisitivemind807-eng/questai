@@ -48,7 +48,8 @@
   let isDownloading: boolean = false;
   let downloadSuccess: boolean = false;
   let downloadPath: string = '';
-  let activeTab: 'original' | 'enhanced' | 'final' = 'original';
+  let activeTab: 'original' | 'enhanced' | 'final' | 'compare' = 'original';
+  let hideUnchanged: boolean = false;
   let originalAtsResult: Record<string, unknown> | null = null;
   let originalAtsLoading: boolean = false;
   let originalAtsError: string = '';
@@ -701,7 +702,7 @@
 
     // Fit scores come from API; set minimal analysis for Tab 2 display
     analysisResult = {
-      totalLines: enhancedResume.split('\n').length,
+      totalLines: enhancedResume.split(/\r?\n/).length,
       linesAdded: 0,
       linesRemoved: 0,
       fitScoreImprovement: Math.max(0, (enhancedFitScore || 0) - (fitScore || 0))
@@ -710,29 +711,183 @@
 
   function generateDiff() {
     if (!originalResume || !enhancedResume) return [];
-    
-    const lines1 = originalResume.split('\n');
-    const lines2 = enhancedResume.split('\n');
-    const diff: any[] = [];
-    
-    const maxLength = Math.max(lines1.length, lines2.length);
-    
-    for (let i = 0; i < maxLength; i++) {
-      const originalLine = lines1[i] || '';
-      const enhancedLine = lines2[i] || '';
-      
-      if (originalLine === enhancedLine) {
-        diff.push({ type: 'unchanged', original: originalLine, enhanced: enhancedLine });
-      } else if (!originalLine) {
-        diff.push({ type: 'added', original: '', enhanced: enhancedLine });
-      } else if (!enhancedLine) {
-        diff.push({ type: 'removed', original: originalLine, enhanced: '' });
-      } else {
-        diff.push({ type: 'modified', original: originalLine, enhanced: enhancedLine });
+
+    // Normalize lines: split on CRLF/ LF and trim trailing spaces
+    const lines1 = originalResume.split(/\r?\n/).map((l) => l.replace(/\s+$/u, ''));
+    const lines2 = enhancedResume.split(/\r?\n/).map((l) => l.replace(/\s+$/u, ''));
+
+    type DiffRow = {
+      type: 'unchanged' | 'added' | 'removed' | 'modified';
+      original: string;
+      enhanced: string;
+      originalTokens?: { text: string; kind: 'unchanged' | 'removed' }[];
+      enhancedTokens?: { text: string; kind: 'unchanged' | 'added' }[];
+    };
+
+    const m = lines1.length;
+    const n = lines2.length;
+
+    // Build LCS length table
+    const lcs: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+      for (let j = 1; j <= n; j++) {
+        if (lines1[i - 1] === lines2[j - 1]) {
+          lcs[i][j] = lcs[i - 1][j - 1] + 1;
+        } else {
+          lcs[i][j] = Math.max(lcs[i - 1][j], lcs[i][j - 1]);
+        }
       }
     }
-    
-    return diff;
+
+    type Op =
+      | { kind: 'unchanged'; line1: string; line2: string }
+      | { kind: 'added'; line: string }
+      | { kind: 'removed'; line: string };
+
+    const ops: Op[] = [];
+    let i = m;
+    let j = n;
+
+    // Backtrack LCS table to produce basic ops (unchanged/added/removed)
+    while (i > 0 && j > 0) {
+      if (lines1[i - 1] === lines2[j - 1]) {
+        ops.push({ kind: 'unchanged', line1: lines1[i - 1], line2: lines2[j - 1] });
+        i--;
+        j--;
+      } else if (lcs[i - 1][j] >= lcs[i][j - 1]) {
+        ops.push({ kind: 'removed', line: lines1[i - 1] });
+        i--;
+      } else {
+        ops.push({ kind: 'added', line: lines2[j - 1] });
+        j--;
+      }
+    }
+    while (i > 0) {
+      ops.push({ kind: 'removed', line: lines1[i - 1] });
+      i--;
+    }
+    while (j > 0) {
+      ops.push({ kind: 'added', line: lines2[j - 1] });
+      j--;
+    }
+
+    ops.reverse();
+
+    // Optional word-level diff for modified lines
+    function buildTokenDiff(
+      originalLine: string,
+      enhancedLine: string
+    ): {
+      originalTokens: { text: string; kind: 'unchanged' | 'removed' }[];
+      enhancedTokens: { text: string; kind: 'unchanged' | 'added' }[];
+    } {
+      const aWords = originalLine.split(/\s+/u).filter((w) => w.length > 0);
+      const bWords = enhancedLine.split(/\s+/u).filter((w) => w.length > 0);
+      const aLen = aWords.length;
+      const bLen = bWords.length;
+      const dp: number[][] = Array.from({ length: aLen + 1 }, () => Array(bLen + 1).fill(0));
+
+      for (let ai = 1; ai <= aLen; ai++) {
+        for (let bj = 1; bj <= bLen; bj++) {
+          if (aWords[ai - 1] === bWords[bj - 1]) {
+            dp[ai][bj] = dp[ai - 1][bj - 1] + 1;
+          } else {
+            dp[ai][bj] = Math.max(dp[ai - 1][bj], dp[ai][bj - 1]);
+          }
+        }
+      }
+
+      const originalTokens: { text: string; kind: 'unchanged' | 'removed' }[] = [];
+      const enhancedTokens: { text: string; kind: 'unchanged' | 'added' }[] = [];
+
+      let ai = aLen;
+      let bj = bLen;
+      const wordOps: Array<{ kind: 'unchanged' | 'added' | 'removed'; word: string }> = [];
+
+      while (ai > 0 && bj > 0) {
+        if (aWords[ai - 1] === bWords[bj - 1]) {
+          wordOps.push({ kind: 'unchanged', word: aWords[ai - 1] });
+          ai--;
+          bj--;
+        } else if (dp[ai - 1][bj] >= dp[ai][bj - 1]) {
+          wordOps.push({ kind: 'removed', word: aWords[ai - 1] });
+          ai--;
+        } else {
+          wordOps.push({ kind: 'added', word: bWords[bj - 1] });
+          bj--;
+        }
+      }
+      while (ai > 0) {
+        wordOps.push({ kind: 'removed', word: aWords[ai - 1] });
+        ai--;
+      }
+      while (bj > 0) {
+        wordOps.push({ kind: 'added', word: bWords[bj - 1] });
+        bj--;
+      }
+
+      wordOps.reverse();
+
+      for (const op of wordOps) {
+        if (op.kind === 'unchanged') {
+          originalTokens.push({ text: op.word, kind: 'unchanged' });
+          enhancedTokens.push({ text: op.word, kind: 'unchanged' });
+        } else if (op.kind === 'removed') {
+          originalTokens.push({ text: op.word, kind: 'removed' });
+        } else if (op.kind === 'added') {
+          enhancedTokens.push({ text: op.word, kind: 'added' });
+        }
+      }
+
+      return { originalTokens, enhancedTokens };
+    }
+
+    const diffRows: DiffRow[] = [];
+
+    // Coalesce removed+added into modified where appropriate
+    for (let k = 0; k < ops.length; k++) {
+      const current = ops[k];
+      const next = ops[k + 1];
+
+      if (
+        current &&
+        next &&
+        current.kind === 'removed' &&
+        next.kind === 'added'
+      ) {
+        const original = current.line;
+        const enhanced = next.line;
+        const tokens = buildTokenDiff(original, enhanced);
+        diffRows.push({
+          type: 'modified',
+          original,
+          enhanced,
+          originalTokens: tokens.originalTokens,
+          enhancedTokens: tokens.enhancedTokens
+        });
+        k++; // skip next
+      } else if (current.kind === 'unchanged') {
+        diffRows.push({
+          type: 'unchanged',
+          original: current.line1,
+          enhanced: current.line2
+        });
+      } else if (current.kind === 'removed') {
+        diffRows.push({
+          type: 'removed',
+          original: current.line,
+          enhanced: ''
+        });
+      } else if (current.kind === 'added') {
+        diffRows.push({
+          type: 'added',
+          original: '',
+          enhanced: current.line
+        });
+      }
+    }
+
+    return diffRows;
   }
 
   function formatFileSize(bytes: number) {
@@ -1165,6 +1320,15 @@
           >
             3. Final Fit Score
           </button>
+          <button
+            class="resume-tab"
+            class:active={activeTab === 'compare'}
+            class:disabled={!enhancedResume}
+            onclick={() => { activeTab = 'compare'; if (enhancedResume && !finalAtsResult && !finalAtsLoading) fetchFinalAts(); }}
+            title={!enhancedResume ? 'Run enhancement first' : ''}
+          >
+            4. Compare
+          </button>
         </div>
 
         <!-- Job Description Preview -->
@@ -1554,6 +1718,106 @@
                 <button class="load-ats-btn" onclick={fetchFinalAts} disabled={!enhancedResume}>
                   Load Final Fit Score
                 </button>
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        <!-- Tab 4: Compare -->
+        {#if activeTab === 'compare'}
+          <div class="ats-tab-content">
+            {#if !enhancedResume}
+              <div class="tab-empty">
+                <p>Run enhancement first to compare original and enhanced resumes.</p>
+              </div>
+            {:else}
+              {#if finalAtsLoading}
+                <div class="ats-loading">
+                  <div class="spinner"></div>
+                  <span>Calculating final fit score...</span>
+                </div>
+              {:else if finalAtsError}
+                <div class="ats-error">
+                  <p>{finalAtsError}</p>
+                  <button class="retry-btn" onclick={fetchFinalAts}>Retry</button>
+                </div>
+              {:else}
+                {#if finalAtsResult}
+                  {@const d = finalAtsResult}
+                  <div class="compare-fit-summary">
+                    <span class="compare-fit-label">Final Fit Score:</span>
+                    <span class="compare-fit-value">{d.overall_score ?? '—'} / 100</span>
+                  </div>
+                {:else}
+                  <div class="compare-fit-summary">
+                    <button class="load-ats-btn" onclick={fetchFinalAts}>Calculate Final Fit Score</button>
+                  </div>
+                {/if}
+              {/if}
+
+              <div class="comparison-view" style="margin-top: 20px;">
+                <div class="diff-toolbar">
+                  <label class="diff-toggle">
+                    <input type="checkbox" bind:checked={hideUnchanged} />
+                    <span>Hide unchanged lines</span>
+                  </label>
+                </div>
+                <div class="comparison-grid">
+                  <div class="comparison-column">
+                    <h4>Original Resume</h4>
+                  </div>
+                  <div class="comparison-column">
+                    <h4>Enhanced Resume</h4>
+                  </div>
+                </div>
+                <div class="comparison-content">
+                  {#each (hideUnchanged ? generateDiff().filter((d) => d.type !== 'unchanged') : generateDiff()) as diffLine, i}
+                    <div class="diff-row {diffLine.type}">
+                      <div class="diff-cell">
+                        <span class="line-num">
+                          {diffLine.type === 'added'
+                            ? '+'
+                            : diffLine.type === 'removed'
+                            ? '−'
+                            : ''}{i + 1}
+                        </span>
+                        {#if diffLine.type === 'modified' && diffLine.originalTokens}
+                          <pre class="line-text">
+                            {#each diffLine.originalTokens as t, idx}
+                              <span class="token {t.kind}">{t.text}</span>{#if idx < diffLine.originalTokens.length - 1} {' '}{/if}
+                            {/each}
+                          </pre>
+                        {:else}
+                          <pre class="line-text">{diffLine.original}</pre>
+                        {/if}
+                      </div>
+                      <div class="diff-cell">
+                        <span class="line-num">
+                          {diffLine.type === 'added'
+                            ? '+'
+                            : diffLine.type === 'removed'
+                            ? '−'
+                            : ''}{i + 1}
+                        </span>
+                        {#if diffLine.type === 'modified' && diffLine.enhancedTokens}
+                          <pre class="line-text">
+                            {#each diffLine.enhancedTokens as t, idx}
+                              <span class="token {t.kind}">{t.text}</span>{#if idx < diffLine.enhancedTokens.length - 1} {' '}{/if}
+                            {/each}
+                          </pre>
+                        {:else}
+                          <pre class="line-text">{diffLine.enhanced}</pre>
+                        {/if}
+                      </div>
+                    </div>
+                  {/each}
+                </div>
+                <div class="diff-legend">
+                  <span class="legend-item added">Added</span>
+                  <span class="legend-item removed">Removed</span>
+                  <span class="legend-item modified">Modified</span>
+                  <span class="legend-item unchanged">Unchanged</span>
+                </div>
               </div>
             {/if}
           </div>
@@ -2373,9 +2637,48 @@
     transform: translateY(-2px);
   }
 
+  .compare-fit-summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 16px;
+    background: rgba(102, 126, 234, 0.1);
+    border-radius: 8px;
+    border: 1px solid rgba(102, 126, 234, 0.3);
+  }
+  .compare-fit-label {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: inherit;
+  }
+  .compare-fit-value {
+    font-weight: 800;
+    font-size: 1.2rem;
+    color: #667eea;
+  }
+
   /* Comparison View */
   .comparison-view {
     background: transparent;
+  }
+
+  .diff-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    padding: 8px 20px 0 20px;
+  }
+
+  .diff-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    opacity: 0.8;
+    cursor: pointer;
+  }
+
+  .diff-toggle input[type='checkbox'] {
+    cursor: pointer;
   }
 
   .comparison-grid {
@@ -2469,6 +2772,23 @@
     border-top: 1px solid rgba(128, 128, 128, 0.3);
     justify-content: center;
     flex-wrap: wrap;
+  }
+
+  .token {
+    white-space: pre-wrap;
+  }
+
+  .token.added {
+    background: rgba(40, 167, 69, 0.25);
+  }
+
+  .token.removed {
+    background: rgba(220, 53, 69, 0.25);
+    text-decoration: line-through;
+  }
+
+  .token.unchanged {
+    background: transparent;
   }
 
   .legend-item {

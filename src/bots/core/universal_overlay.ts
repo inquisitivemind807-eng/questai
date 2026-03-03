@@ -18,7 +18,7 @@ export interface OverlayConfig {
 
 interface OverlayState {
   botName: string;
-  type: 'job_progress' | 'sign_in' | 'notification' | 'step_progress' | 'custom';
+  type: 'job_progress' | 'sign_in' | 'notification' | 'step_progress' | 'custom' | 'manual_review';
   data: {
     appliedJobs?: number;
     totalJobs?: number;
@@ -27,9 +27,11 @@ interface OverlayState {
     message?: string;
     title?: string;
     html?: string;
+    logs?: string[];
   };
   position?: { x: number; y: number };
   collapsed?: boolean;
+  activeMode?: 'superbot' | 'review' | 'manual';
 }
 
 export class UniversalOverlay {
@@ -131,7 +133,7 @@ export class UniversalOverlay {
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
             pointerEvents: 'none', // Allow clicks to pass through to page beneath
-            width: collapsed ? '60px' : '400px',
+            width: collapsed ? '60px' : '600px',
             height: collapsed ? '60px' : 'auto',
             minHeight: collapsed ? '60px' : '150px'
           };
@@ -177,6 +179,69 @@ export class UniversalOverlay {
           const controls = document.createElement('div');
           controls.style.display = 'flex';
           controls.style.gap = '8px';
+          controls.style.alignItems = 'center';
+
+          // Mode Toggle Pills
+          const activeMode = state.activeMode || 'superbot';
+          const modeContainer = document.createElement('div');
+          modeContainer.style.display = collapsed ? 'none' : 'flex';
+          modeContainer.style.background = '#00000040';
+          modeContainer.style.borderRadius = '12px';
+          modeContainer.style.padding = '2px';
+          modeContainer.style.gap = '2px';
+          modeContainer.style.border = '1px solid #00ffff40';
+          
+          const modes = [
+            { id: 'superbot', icon: '🤖', label: 'Superbot', desc: 'Fully automated' },
+            { id: 'review', icon: '👀', label: 'Review', desc: 'Pause before Submit' },
+            { id: 'manual', icon: '✋', label: 'Manual', desc: 'Pause on all forms' }
+          ];
+
+          modes.forEach(mode => {
+            const btn = document.createElement('button');
+            const isActive = activeMode === mode.id;
+            
+            btn.innerHTML = \`<span style="font-size: 14px;">\${mode.icon}</span> <span style="font-size: 11px; font-weight: \${isActive ? 'bold' : 'normal'};">\${mode.label}</span>\`;
+            btn.title = mode.desc;
+            
+            const btnStyles = {
+              background: isActive ? '#00bb66' : 'transparent',
+              color: isActive ? '#1a1a1a' : '#ffffff80',
+              border: 'none',
+              padding: '4px 10px',
+              borderRadius: '10px',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px',
+              transition: 'all 0.2s ease'
+            };
+            Object.assign(btn.style, btnStyles);
+
+            btn.onmouseover = () => {
+              if (!isActive) btn.style.background = '#00ffff20';
+            };
+            btn.onmouseout = () => {
+              if (!isActive) btn.style.background = 'transparent';
+            };
+
+            btn.onclick = (e) => {
+              e.stopPropagation();
+              if (activeMode !== mode.id) {
+                const currentState = loadState();
+                if (currentState) {
+                  currentState.activeMode = mode.id;
+                  window.__overlayActiveMode = mode.id; // Expose globally immediately
+                  saveState(currentState);
+                  createOverlay(currentState);
+                }
+              }
+            };
+            
+            modeContainer.appendChild(btn);
+          });
+          
+          controls.appendChild(modeContainer);
 
           // Collapse button
           const collapseBtn = document.createElement('button');
@@ -222,7 +287,7 @@ export class UniversalOverlay {
           content.style.padding = '16px';
           content.style.fontSize = '13px';
           content.style.lineHeight = '1.4';
-          content.style.maxHeight = '400px';
+          content.style.maxHeight = '500px';
           content.style.overflowY = 'auto';
           content.style.display = collapsed ? 'none' : 'block';
           content.style.pointerEvents = 'auto'; // Override parent so content buttons remain clickable
@@ -248,7 +313,7 @@ export class UniversalOverlay {
             content.innerHTML = \`
               <div style="display: flex; flex-direction: column; gap: 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="color: #00ffff;">Jobs Applied:</span>
+                  <span style="color: #00ffff;">Jobs Extracted:</span>
                   <span style="font-weight: bold; font-size: 16px;">\${appliedJobs}/\${totalJobs}</span>
                 </div>
                 <div style="background: #333; border-radius: 6px; height: 10px; overflow: hidden;">
@@ -298,10 +363,96 @@ export class UniversalOverlay {
                 };
               }
             }, 100);
+          } else if (state.type === 'manual_review') {
+            content.innerHTML = \`
+              <div style="text-align: center;">
+                <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.6; color: #00ffff;">
+                  <strong>Manual Review Required</strong><br/>
+                  Please review the application before submitting.
+                </p>
+                <button id="manual-review-btn" style="
+                  background: #00dd88;
+                  color: #1a1a1a;
+                  border: none;
+                  border-radius: 8px;
+                  padding: 12px 20px;
+                  font-size: 14px;
+                  font-weight: bold;
+                  cursor: pointer;
+                  width: 100%;
+                  transition: all 0.2s ease;
+                ">
+                  ✅ Looks Good - Submit Application
+                </button>
+              </div>
+            \`;
+
+            // Re-attach button listener after DOM creation
+            setTimeout(() => {
+              const button = document.getElementById('manual-review-btn');
+              if (button) {
+                button.onmouseover = () => button.style.background = '#00bb66';
+                button.onmouseout = () => button.style.background = '#00dd88';
+                button.onclick = () => {
+                  window.__overlayManualReviewComplete = true;
+                  sessionStorage.setItem('overlay_manual_review_complete', 'true');
+                };
+              }
+            }, 100);
           } else if (state.data.html) {
             content.innerHTML = state.data.html;
           } else if (state.data.message) {
             content.textContent = state.data.message;
+          }
+
+          // Activity Log Section
+          if (!collapsed) {
+            const logsContainer = document.createElement('div');
+            logsContainer.style.marginTop = '16px';
+            logsContainer.style.padding = '12px';
+            logsContainer.style.background = '#0a0a0a';
+            logsContainer.style.border = '1px solid #00ffff40';
+            logsContainer.style.borderRadius = '8px';
+            logsContainer.style.maxHeight = '180px';
+            logsContainer.style.overflowY = 'auto';
+            logsContainer.style.fontFamily = 'monospace';
+            logsContainer.style.fontSize = '12px';
+            logsContainer.style.display = 'flex';
+            logsContainer.style.flexDirection = 'column';
+            logsContainer.style.gap = '4px';
+
+            const logTitle = document.createElement('div');
+            logTitle.style.color = '#00ffff';
+            logTitle.style.marginBottom = '6px';
+            logTitle.style.fontWeight = 'bold';
+            logTitle.style.fontSize = '10px';
+            logTitle.style.textTransform = 'uppercase';
+            logTitle.style.letterSpacing = '1px';
+            logTitle.innerHTML = '⚡ Activity Log';
+            logsContainer.appendChild(logTitle);
+
+            const logs = state.data.logs || [];
+            if (logs.length === 0) {
+              const emptyLog = document.createElement('div');
+              emptyLog.style.color = '#ffffff40';
+              emptyLog.style.fontStyle = 'italic';
+              emptyLog.textContent = 'Waiting for events...';
+              logsContainer.appendChild(emptyLog);
+            } else {
+              logs.forEach(msg => {
+                const logEntry = document.createElement('div');
+                logEntry.style.color = '#00dd88';
+                logEntry.textContent = msg;
+                logsContainer.appendChild(logEntry);
+              });
+            }
+
+            // Auto-scroll to bottom of logs
+            setTimeout(() => {
+              logsContainer.scrollTop = logsContainer.scrollHeight;
+            }, 50);
+
+            content.appendChild(logsContainer);
           }
 
           // Assemble overlay
@@ -458,10 +609,33 @@ export class UniversalOverlay {
   }
 
   /**
+   * Get the current active mode selected by the user
+   */
+  public async getActiveMode(defaultMode: 'superbot' | 'review' | 'manual' = 'superbot'): Promise<'superbot' | 'review' | 'manual'> {
+    try {
+      if (!this.initialized) return defaultMode;
+      const mode = await this.driver.executeScript(`
+        return window.__overlayActiveMode || null;
+      `) as string | null;
+
+      if (mode === 'superbot' || mode === 'review' || mode === 'manual') {
+        return mode;
+      }
+      return defaultMode;
+    } catch (e) {
+      return defaultMode;
+    }
+  }
+
+  /**
    * Update overlay state (will persist across navigations)
    */
   private async updateState(state: OverlayState): Promise<void> {
     try {
+      // Ensure active mode is preserved or initialized
+      const currentMode = await this.getActiveMode();
+      state.activeMode = state.activeMode || currentMode;
+
       await this.driver.executeScript(`
         if (typeof window.__updateOverlay === 'function') {
           window.__updateOverlay(${JSON.stringify(state)});
@@ -478,6 +652,19 @@ export class UniversalOverlay {
   async showJobProgress(appliedJobs: number, totalJobs: number, currentStep: string, stepIndex: number): Promise<void> {
     await this.initialize();
 
+    let existingLogs: string[] = [];
+    try {
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+      if (stateStr) {
+        const currentState = JSON.parse(stateStr);
+        existingLogs = currentState?.data?.logs || [];
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const state: OverlayState = {
       botName: this.botName,
       type: 'job_progress',
@@ -485,11 +672,45 @@ export class UniversalOverlay {
         appliedJobs,
         totalJobs,
         currentStep,
-        stepIndex
+        stepIndex,
+        logs: existingLogs
       }
     };
 
     await this.updateState(state);
+  }
+
+  /**
+   * Add a real-time event log to the overlay UI
+   */
+  async addLogEvent(message: string): Promise<void> {
+    if (!this.initialized) return;
+
+    try {
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+
+      if (!stateStr) return;
+
+      const state: OverlayState = JSON.parse(stateStr);
+      if (!state.data.logs) {
+        state.data.logs = [];
+      }
+
+      const now = new Date();
+      const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
+      state.data.logs.push(`[${timeStr}] ${message}`);
+
+      // Keep only the most recent 20 logs to save UI memory
+      if (state.data.logs.length > 20) {
+        state.data.logs = state.data.logs.slice(-20);
+      }
+
+      await this.updateState(state);
+    } catch (error) {
+      console.error('Error adding overlay log event:', error);
+    }
   }
 
   /**
@@ -499,6 +720,19 @@ export class UniversalOverlay {
     try {
       await this.initialize();
 
+      let existingLogs: string[] = [];
+      try {
+        const stateStr = await this.driver.executeScript(`
+          return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+        `) as string | null;
+        if (stateStr) {
+          const currentState = JSON.parse(stateStr);
+          existingLogs = currentState?.data?.logs || [];
+        }
+      } catch (e) {
+        // ignore
+      }
+
       const state: OverlayState = {
         botName: this.botName,
         type: 'job_progress',
@@ -506,7 +740,8 @@ export class UniversalOverlay {
           appliedJobs,
           totalJobs,
           currentStep,
-          stepIndex
+          stepIndex,
+          logs: existingLogs
         }
       };
 
@@ -526,12 +761,26 @@ export class UniversalOverlay {
   async showSignInOverlay(): Promise<void> {
     await this.initialize();
 
+    let existingLogs: string[] = [];
+    try {
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+      if (stateStr) {
+        const currentState = JSON.parse(stateStr);
+        existingLogs = currentState?.data?.logs || [];
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const state: OverlayState = {
       botName: this.botName,
       type: 'sign_in',
       data: {
         title: 'Please Sign In',
-        message: 'Please sign in manually and click continue'
+        message: 'Please sign in manually and click continue',
+        logs: existingLogs
       }
     };
 
@@ -575,10 +824,95 @@ export class UniversalOverlay {
   }
 
   /**
+   * Show manual review overlay
+   */
+  async showManualReviewOverlay(): Promise<void> {
+    await this.initialize();
+
+    let existingLogs: string[] = [];
+    try {
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+      if (stateStr) {
+        const currentState = JSON.parse(stateStr);
+        existingLogs = currentState?.data?.logs || [];
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    const state: OverlayState = {
+      botName: this.botName,
+      type: 'manual_review',
+      data: {
+        title: 'Review Application',
+        message: 'Review application and click submit',
+        logs: existingLogs
+      }
+    };
+
+    await this.updateState(state);
+
+    // Reset completion flag
+    await this.driver.executeScript(`
+      window.__overlayManualReviewComplete = false;
+      sessionStorage.removeItem('overlay_manual_review_complete');
+    `);
+
+    console.log('⏸️ Pausing for manual review to submit application...');
+
+    // Wait for continue button
+    return new Promise<void>((resolve) => {
+      const checkInterval = setInterval(async () => {
+        try {
+          const completed = await this.driver.executeScript(`
+            return window.__overlayManualReviewComplete === true ||
+                   sessionStorage.getItem('overlay_manual_review_complete') === 'true';
+          `);
+
+          if (completed) {
+            clearInterval(checkInterval);
+            console.log('✅ Manual review completed - submitting application...');
+            // Need to remove state after completion so it doesn't reappear
+            await this.driver.executeScript(`
+              window.__overlayManualReviewComplete = false;
+              sessionStorage.removeItem('overlay_manual_review_complete');
+            `);
+            resolve();
+          }
+        } catch (error) {
+          // Continue checking
+        }
+      }, 500);
+
+      // Auto-timeout after 30 minutes
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        console.log('⏰ Manual review timeout reached (30 minutes) - auto proceeding');
+        resolve();
+      }, 30 * 60 * 1000);
+    });
+  }
+
+  /**
    * Show custom overlay
    */
   async showOverlay(config: OverlayConfig): Promise<void> {
     await this.initialize();
+
+    let existingLogs: string[] = [];
+    try {
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+      if (stateStr) {
+        const currentState = JSON.parse(stateStr);
+        existingLogs = currentState?.data?.logs || [];
+      }
+    } catch (e) {
+      // ignore
+    }
 
     const state: OverlayState = {
       botName: this.botName,
@@ -586,7 +920,8 @@ export class UniversalOverlay {
       data: {
         title: config.title,
         message: config.content,
-        html: config.html
+        html: config.html,
+        logs: existingLogs
       },
       position: config.position
     };
