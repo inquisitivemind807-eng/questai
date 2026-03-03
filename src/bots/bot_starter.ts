@@ -301,7 +301,7 @@ export async function run_bot(bot_name: string, config?: any, options?: Partial<
 }
 
 // CLI usage when run directly
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {

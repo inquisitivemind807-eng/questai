@@ -4,7 +4,7 @@
   "description": "",
   "type": "module",
   "scripts": {
-    "dev": "bash -c 'set -a && source .env && npx vite dev'",
+    "dev": "bun --env-file=.env x vite dev",
     "dev:plain": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
