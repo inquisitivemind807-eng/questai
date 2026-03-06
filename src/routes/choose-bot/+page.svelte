@@ -1,27 +1,30 @@
 <script>
-  import { invoke } from '@tauri-apps/api/core';
-  import { listen } from '@tauri-apps/api/event';
-  import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
-  import BotStats from '$lib/components/BotStats.svelte';
+  import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
+  import { onMount, onDestroy } from "svelte";
+  import { goto } from "$app/navigation";
+  import BotStats from "$lib/components/BotStats.svelte";
 
   // Dynamic bot list
   let bots = [
     {
-      name: 'seek_bot',
-      description: 'Automate job searching on Seek.com.au with advanced filtering and application features',
-      image: '/seek-logo.png'
+      name: "seek_bot",
+      description:
+        "Automate job searching on Seek.com.au with advanced filtering and application features",
+      image: "/seek-logo.png",
     },
     {
-      name: 'linkedin_bot',
-      description: 'Automate job searching on LinkedIn with Easy Apply and smart filtering',
-      image: '/linkedin-logo.png'
+      name: "linkedin_bot",
+      description:
+        "Automate job searching on LinkedIn with Easy Apply and smart filtering",
+      image: "/linkedin-logo.png",
     },
     {
-      name: 'indeed_bot',
-      description: 'Automate job searching on Indeed with Camoufox stealth browser and smart application features',
-      image: '/indeed-logo.png'
-    }
+      name: "indeed_bot",
+      description:
+        "Automate job searching on Indeed with Camoufox stealth browser and smart application features",
+      image: "/indeed-logo.png",
+    },
   ];
 
   let unlistenProgress = null;
@@ -30,21 +33,21 @@
   onMount(async () => {
     try {
       // Try to get bots dynamically - if this fails, keep the static list
-      const availableBots = await invoke('get_available_bots');
+      const availableBots = await invoke("get_available_bots");
       if (availableBots && availableBots.length > 0) {
-        bots = availableBots.map(botName => ({
+        bots = availableBots.map((botName) => ({
           name: `${botName}_bot`,
           description: `Automate job searching on ${botName}`,
-          image: `/${botName}-logo.png`
+          image: `/${botName}-logo.png`,
         }));
       }
     } catch (error) {
-      console.log('Using static bot list (dynamic discovery not available)');
+      console.log("Using static bot list (dynamic discovery not available)");
       // Keep the static bot list as fallback
     }
 
     // Listen for bot progress events from Rust
-    unlistenProgress = await listen('bot-progress', (event) => {
+    unlistenProgress = await listen("bot-progress", (event) => {
       handleBotProgressEvent(event.payload);
     });
   });
@@ -61,11 +64,15 @@
   // Config validation state
   let showConfigError = false;
 
+  // Extraction Limit configuration
+  let extractCount = 10;
+  let showConfigForBot = null;
+
   function handleBotProgressEvent(event) {
-    console.log('Bot progress event:', event);
+    console.log("Bot progress event:", event);
 
     // Find bot by botId (from data) or use the first running bot if only one
-    let bot = runningBots.find(b => b.botId === event.data?.botId);
+    let bot = runningBots.find((b) => b.botId === event.data?.botId);
 
     // If no bot found by ID, and we have exactly one bot running, assume it's for that bot
     if (!bot && runningBots.length === 1) {
@@ -73,23 +80,27 @@
     }
 
     // Create new bot on initialization event
-    if (!bot && event.type === 'info' && event.message?.includes('initialized')) {
+    if (
+      !bot &&
+      event.type === "info" &&
+      event.message?.includes("initialized")
+    ) {
       bot = {
-        name: 'seek_bot',
+        name: "seek_bot",
         botId: event.data?.botId || `bot_${Date.now()}`, // Fallback ID
-        currentStep: 'Initializing...',
+        currentStep: "Initializing...",
         totalJobs: 0,
         jobsProcessed: 0,
         appliedJobs: 0,
         skippedJobs: 0,
         isExpanded: true,
-        consoleMessages: [] // Track all console messages
+        consoleMessages: [], // Track all console messages
       };
       runningBots = [...runningBots, bot];
     }
 
     if (!bot) {
-      console.warn('Could not find bot for event:', event);
+      console.warn("Could not find bot for event:", event);
       return;
     }
 
@@ -100,35 +111,51 @@
 
     // Update bot stats based on event type
     switch (event.type) {
-      case 'step_start':
+      case "step_start":
         // Format: "Step 5: performBasicSearch"
-        const stepName = event.funcName?.replace(/([A-Z])/g, ' $1').trim(); // camelCase to Title Case
+        const stepName = event.funcName?.replace(/([A-Z])/g, " $1").trim(); // camelCase to Title Case
         bot.currentStep = `Step ${event.stepNumber}: ${stepName || event.funcName}`;
-        bot.consoleMessages.push({ type: 'step', text: bot.currentStep, timestamp: new Date() });
+        bot.consoleMessages.push({
+          type: "step",
+          text: bot.currentStep,
+          timestamp: new Date(),
+        });
         break;
 
-      case 'transition':
+      case "transition":
         // Format: "openHomepage → homepage_opened"
-        const transitionMsg = event.transition?.replace(/_/g, ' '); // snake_case to readable
+        const transitionMsg = event.transition?.replace(/_/g, " "); // snake_case to readable
         bot.currentStep = `✓ ${transitionMsg || event.transition}`;
-        bot.consoleMessages.push({ type: 'transition', text: bot.currentStep, timestamp: new Date() });
+        bot.consoleMessages.push({
+          type: "transition",
+          text: bot.currentStep,
+          timestamp: new Date(),
+        });
         break;
 
-      case 'info':
-        if (event.message?.includes('completed')) {
-          bot.currentStep = '✅ Workflow completed successfully!';
-          bot.consoleMessages.push({ type: 'success', text: bot.currentStep, timestamp: new Date() });
+      case "info":
+        if (event.message?.includes("completed")) {
+          bot.currentStep = "✅ Workflow completed successfully!";
+          bot.consoleMessages.push({
+            type: "success",
+            text: bot.currentStep,
+            timestamp: new Date(),
+          });
           // Remove from running list after delay
           setTimeout(() => {
-            runningBots = runningBots.filter(b => b.botId !== bot.botId);
+            runningBots = runningBots.filter((b) => b.botId !== bot.botId);
           }, 5000);
         } else if (event.message) {
           bot.currentStep = event.message;
-          bot.consoleMessages.push({ type: 'info', text: event.message, timestamp: new Date() });
+          bot.consoleMessages.push({
+            type: "info",
+            text: event.message,
+            timestamp: new Date(),
+          });
         }
         break;
 
-      case 'job_stat':
+      case "job_stat":
         if (event.data) {
           bot.totalJobs = event.data.totalJobs || bot.totalJobs;
           bot.jobsProcessed = event.data.jobsProcessed || bot.jobsProcessed;
@@ -137,13 +164,17 @@
         }
         break;
 
-      case 'error':
+      case "error":
         bot.currentStep = `❌ Error: ${event.message}`;
-        bot.consoleMessages.push({ type: 'error', text: bot.currentStep, timestamp: new Date() });
+        bot.consoleMessages.push({
+          type: "error",
+          text: bot.currentStep,
+          timestamp: new Date(),
+        });
         break;
 
       default:
-        console.log('Unhandled event type:', event.type);
+        console.log("Unhandled event type:", event.type);
     }
 
     runningBots = [...runningBots]; // Trigger reactivity
@@ -151,30 +182,35 @@
 
   function handleBotClick(botName) {
     // Check if this bot is already running
-    const alreadyRunning = runningBots.some(bot => bot.name === botName);
+    const alreadyRunning = runningBots.some((bot) => bot.name === botName);
     if (alreadyRunning) return; // Prevent multiple instances of same bot
 
-    // Directly run the bot - no browser selection needed
-    runBot(botName);
+    if (botName === "seek_bot") {
+      // Toggle configuration field visibility for seek bot
+      showConfigForBot = showConfigForBot === botName ? null : botName;
+    } else {
+      // Directly run the bot - no browser selection needed
+      runBot(botName);
+    }
   }
 
   function isBotRunning(botName) {
-    return runningBots.some(bot => bot.name === botName);
+    return runningBots.some((bot) => bot.name === botName);
   }
 
   function stopBot(botId) {
     console.log(`Stopping bot ${botId}...`);
     // TODO: Implement actual bot stop functionality via Rust
     // For now, just remove from running list
-    runningBots = runningBots.filter(bot => bot.botId !== botId);
+    runningBots = runningBots.filter((bot) => bot.botId !== botId);
   }
 
   async function runBot(botName) {
     try {
       // CHECK: Does config file exist by trying to read it
       try {
-        await invoke('read_file_async', {
-          filename: 'src/bots/user-bots-config.json'
+        await invoke("read_file_async", {
+          filename: "src/bots/user-bots-config.json",
         });
       } catch (readError) {
         // File doesn't exist or can't be read
@@ -185,18 +221,21 @@
       console.log(`Starting ${botName} with streaming...`);
 
       // Convert bot names: seek_bot -> seek
-      const cleanBotName = botName.replace('_bot', '');
+      const cleanBotName = botName.replace("_bot", "");
 
       // Start bot with streaming support
-      const result = await invoke('run_bot_streaming', {
-        botName: cleanBotName
-      });
+      const params = { botName: cleanBotName };
+      if (cleanBotName === "seek") {
+        params.extractLimit = parseInt(extractCount, 10) || 10;
+        showConfigForBot = null; // Hide config after starting
+      }
+
+      const result = await invoke("run_bot_streaming", params);
 
       console.log(`Bot started:`, result);
 
       // Progress updates will come via 'bot-progress' events
       // which are handled by handleBotProgressEvent
-
     } catch (error) {
       console.error(`Error starting ${botName}:`, error);
 
@@ -208,11 +247,9 @@
   // Function to navigate to config page
   function goToConfig() {
     showConfigError = false;
-    goto('/frontend-form');
+    goto("/frontend-form");
   }
-
 </script>
-
 
 <div class="container mx-auto p-8">
   <h1 class="text-4xl font-bold text-center mb-8">Choose a Bot</h1>
@@ -228,7 +265,9 @@
       >
         <figure class="px-10 pt-10">
           <div class="avatar">
-            <div class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
+            <div
+              class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2"
+            >
               <img src={bot.image} alt={bot.name} />
             </div>
           </div>
@@ -237,14 +276,52 @@
           <h2 class="card-title text-primary text-lg">{bot.name}</h2>
           <p class="text-sm">{bot.description}</p>
 
-          <div class="card-actions w-full mt-4">
-            {#if isBotRunning(bot.name)}
+          <div class="card-actions w-full mt-4 flex-col">
+            {#if showConfigForBot === bot.name}
+              <div
+                class="w-full mb-4 form-control opacity-100 transition-opacity"
+              >
+                <label class="label p-1">
+                  <span class="label-text text-xs">Jobs to Extract:</span>
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="1000"
+                  class="input input-bordered input-sm w-full"
+                  bind:value={extractCount}
+                />
+                <button
+                  class="btn btn-success btn-sm w-full mt-2"
+                  on:click={() => runBot(bot.name)}
+                >
+                  Go
+                </button>
+                <button
+                  class="btn btn-ghost btn-xs w-full mt-1"
+                  on:click={() => (showConfigForBot = null)}
+                >
+                  Cancel
+                </button>
+              </div>
+            {:else if isBotRunning(bot.name)}
               <button
                 class="btn btn-error btn-sm w-full"
                 on:click={() => stopBot(bot.name)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M6 18L18 6M6 6l12 12"
+                  />
                 </svg>
                 Stop Bot
               </button>
@@ -253,11 +330,27 @@
                 class="btn btn-primary btn-sm w-full"
                 on:click={() => handleBotClick(bot.name)}
               >
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  class="h-4 w-4"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
+                  />
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    stroke-width="2"
+                    d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
                 </svg>
-                Start Bot
+                {bot.name === "seek_bot" ? "Configure & Start" : "Start Bot"}
               </button>
             {/if}
           </div>
@@ -308,11 +401,17 @@
         <button class="btn btn-primary" on:click={goToConfig}>
           Go to Configuration Page
         </button>
-        <button class="btn btn-ghost" on:click={() => showConfigError = false}>
+        <button
+          class="btn btn-ghost"
+          on:click={() => (showConfigError = false)}
+        >
           Cancel
         </button>
       </div>
     </div>
-    <div class="modal-backdrop" on:click={() => showConfigError = false}></div>
+    <div
+      class="modal-backdrop"
+      on:click={() => (showConfigError = false)}
+    ></div>
   </div>
 {/if}

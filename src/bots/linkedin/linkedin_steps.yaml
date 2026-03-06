@@ -1,17 +1,27 @@
 workflow_meta:
   title: "LinkedIn Jobs"
   description: "Search and apply on LinkedIn Jobs with Easy Apply"
-  start_step: "step0"
+  start_step: "start"
 
 steps_config:
-  step0:
+  start:
     step: 0
     func: "step0"
     transitions:
-      ctx_ready: "open_check_login"
-      ctx_failed: "step0"
+      direct_apply_requested: "navigate_to_direct_apply_url"
+      step0_complete: "open_check_login"
+      ctx_failed: "start"
     timeout: 30
     on_timeout_event: "ctx_failed"
+
+  navigate_to_direct_apply_url:
+    step: 0.5
+    func: "navigateToDirectApplyUrl"
+    transitions:
+      navigated: "attempt_easy_apply"
+      navigation_failed: "finish"
+    timeout: 30
+    on_timeout_event: "navigation_failed"
 
   open_check_login:
     step: 1
@@ -122,10 +132,10 @@ steps_config:
     step: 11
     func: "processJobs"
     transitions:
-      starting_to_process_jobs: "attempt_easy_apply"
+      jobs_saved: "navigate_to_next_page"
       no_jobs_to_process: "finish"
       error_processing_jobs: "finish"
-    timeout: 10
+    timeout: 30
     on_timeout_event: "error_processing_jobs"
 
   attempt_easy_apply:

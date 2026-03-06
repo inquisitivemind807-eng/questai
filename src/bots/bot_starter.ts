@@ -3,7 +3,32 @@ import { WorkflowEngine, type WorkflowContext } from './core/workflow_engine.js'
 import { killAllChromeProcesses } from './core/browser_manager.js';
 import { logger } from './core/logger.js';
 import * as path from 'path';
+import * as fs from 'fs';
 import { fileURLToPath } from 'url';
+
+// Load .env manually — bun doesn't auto-load .env when spawned as a child process by Tauri
+try {
+  const __dirname2 = path.dirname(fileURLToPath(import.meta.url));
+  // bot_starter.ts is at src/bots/ → .env is at ../../.env (finalboss project root)
+  const envPath = path.resolve(__dirname2, '../../.env');
+  const altEnvPath = path.resolve(process.cwd(), '.env');
+  const resolvedEnvPath = fs.existsSync(envPath) ? envPath : (fs.existsSync(altEnvPath) ? altEnvPath : null);
+  if (resolvedEnvPath) {
+    const envContent = fs.readFileSync(resolvedEnvPath, 'utf8');
+    for (const line of envContent.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx < 0) continue;
+      const key = trimmed.slice(0, eqIdx).trim();
+      const val = trimmed.slice(eqIdx + 1).trim();
+      if (!process.env[key]) process.env[key] = val;
+    }
+    console.log(`[bot_starter] Loaded .env from: ${resolvedEnvPath}`);
+  }
+} catch (e) {
+  console.warn('[bot_starter] Could not load .env:', e);
+}
 
 // Ensure stdout is not buffered for real-time event streaming
 if (process.stdout.setDefaultEncoding) {
@@ -72,7 +97,7 @@ export class BotStarter {
             // Wait for Chrome to actually exit
             await new Promise(resolve => setTimeout(resolve, 2000));
           } catch (quitError) {
-            print_log(`⚠️ Graceful quit failed: ${quitError.message}`);
+            print_log(`⚠️ Graceful quit failed: ${(quitError as Error).message}`);
           }
         }
 
@@ -300,6 +325,71 @@ export async function run_bot(bot_name: string, config?: any, options?: Partial<
   });
 }
 
+// Bulk runner for orchestrating multiple applications resiliently
+export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: boolean): Promise<void> {
+  print_log(`\n🚀 [BULK RUNNER] Starting queue orchestration for ${jobIds.length} jobs.`);
+  print_log(`⚙️ Config: Mode = ${mode}, Superbot = ${superbot}`);
+
+  // Try dynamic import of DB driver to verify jobs
+  try {
+    const { getDB } = await import('../../../corpus-rag/src/lib/db/mongodb.js');
+    const { ObjectId } = await import('mongodb');
+    const db = await getDB();
+
+    // Map string IDs to ObjectIds safely
+    const objectIds = jobIds.map(id => {
+      try { return new ObjectId(id); } catch (e) { return null; }
+    }).filter((id): id is import('mongodb').ObjectId => id !== null);
+
+    const jobsCursor = db.collection('jobs').find({ _id: { $in: objectIds } });
+    const jobs = await jobsCursor.toArray();
+    print_log(`✅ Fetched ${jobs.length} valid jobs from database.`);
+
+    for (let i = 0; i < jobs.length; i++) {
+      const job = jobs[i];
+      print_log(`\n======================================================`);
+      print_log(`⏳ Processing Job ${i + 1}/${jobs.length}: ${job.title} at ${job.company}`);
+      print_log(`======================================================`);
+
+      try {
+        const platform = (job.platform || 'seek').toLowerCase();
+
+        // Build the specific bot configuration tailored to this job & user preference
+        const bot_config = {
+          directApplyUrl: job.url,
+          botMode: superbot ? 'bot' : mode, // Superbot explicitly forces 'bot' mode globally
+          targetJobId: job._id.toString()
+        };
+
+        print_log(`[BOT_EVENT] {"event": "start", "jobId": "${job._id}", "platform": "${platform}"}`);
+
+        // Await execution. This is fundamentally resilient because a failed job will 
+        // throw an exception that is CAUGHT by this loop, allowing the next iteration.
+        await run_bot(platform, bot_config, { headless: false, keep_open: false });
+
+        print_log(`✅ [BULK RUNNER] Successfully executed job ${job._id}. moving to next...`);
+
+      } catch (jobError) {
+        print_log(`❌ [BULK RUNNER] Job ${job._id} encountered fatal error: ${jobError}`);
+        print_log(`[BOT_EVENT] {"event": "error", "jobId": "${job._id}", "error": "${jobError}"}`);
+
+        // Note: DB model should ideally update its own status tracking via workflows now
+        await db.collection('jobs').updateOne(
+          { _id: job._id },
+          { $set: { status: 'failed', lastUpdatedAt: new Date() } }
+        );
+
+        print_log(`⚠️ Auto-repair: Handled isolated failure. Recovering queue...`);
+        // Continue the loop despite total workflow meltdown
+      }
+    }
+
+    print_log(`\n🎉 [BULK RUNNER] Finished queue orchestration!`);
+  } catch (err) {
+    console.error("Critical failure spinning up bulk orchestrator:", err);
+  }
+}
+
 // CLI usage when run directly
 if (import.meta.main) {
   const args = process.argv.slice(2);
@@ -321,8 +411,41 @@ if (import.meta.main) {
   const headless = args.includes('--headless');
   const no_keep_open = args.includes('--close');
 
-  // Handle test mode for seek bot
-  if (is_test_mode && bot_name === 'seek') {
+  // Extract optional extraction limit — env var (from Tauri) takes priority, CLI arg is fallback
+  const env_limit = process.env.BOT_EXTRACT_LIMIT;
+  const limit_arg = args.find(a => a.startsWith('--limit='));
+  const maxJobsToProcess = env_limit
+    ? parseInt(env_limit, 10)
+    : limit_arg ? parseInt(limit_arg.split('=')[1], 10) : undefined;
+
+  // Extract specific --url= parameter for Direct Apply from the UI
+  const url_arg = args.find(a => a.startsWith('--url='));
+  const job_url = url_arg ? url_arg.split('=')[1] : null;
+
+  // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
+  if (job_url && bot_name === 'seek') {
+    (async () => {
+      try {
+        print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
+        const { runQuickApplyE2ETest } = await import('./seek/tests/seek_quick_apply_e2e_test.js');
+        await runQuickApplyE2ETest(job_url);
+      } catch (error) {
+        console.error('Direct Apply execution failed:', error);
+        process.exit(1);
+      }
+    })();
+  } else if (job_url && bot_name === 'linkedin') {
+    (async () => {
+      try {
+        print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
+        // For LinkedIn, we just pass directApplyUrl into the config and let the standard runner handle it
+        await run_bot('linkedin', { directApplyUrl: job_url }, { headless, keep_open: !no_keep_open });
+      } catch (error) {
+        console.error('LinkedIn Direct Apply execution failed:', error);
+        process.exit(1);
+      }
+    })();
+  } else if (is_test_mode && bot_name === 'seek') {
     (async () => {
       try {
         const { runQuickApplyTests } = await import('./seek/tests/seek_quick_apply_test');
@@ -343,8 +466,32 @@ if (import.meta.main) {
         process.exit(1);
       }
     })();
+  } else if (bot_name === 'bulk') {
+    (async () => {
+      try {
+        const jobs_arg = args.find(a => a.startsWith('--jobs='));
+        const mode_arg = args.find(a => a.startsWith('--mode='));
+        const superbot_arg = args.find(a => a.startsWith('--superbot='));
+
+        const job_ids_csv = jobs_arg ? jobs_arg.split('=')[1] : '';
+        const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
+        const superbot = superbot_arg ? superbot_arg.split('=')[1] === 'true' : false;
+
+        const jobIdsArray = job_ids_csv.split(',').filter(Boolean);
+        if (jobIdsArray.length === 0) {
+          console.error('No jobs provided to bulk orchestrator');
+          process.exit(1);
+        }
+
+        await bulk_run_jobs(jobIdsArray, mode, superbot);
+        process.exit(0); // Safely exit when whole queue concludes
+      } catch (error) {
+        console.error('Bulk orchestration failed:', error);
+        process.exit(1);
+      }
+    })();
   } else {
-    run_bot(bot_name, undefined, {
+    run_bot(bot_name, { maxJobsToProcess }, {
       headless,
       keep_open: !no_keep_open
     }).catch(error => {

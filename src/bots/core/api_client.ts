@@ -190,32 +190,49 @@ export async function apiRequest(
     ...(shouldLogFullPayload(endpoint) ? { requestBody: body } : {})
   });
 
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout in case LLM hangs
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    logger.apiError(`${method} ${endpoint}`, {
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.apiError(`${method} ${endpoint}`, {
+        requestId,
+        status: response.status,
+        durationMs: Date.now() - startedAt,
+        errorText
+      });
+      throw new Error(`API request failed: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    logger.apiResponse(`${method} ${endpoint}`, {
       requestId,
       status: response.status,
       durationMs: Date.now() - startedAt,
-      errorText
+      success: data?.success !== false,
+      ...(shouldLogFullPayload(endpoint) ? { responseBody: data } : {})
     });
-    throw new Error(`API request failed: ${response.status} - ${errorText}`);
+    return data;
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      logger.apiError(`${method} ${endpoint}`, {
+        requestId,
+        errorText: 'Request timed out after 120 seconds'
+      });
+      throw new Error(`API request timed out (120s): ${endpoint}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data = await response.json();
-  logger.apiResponse(`${method} ${endpoint}`, {
-    requestId,
-    status: response.status,
-    durationMs: Date.now() - startedAt,
-    success: data?.success !== false,
-    ...(shouldLogFullPayload(endpoint) ? { responseBody: data } : {})
-  });
-  return data;
 }
 
 // The save and clear functions are kept for potential direct use or testing,
