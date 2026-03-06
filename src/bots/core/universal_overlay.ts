@@ -22,6 +22,8 @@ interface OverlayState {
   data: {
     appliedJobs?: number;
     totalJobs?: number;
+    internalJobs?: number;
+    externalJobs?: number;
     currentStep?: string;
     stepIndex?: number;
     message?: string;
@@ -133,9 +135,13 @@ export class UniversalOverlay {
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
             pointerEvents: 'none', // Allow clicks to pass through to page beneath
-            width: collapsed ? '60px' : '600px',
+            width: collapsed ? '60px' : '450px',
             height: collapsed ? '60px' : 'auto',
-            minHeight: collapsed ? '60px' : '150px'
+            maxHeight: collapsed ? '60px' : '90vh',
+            minHeight: collapsed ? '60px' : '100px',
+            display: 'flex',
+            flexDirection: 'column',
+            boxSizing: 'border-box'
           };
 
           Object.assign(overlay.style, baseStyles);
@@ -162,7 +168,8 @@ export class UniversalOverlay {
             cursor: 'move',
             width: '100%',
             height: collapsed ? '100%' : 'auto',
-            pointerEvents: 'auto' // Override parent so header/buttons remain clickable
+            pointerEvents: 'auto', // Override parent so header/buttons remain clickable
+            boxSizing: 'border-box'
           };
 
           Object.assign(header.style, headerStyles);
@@ -180,68 +187,6 @@ export class UniversalOverlay {
           controls.style.display = 'flex';
           controls.style.gap = '8px';
           controls.style.alignItems = 'center';
-
-          // Mode Toggle Pills
-          const activeMode = state.activeMode || 'superbot';
-          const modeContainer = document.createElement('div');
-          modeContainer.style.display = collapsed ? 'none' : 'flex';
-          modeContainer.style.background = '#00000040';
-          modeContainer.style.borderRadius = '12px';
-          modeContainer.style.padding = '2px';
-          modeContainer.style.gap = '2px';
-          modeContainer.style.border = '1px solid #00ffff40';
-          
-          const modes = [
-            { id: 'superbot', icon: '🤖', label: 'Superbot', desc: 'Fully automated' },
-            { id: 'review', icon: '👀', label: 'Review', desc: 'Pause before Submit' },
-            { id: 'manual', icon: '✋', label: 'Manual', desc: 'Pause on all forms' }
-          ];
-
-          modes.forEach(mode => {
-            const btn = document.createElement('button');
-            const isActive = activeMode === mode.id;
-            
-            btn.innerHTML = \`<span style="font-size: 14px;">\${mode.icon}</span> <span style="font-size: 11px; font-weight: \${isActive ? 'bold' : 'normal'};">\${mode.label}</span>\`;
-            btn.title = mode.desc;
-            
-            const btnStyles = {
-              background: isActive ? '#00bb66' : 'transparent',
-              color: isActive ? '#1a1a1a' : '#ffffff80',
-              border: 'none',
-              padding: '4px 10px',
-              borderRadius: '10px',
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px',
-              transition: 'all 0.2s ease'
-            };
-            Object.assign(btn.style, btnStyles);
-
-            btn.onmouseover = () => {
-              if (!isActive) btn.style.background = '#00ffff20';
-            };
-            btn.onmouseout = () => {
-              if (!isActive) btn.style.background = 'transparent';
-            };
-
-            btn.onclick = (e) => {
-              e.stopPropagation();
-              if (activeMode !== mode.id) {
-                const currentState = loadState();
-                if (currentState) {
-                  currentState.activeMode = mode.id;
-                  window.__overlayActiveMode = mode.id; // Expose globally immediately
-                  saveState(currentState);
-                  createOverlay(currentState);
-                }
-              }
-            };
-            
-            modeContainer.appendChild(btn);
-          });
-          
-          controls.appendChild(modeContainer);
 
           // Collapse button
           const collapseBtn = document.createElement('button');
@@ -271,6 +216,7 @@ export class UniversalOverlay {
             collapseBtn.style.transform = 'scale(1)';
           };
 
+          controls.appendChild(collapseBtn);
           collapseBtn.onclick = (e) => {
             e.stopPropagation();
             const currentState = loadState();
@@ -287,14 +233,15 @@ export class UniversalOverlay {
           content.style.padding = '16px';
           content.style.fontSize = '13px';
           content.style.lineHeight = '1.4';
-          content.style.maxHeight = '500px';
+          content.style.maxHeight = '60vh';
           content.style.overflowY = 'auto';
           content.style.display = collapsed ? 'none' : 'block';
           content.style.pointerEvents = 'auto'; // Override parent so content buttons remain clickable
+          content.style.boxSizing = 'border-box';
 
           // Populate content based on type
           if (state.type === 'job_progress') {
-            const { appliedJobs = 0, totalJobs = 0, currentStep = '', stepIndex = 0 } = state.data;
+            const { appliedJobs = 0, totalJobs = 0, internalJobs = 0, externalJobs = 0, currentStep = '' } = state.data;
             const percentage = totalJobs > 0 ? (appliedJobs / totalJobs) * 100 : 0;
 
             // Inject keyframes animation if not already present
@@ -311,18 +258,20 @@ export class UniversalOverlay {
             }
 
             content.innerHTML = \`
-              <div style="display: flex; flex-direction: column; gap: 12px;">
+              <div style="display: flex; flex-direction: column; gap: 10px;">
                 <div style="display: flex; justify-content: space-between; align-items: center;">
                   <span style="color: #00ffff;">Jobs Extracted:</span>
                   <span style="font-weight: bold; font-size: 16px;">\${appliedJobs}/\${totalJobs}</span>
                 </div>
-                <div style="background: #333; border-radius: 6px; height: 10px; overflow: hidden;">
+                <div style="display: flex; gap: 8px; font-size: 11px;">
+                  <span style="background:#00bb6630; border:1px solid #00bb6666; border-radius:6px; padding:2px 8px; color:#00dd88;">📋 Internal: \${internalJobs}</span>
+                  <span style="background:#ff880030; border:1px solid #ff880066; border-radius:6px; padding:2px 8px; color:#ffaa44;">🌐 External: \${externalJobs}</span>
+                </div>
+                <div style="background: #333; border-radius: 6px; height: 8px; overflow: hidden;">
                   <div style="background: linear-gradient(90deg, #00ffff, #00dd88); height: 100%; width: \${percentage}%; transition: width 0.3s ease;"></div>
                 </div>
-                <div style="font-size: 12px; opacity: 0.8; color: #00dd88;">
-                  Step \${stepIndex}: \${currentStep}
-                </div>
-                <div style="display: flex; align-items: center; gap: 8px; margin-top: 4px;">
+                <div style="font-size: 11px; opacity: 0.8; color: #00dd88;">\${currentStep}</div>
+                <div style="display: flex; align-items: center; gap: 8px;">
                   <div style="width: 8px; height: 8px; border-radius: 50%; background: #00ffff; animation: pulse 1.5s ease-in-out infinite;"></div>
                   <span style="font-size: 11px; opacity: 0.6;">Working...</span>
                 </div>
@@ -413,10 +362,11 @@ export class UniversalOverlay {
             logsContainer.style.background = '#0a0a0a';
             logsContainer.style.border = '1px solid #00ffff40';
             logsContainer.style.borderRadius = '8px';
-            logsContainer.style.maxHeight = '180px';
+            logsContainer.style.maxHeight = '150px';
             logsContainer.style.overflowY = 'auto';
             logsContainer.style.fontFamily = 'monospace';
             logsContainer.style.fontSize = '12px';
+            logsContainer.style.boxSizing = 'border-box';
             logsContainer.style.display = 'flex';
             logsContainer.style.flexDirection = 'column';
             logsContainer.style.gap = '4px';
@@ -716,11 +666,13 @@ export class UniversalOverlay {
   /**
    * Update job progress
    */
-  async updateJobProgress(appliedJobs: number, totalJobs: number, currentStep: string, stepIndex: number): Promise<void> {
+  async updateJobProgress(appliedJobs: number, totalJobs: number, currentStep: string, stepIndex: number, internalJobs?: number, externalJobs?: number): Promise<void> {
     try {
       await this.initialize();
 
       let existingLogs: string[] = [];
+      let existingInternal = 0;
+      let existingExternal = 0;
       try {
         const stateStr = await this.driver.executeScript(`
           return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
@@ -728,6 +680,8 @@ export class UniversalOverlay {
         if (stateStr) {
           const currentState = JSON.parse(stateStr);
           existingLogs = currentState?.data?.logs || [];
+          existingInternal = currentState?.data?.internalJobs || 0;
+          existingExternal = currentState?.data?.externalJobs || 0;
         }
       } catch (e) {
         // ignore
@@ -739,6 +693,8 @@ export class UniversalOverlay {
         data: {
           appliedJobs,
           totalJobs,
+          internalJobs: internalJobs !== undefined ? internalJobs : existingInternal,
+          externalJobs: externalJobs !== undefined ? externalJobs : existingExternal,
           currentStep,
           stepIndex,
           logs: existingLogs

@@ -789,7 +789,8 @@ async fn run_bot_streaming(
 
     // Spawn bot process with piped stdout
     let mut cmd = Command::new("bun");
-    cmd.arg(script_path.to_str().unwrap())
+    cmd.arg("--no-cache")  // Always recompile; prevents stale bytecode missing new exports
+       .arg(script_path.to_str().unwrap())
        .arg(&bot_name);
 
     if let Some(limit) = extract_limit {
@@ -895,6 +896,60 @@ async fn run_bot_for_job(
     });
 
     Ok(format!("Bot {} started for job {}", bot_name, job_url))
+}
+
+#[tauri::command]
+async fn run_bot_bulk(
+    app: tauri::AppHandle,
+    job_ids: Vec<String>,
+    mode: String,
+    superbot: bool
+) -> Result<String, String> {
+    use tokio::process::Command;
+    use tokio::io::{BufReader, AsyncBufReadExt};
+    use std::process::Stdio;
+    use std::env;
+
+    let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+    if project_root.ends_with("src-tauri") {
+        project_root.pop();
+    }
+
+    let script_path = project_root.join("src/bots/bot_starter.ts");
+    if !script_path.exists() {
+        return Err(format!("Bot starter script not found: {}", script_path.display()));
+    }
+
+    // Pass job IDs as a comma-separated string, and mode as explicit args
+    let ids_str = job_ids.join(",");
+    let superbot_str = if superbot { "true" } else { "false" };
+
+    let mut child = Command::new("bun")
+        .arg(script_path.to_str().unwrap())
+        .arg("bulk") // Trigger the bulk runner routine
+        .arg(format!("--jobs={}", ids_str))
+        .arg(format!("--mode={}", mode))
+        .arg(format!("--superbot={}", superbot_str))
+        .current_dir(&project_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn bot process: {}", e))?;
+
+    let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
+    let reader = BufReader::new(stdout);
+    let mut lines = reader.lines();
+    let app_handle = app.clone();
+
+    tauri::async_runtime::spawn(async move {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let _ = app_handle.emit("bot-log", line.clone());
+            println!("[BOT BULK]: {}", line);
+        }
+    });
+
+    tokio::spawn(async move { let _ = child.wait().await; });
+    Ok(format!("Bulk bot started for {} jobs", job_ids.len()))
 }
 
 #[tauri::command]
@@ -1459,6 +1514,7 @@ pub fn run() {
             run_javascript_script,
             run_bot_streaming,
             run_bot_for_job,
+            run_bot_bulk,
             register_managed_file,
             register_managed_file_base64,
             get_managed_files,

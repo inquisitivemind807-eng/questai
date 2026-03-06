@@ -4,6 +4,7 @@ import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/hu
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
+import { apiRequest } from '../core/api_client';
 import { handleResumeSelection } from './handlers/resume_handler';
 import { handleCoverLetter } from './handlers/cover_letter_handler';
 import { answerEmployerQuestions as handleEmployerQuestions } from './handlers/answer_employer_questions';
@@ -175,9 +176,18 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
   const runtimeLimit = (ctx.config as any)?.maxJobsToProcess;
   ctx.maxJobsLimit = runtimeLimit ? Number(runtimeLimit) : 0;  // 0 = no limit
 
+  // *** Capture directApplyUrl BEFORE ctx.config is overwritten with fileConfig ***
+  const directApplyUrl = (ctx.config as any)?.directApplyUrl as string | undefined;
+
   ctx.selectors = selectors;
   ctx.config = fileConfig;
   ctx.seek_url = build_search_url(BASE_URL, fileConfig.formData.keywords || "", fileConfig.formData.locations || "");
+
+  // Override seek_url if direct apply mode
+  if (directApplyUrl) {
+    ctx.seek_url = directApplyUrl;
+    printLog(`🎯 Direct Apply mode detected. Bypassing search and targeting URL: ${directApplyUrl}`);
+  }
 
   // Initialize retry counters to prevent infinite loops
   ctx.retry_counts = {
@@ -189,14 +199,85 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
     MAX_COLLECT_CARDS_RETRIES: 5
   };
 
-  // Initialize jobs extracted counter (tracks across pages)
+  // Initialize jobs extracted counters (tracks across pages)
   ctx.jobs_extracted = 0;
+  ctx.jobs_internal = 0;
+  ctx.jobs_external = 0;
 
-  printLog(`Search URL: ${ctx.seek_url}`);
-  if (ctx.maxJobsLimit > 0) {
-    printLog(`🎯 Will extract up to ${ctx.maxJobsLimit} jobs`);
+  if (directApplyUrl) {
+    yield "direct_apply_ready";
+  } else {
+    printLog(`Search URL: ${ctx.seek_url}`);
+    if (ctx.maxJobsLimit > 0) {
+      printLog(`🎯 Will extract up to ${ctx.maxJobsLimit} jobs`);
+    }
+    yield "ctx_ready";
   }
-  yield "ctx_ready";
+}
+
+// Step 0.5: Open Job URL Directly
+export async function* openJobUrl(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    if (ctx.driver) {
+      printLog("⚠️ Browser already exists, reusing existing instance");
+      await ctx.driver.get(ctx.seek_url);
+      await ctx.driver.sleep(5000);
+      // Show overlay on existing driver too
+      if (ctx.overlay) {
+        try {
+          await ctx.overlay.updateJobProgress(0, 1, 'Opening Job Page…', 1);
+          await ctx.overlay.addLogEvent(`🔗 Navigating to: ${ctx.seek_url}`);
+        } catch (e) { /* overlay not critical */ }
+      }
+      yield "job_url_opened";
+      return;
+    }
+
+    const { driver, sessionExists, sessionsDir } = await setupChromeDriver('seek');
+    ctx.driver = driver;
+    ctx.sessionExists = sessionExists;
+    ctx.sessionsDir = sessionsDir;
+    ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
+    ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
+    ctx.overlay = new UniversalOverlay(driver, 'Seek');
+
+    try {
+      await driver.executeScript(`
+        sessionStorage.removeItem('universal_overlay_state');
+        window.__overlaySystemInitialized = false;
+      `);
+    } catch (e) { /* ignore if page not loaded yet */ }
+
+    await StealthFeatures.hideWebDriver(driver);
+    await StealthFeatures.randomizeUserAgent(driver);
+
+    printLog(`Opening Direct Job URL: ${ctx.seek_url}`);
+    await driver.get(ctx.seek_url);
+
+    await driver.sleep(5000);
+
+    const currentUrl = await ctx.driver.getCurrentUrl();
+    const title = await driver.getTitle();
+
+    if (currentUrl && title && !title.includes('error')) {
+      // Initialize the overlay and show it on the loaded job page
+      try {
+        await ctx.overlay.updateJobProgress(0, 1, '🎯 Direct Apply Mode — Job Loaded', 1);
+        await ctx.overlay.addLogEvent(`🔗 URL: ${ctx.seek_url}`);
+        await ctx.overlay.addLogEvent('🔍 Looking for Quick Apply button…');
+        printLog('✅ Overlay initialized on job page');
+      } catch (overlayErr) {
+        printLog(`⚠️ Overlay init skipped: ${overlayErr}`);
+      }
+      yield "job_url_opened";
+    } else {
+      printLog("Direct Job URL load failed - will retry");
+      yield "job_url_failed";
+    }
+  } catch (error) {
+    printLog(`Direct URL opening failed: ${error}`);
+    yield "job_url_failed";
+  }
 }
 
 // Step 1: Open Homepage
@@ -230,6 +311,14 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
     ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, 'Seek');
+
+    // Clear stale overlay state from any previous run so the fresh overlay shows correctly
+    try {
+      await driver.executeScript(`
+        sessionStorage.removeItem('universal_overlay_state');
+        window.__overlaySystemInitialized = false;
+      `);
+    } catch (e) { /* ignore if page not loaded yet */ }
 
     await StealthFeatures.hideWebDriver(driver);
     await StealthFeatures.randomizeUserAgent(driver);
@@ -523,13 +612,29 @@ export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<str
     printLog(`Apply detection result: Quick=${result.hasQuickApply}, Regular=${result.hasRegularApply}`);
 
     if (result.hasQuickApply) {
+      ctx.isQuickApply = true;
       printLog("🚀 QUICK APPLY detected - proceeding with application");
+      if (ctx.overlay) {
+        try {
+          await ctx.overlay.updateJobProgress(0, 1, '🚀 Quick Apply Found!', 2);
+          await ctx.overlay.addLogEvent(`📋 ${result.jobTitle || 'Job'} at ${result.companyName || '?'}`);
+          await ctx.overlay.addLogEvent('✅ Quick Apply button found — clicking…');
+        } catch (_e) { /* overlay not critical */ }
+      }
       yield "quick_apply_found";
     } else if (result.hasRegularApply) {
+      ctx.isQuickApply = false;
       printLog("⏭️ REGULAR APPLY detected - skipping to next job card");
+      if (ctx.overlay) {
+        try { await ctx.overlay.addLogEvent('⚠️ Only regular Apply found (no Quick Apply). Skipping.'); } catch (_e) { }
+      }
       yield "regular_apply_found";
     } else {
+      ctx.isQuickApply = false;
       printLog("❌ NO APPLY BUTTON detected - skipping to next job card");
+      if (ctx.overlay) {
+        try { await ctx.overlay.addLogEvent('❌ No apply button found on this page.'); } catch (_e) { }
+      }
       yield "no_apply_found";
     }
   } catch (error) {
@@ -753,6 +858,9 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
         jobData.requiredExperience = parsed.requiredExperience;
       }
 
+      // Mark as internal (Quick Apply via Seek)
+      jobData.applicationType = 'internal';
+
       // Store in context so every step can log "which job"
       ctx.currentJobTitle = jobData.title || '';
       ctx.currentJobCompany = jobData.company || '';
@@ -778,6 +886,7 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
 
       // Increment extracted jobs counter
       ctx.jobs_extracted = (ctx.jobs_extracted || 0) + 1;
+      ctx.jobs_internal = (ctx.jobs_internal || 0) + 1;
 
       // Update overlay progress and log
       if (ctx.overlay) {
@@ -788,7 +897,7 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
           : `> ${ctx.jobs_extracted} jobs extracted`;
 
         await ctx.overlay.addLogEvent(countMsg);
-        await ctx.overlay.addLogEvent(`  📋 ${ctx.currentJobTitle || 'Unknown Title'}`);
+        await ctx.overlay.addLogEvent(`  📋 ${ctx.currentJobTitle || 'Unknown Title'} (internal)`);
         await ctx.overlay.addLogEvent(`  🏢 ${ctx.currentJobCompany || 'Unknown Company'}`);
         if (jobData.url) {
           await ctx.overlay.addLogEvent(`  🔗 ${jobData.url}`);
@@ -796,8 +905,10 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
         await ctx.overlay.updateJobProgress(
           ctx.jobs_extracted,
           displayTotal,
-          `Job extracted: ${ctx.currentJobTitle}`,
-          9
+          `Internal job extracted: ${ctx.currentJobTitle}`,
+          9,
+          ctx.jobs_internal,
+          ctx.jobs_external || 0
         );
       }
     } else {
@@ -807,6 +918,135 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
     yield "job_parsed";
   } catch (error) {
     printLog(`Job parsing error: ${error}`);
+    yield "parse_failed";
+  }
+}
+
+// Parse External Job Details (regular/external apply jobs)
+export async function* parseExternalJobDetails(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    // Extract job info directly from the currently-visible job card panel on the seek results page
+    const jobData = await ctx.driver.executeScript(`
+      try {
+        const g = (sel) => document.querySelector(sel);
+        const t = (el) => el ? el.textContent.trim() : null;
+
+        const titleEl  = g('[data-automation="job-detail-title"]') || g('h1[class*="jobTitle"]') || g('[class*="job-title"]');
+        const companyEl= g('[data-automation="advertiser-name"]')  || g('[class*="companyName"]');
+        const locationEl=g('[data-automation="job-detail-location"]') || g('[data-automation="location"]') || g('[class*="location"]');
+        const salaryEl  = g('[data-automation="job-detail-salary"]')  || g('[class*="salary"]');
+        const workTypeEl= g('[data-automation="job-detail-work-type"]') || g('[data-automation="worktype"]');
+        const classEl   = g('[data-automation="job-detail-classifications"]') || g('[data-automation="classification"]');
+
+        // Listed date
+        const listedEl  = g('[data-automation="job-detail-date"]') || g('[class*="listed-date"]');
+
+        // Closing date / expiry
+        const closeEl   = g('[data-automation="listing-closing-date"]') || g('[class*="closingDate"]');
+
+        // Full description text — try multiple selectors Seek uses across different page layouts
+        const descEl = g('[data-automation="jobAdDetails"]')
+          || g('[data-automation="jobDescription"]')
+          || g('[data-automation="job-detail-description"]')
+          || g('[class*="jobDescription"]')
+          || g('[class*="job-description"]')
+          || g('[class*="_description_"]');
+
+        // Fallback: grab all text inside the detail panel and strip metadata lines
+        let descText = null;
+        if (descEl) {
+          descText = (descEl.innerText || descEl.textContent || '').trim();
+        } else {
+          const panel = g('[data-automation="jobDetailsPage"]') || g('[class*="jobDetail"]') || g('[class*="job-detail"]');
+          if (panel) {
+            const full = (panel.innerText || panel.textContent || '').trim();
+            // Strip title + company from the top then take the rest as description
+            const lines = full.split('\\n').map(l => l.trim()).filter(Boolean);
+            const startIdx = lines.findIndex((l, i) => i > 2 && l.length > 60);
+            descText = startIdx > 0 ? lines.slice(startIdx).join('\\n') : full;
+          }
+        }
+
+        // Apply link (external)
+        const applyEl   = g('[data-automation="job-detail-apply"]') || g('[data-automation="apply-button"]') || g('a[href*="apply"]');
+
+        // Job ID from URL
+        const jobId = new URL(window.location.href).searchParams.get('jobId') || '';
+        const url   = window.location.href;
+
+        // Advertiser link / company page
+        const advertiserLinkEl = g('[data-automation="advertiser-name"] a') || g('a[class*="company"]');
+        const companyUrl = advertiserLinkEl ? advertiserLinkEl.href : null;
+
+        return {
+          title:          t(titleEl),
+          company:        t(companyEl),
+          location:       t(locationEl),
+          salary:         t(salaryEl),
+          workType:       t(workTypeEl),
+          classification: t(classEl),
+          listedDate:     t(listedEl),
+          closingDate:    t(closeEl),
+          description:    descText,
+          externalApplyUrl: applyEl ? applyEl.href : null,
+          companyUrl,
+          url,
+          jobId,
+          scrapedAt: new Date().toISOString(),
+          applicationType: 'external'
+        };
+      } catch(e) {
+        return null;
+      }
+    `) as any;
+
+    if (jobData && jobData.title) {
+      const clientEmail = getClientEmailFromContext(ctx);
+      if (clientEmail) jobData.clientEmail = clientEmail;
+
+      ctx.currentJobTitle = jobData.title || '';
+      ctx.currentJobCompany = jobData.company || '';
+
+      const jobId = jobData.jobId || `ext_${Date.now()}`;
+      const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
+      const filepath = path.join(jobDir, 'job_details.json');
+      fs.writeFileSync(filepath, JSON.stringify(jobData, null, 2));
+      ctx.currentJobFile = filepath;
+      ctx.currentJobDir = jobDir;
+
+      printLog(`🌐 External job saved: ${jobData.title} at ${jobData.company}`);
+
+      // Increment extracted jobs counter (counts both internal and external)
+      ctx.jobs_extracted = (ctx.jobs_extracted || 0) + 1;
+      ctx.jobs_external = (ctx.jobs_external || 0) + 1;
+
+      if (ctx.overlay) {
+        const maxJobs = ctx.maxJobsLimit || 0;
+        const displayTotal = maxJobs > 0 ? maxJobs : (ctx.total_jobs || 0);
+        const countMsg = maxJobs > 0
+          ? `> ${ctx.jobs_extracted}/${maxJobs} jobs extracted`
+          : `> ${ctx.jobs_extracted} jobs extracted`;
+        await ctx.overlay.addLogEvent(countMsg);
+        await ctx.overlay.addLogEvent(`  🌐 ${ctx.currentJobTitle || 'Unknown Title'} (external)`);
+        await ctx.overlay.addLogEvent(`  🏢 ${ctx.currentJobCompany || 'Unknown Company'}`);
+        if (jobData.url) await ctx.overlay.addLogEvent(`  🔗 ${jobData.url}`);
+        await ctx.overlay.updateJobProgress(
+          ctx.jobs_extracted,
+          displayTotal,
+          `External job extracted: ${ctx.currentJobTitle}`,
+          8,
+          ctx.jobs_internal || 0,
+          ctx.jobs_external
+        );
+      }
+
+      yield "external_job_parsed";
+    } else {
+      printLog(`⚠️ External job: could not extract title from panel, skipping`);
+      yield "parse_failed";
+    }
+  } catch (error) {
+    printLog(`External job parsing error: ${error}`);
     yield "parse_failed";
   }
 }
@@ -822,7 +1062,7 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
 
     const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
 
-    // Try extracting the explicit URL 
+    // Extract platform job ID from URL
     const explicitUrlMatch = jobData.url?.match(/job\/(\d+)/);
     const platformJobId = explicitUrlMatch ? explicitUrlMatch[1] : (jobData.jobId || Date.now().toString());
     const jobUrl = jobData.url || (platformJobId ? `https://www.seek.com.au/job/${platformJobId}` : undefined);
@@ -834,29 +1074,33 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
       company: jobData.company || ctx.currentJobCompany || 'Unknown Company',
       url: jobUrl,
       location: jobData.location,
-      rawData: jobData
+      // description: internal jobs store as 'details', external as 'description'
+      description: jobData.description || jobData.details || undefined,
+      salary: jobData.salary || jobData.salary_note || undefined,
+      workMode: jobData.workType || jobData.work_type || jobData.workMode || undefined,
+      jobType: jobData.jobType || jobData.classification || jobData.category || undefined,
+      postedDate: jobData.listedDate || jobData.posted_date || jobData.postedDate || undefined,
+      closingDate: jobData.closingDate || jobData.closing_date || undefined,
+      rawData: jobData   // keep original for reference; includes applicationType
     };
 
-    // Need to POST this to the corpus-rag server 
-    // Usually via apiRequest but we'll try a direct fetch to the corpus-rag port 3000
     try {
-      const response = await fetch('http://localhost:3000/api/scraped-jobs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${ctx.auth_token || process.env.CORPUS_RAG_TOKEN || ''}` },
-        body: JSON.stringify(payload)
-      });
-
-      if (!response.ok) {
-        const errT = await response.text();
-        printLog(`⚠️ Failed to save to database (HTTP ${response.status}): ${errT}`);
+      // Use apiRequest which handles JWT caching + session token auth properly
+      const result = await apiRequest('/api/scraped-jobs', 'POST', payload);
+      if (result?.success) {
+        printLog(`✅ Saved to DB: ${payload.title} at ${payload.company} (id: ${result.id || 'new'})`);
       } else {
-        printLog(`✅ Successfully saved scraped job: ${payload.title} at ${payload.company}`);
+        printLog(`⚠️ DB save returned unexpected response: ${JSON.stringify(result)}`);
       }
     } catch (apiErr) {
-      printLog(`⚠️ Network error saving to database: ${apiErr}`);
+      printLog(`⚠️ Failed to save to database: ${apiErr}`);
     }
 
-    yield "job_saved";
+    if (ctx.isQuickApply) {
+      yield "job_saved_quick_apply";
+    } else {
+      yield "job_saved";
+    }
   } catch (error) {
     printLog(`Error saving scraped job: ${error}`);
     yield "save_failed";
@@ -1227,7 +1471,7 @@ export async function* skipToNextCard(ctx: WorkflowContext): AsyncGenerator<stri
     await ctx.overlay.updateJobProgress(
       numerator,
       displayTotal,
-      `Scanning job ${ctx.jobs_scanned}${displayTotal > 0 ? '/' + displayTotal : ''}: ${title || '?'}`,
+      `Scanning: ${title || '?'}`,
       8
     );
   }
@@ -1324,6 +1568,7 @@ export async function* skipDocuments(ctx: WorkflowContext): AsyncGenerator<strin
 
 export const seekStepFunctions = {
   step0,
+  openJobUrl,
   openHomepage,
   waitForPageLoad,
   refreshPage,
@@ -1334,6 +1579,7 @@ export const seekStepFunctions = {
   collectJobCards,
   clickJobCard,
   detectApplyType,
+  parseExternalJobDetails,
   parseJobDetails,
   saveScrapedJob,
   clickQuickApply,
