@@ -7,6 +7,8 @@ import type { WorkflowContext } from '../core/workflow_engine';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
+import { loadUserConfig } from '../core/config_loader';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -37,9 +39,8 @@ export async function* step0(ctx: PlaywrightWorkflowContext): AsyncGenerator<str
       fs.readFileSync(path.join(__dirname, 'config/indeed_selectors.json'), 'utf8')
     );
 
-    const config = JSON.parse(
-      fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8')
-    );
+    const config = loadUserConfig();
+
 
     // Set context
     ctx.selectors = selectors;
@@ -135,8 +136,8 @@ export async function* detectPageState(ctx: WorkflowContext): AsyncGenerator<str
 
     // If on auth/login page, definitely need to sign in
     if (currentUrl.includes('/auth') ||
-        currentUrl.includes('/login') ||
-        currentUrl.includes('secure.indeed.com')) {
+      currentUrl.includes('/login') ||
+      currentUrl.includes('secure.indeed.com')) {
       printLog(`🔓 Sign-in required (on auth page)`);
       yield "sign_in_required";
       return;
@@ -146,12 +147,12 @@ export async function* detectPageState(ctx: WorkflowContext): AsyncGenerator<str
     const pageSource = await ctx.driver.getPageSource();
 
     const hasSignInLink = pageSource.includes('Sign in') ||
-                         pageSource.includes('data-tn-element="header-signin-link"') ||
-                         pageSource.includes('/account/login');
+      pageSource.includes('data-tn-element="header-signin-link"') ||
+      pageSource.includes('/account/login');
 
     const hasAccountMenu = pageSource.includes('gnav-AccountMenu') ||
-                           pageSource.includes('np-dropdown') ||
-                           (pageSource.includes('/account') && !hasSignInLink);
+      pageSource.includes('np-dropdown') ||
+      (pageSource.includes('/account') && !hasSignInLink);
 
     printLog(`🔐 Sign-in indicators found: ${hasSignInLink}`);
     printLog(`👤 Account menu found: ${hasAccountMenu}`);

@@ -6,21 +6,53 @@ import path from 'path';
 export async function GET({ url }) {
   try {
     const userId = url.searchParams.get('userId');
-    
+
     if (!userId) {
       return json({ success: false, error: 'Missing userId parameter' }, { status: 400 });
     }
 
     // Read the user-bots-config.json file
     const configPath = path.join(process.cwd(), 'src', 'bots', 'user-bots-config.json');
-    
+    let parsed;
+
     if (!fs.existsSync(configPath)) {
-      return json({ success: false, error: 'Config file not found' }, { status: 404 });
+      // Return defaults if file not found, instead of 404
+      parsed = {
+        formData: {
+          fullName: "",
+          email: "",
+          phone: "",
+          linkedinUrl: "",
+          keywords: "",
+          locations: "",
+          minSalary: "",
+          maxSalary: "",
+          jobType: "any",
+          experienceLevel: "any",
+          industry: "",
+          listedDate: "",
+          remotePreference: "any",
+          rightToWork: "citizen",
+          rewriteResume: false,
+          excludedCompanies: "",
+          excludedKeywords: "",
+          skillWeight: "0.4",
+          locationWeight: "0.2",
+          salaryWeight: "0.3",
+          companyWeight: "0.1",
+          enableDeepSeek: false,
+          deepSeekApiKey: "",
+          acceptTerms: false,
+          resumeFileName: "",
+          botMode: "superbot"
+        }
+      };
+    } else {
+      const configContent = fs.readFileSync(configPath, 'utf-8');
+      parsed = JSON.parse(configContent);
     }
 
-    const configContent = fs.readFileSync(configPath, 'utf-8');
-    const parsed = JSON.parse(configContent);
-    
+
     // Return the config
     return json({
       success: true,

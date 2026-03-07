@@ -3,6 +3,7 @@
   import { get } from "svelte/store";
   import { authService } from "$lib/authService.js";
   import { tokenService } from "$lib/services/tokenService.js";
+  import { getManagedFiles } from "$lib/file-manager";
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import {
@@ -515,11 +516,20 @@
     }
 
     try {
+      if (!selectedResumeFile) {
+        await loadResumeOptions();
+      }
+      if (!selectedResumeFile) {
+        alert("Please select a resume first from Auto-Apply modal.");
+        return;
+      }
+      await persistSelectedResumeForBotRun();
+      const mappedBotName = app.platform === "seek" ? "seek_apply" : app.platform;
       alert(
-        `Triggering Bot Apply for ${app.platform} job: ${app.title}... Watch the Tauri console!`,
+        `Triggering Bot Apply for ${app.platform} job: ${app.title} via direct job URL... Watch the Tauri console!`,
       );
       const response = await invoke("run_bot_for_job", {
-        botName: app.platform,
+        botName: mappedBotName,
         jobUrl: app.url,
       });
       console.log("Bot trigger response:", response);
@@ -604,9 +614,70 @@
   let showBotOverlay = false;
   let selectedBotMode = "review"; // "manual" | "review" | "bot"
   let isSuperbotActive = false;
+  let availableResumeFiles = [];
+  let selectedResumeFile = "";
+
+  async function loadResumeOptions() {
+    try {
+      const configContent = await invoke("read_file_async", {
+        filename: "src/bots/user-bots-config.json",
+      });
+      const parsed = JSON.parse(configContent || "{}");
+      const userEmail = String(parsed?.formData?.email || "").trim();
+      const configuredResume = String(parsed?.formData?.resumeFileName || "").trim();
+      if (!userEmail) {
+        availableResumeFiles = configuredResume ? [configuredResume] : [];
+        selectedResumeFile = configuredResume;
+        return;
+      }
+
+      const entries = await getManagedFiles({
+        userId: userEmail,
+        feature: "resume",
+      });
+      const files = entries
+        .map((entry) => entry.filename)
+        .filter((name) => typeof name === "string" && /\.(pdf|doc|docx)$/i.test(name));
+
+      availableResumeFiles = files;
+      if (configuredResume && files.includes(configuredResume)) {
+        selectedResumeFile = configuredResume;
+      } else {
+        selectedResumeFile = files[0] || configuredResume || "";
+      }
+    } catch (e) {
+      console.warn("Failed to load resume options for bulk apply:", e);
+      availableResumeFiles = [];
+      selectedResumeFile = "";
+    }
+  }
+
+  async function persistSelectedResumeForBotRun() {
+    if (!selectedResumeFile) return;
+    const configContent = await invoke("read_file_async", {
+      filename: "src/bots/user-bots-config.json",
+    });
+    const parsed = JSON.parse(configContent || "{}");
+    const nextConfig = {
+      ...(parsed || {}),
+      formData: {
+        ...((parsed && parsed.formData) || {}),
+        resumeFileName: selectedResumeFile,
+      },
+    };
+    await invoke("write_file_async", {
+      filename: "src/bots/user-bots-config.json",
+      content: JSON.stringify(nextConfig, null, 2),
+    });
+  }
 
   function bulkApply() {
+    if (selectedJobs.length === 0) {
+      alert("Please select at least one job first.");
+      return;
+    }
     // Just show the configuration overlay
+    loadResumeOptions();
     showBotOverlay = true;
   }
 
@@ -615,6 +686,25 @@
     const jobIdsStr = selectedJobs;
 
     try {
+      if (jobIdsStr.length === 0) {
+        alert("Please select at least one job.");
+        return;
+      }
+      if (!selectedResumeFile) {
+        alert("Please select a resume before starting bot apply.");
+        return;
+      }
+      const selectedJobRecords = applications.filter((a) =>
+        jobIdsStr.includes(a._id),
+      );
+      const missingUrl = selectedJobRecords.filter((j) => !j.url);
+      if (missingUrl.length > 0) {
+        alert(
+          `Some selected jobs are missing direct URLs (${missingUrl.length}). Please deselect them.`,
+        );
+        return;
+      }
+      await persistSelectedResumeForBotRun();
       console.log(`Dispatching ${jobIdsStr.length} jobs to queue...`);
       const response = await invoke("run_bot_bulk", {
         jobIds: jobIdsStr,
@@ -1549,14 +1639,35 @@
 <!-- Bot Orchestration Modal overlay -->
 {#if showBotOverlay}
   <dialog class="modal modal-open">
-    <div class="modal-box">
-      <h3 class="font-bold text-lg mb-4">🚀 Launch Application Queue</h3>
-      <p class="py-2 text-sm text-base-content/70">
+    <div class="modal-box max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+      <h3 class="font-bold text-xl mb-4">🚀 Launch Application Queue</h3>
+      <p class="py-2 text-base text-base-content/70 mb-6">
         You are about to queue <strong>{selectedJobs.length} job(s)</strong> for
         asynchronous application. Choose your preferred execution mode below.
       </p>
 
-      <div class="form-control">
+      <div class="form-control mb-4">
+        <label class="label" for="bulk-resume-select">
+          <span class="label-text font-bold">Resume to use for apply</span>
+        </label>
+        {#if availableResumeFiles.length > 0}
+          <select
+            id="bulk-resume-select"
+            class="select select-bordered"
+            bind:value={selectedResumeFile}
+          >
+            {#each availableResumeFiles as resumeName}
+              <option value={resumeName}>{resumeName}</option>
+            {/each}
+          </select>
+        {:else}
+          <div class="text-sm text-warning">
+            No resume found. Upload/select resume from Configuration page first.
+          </div>
+        {/if}
+      </div>
+
+      <div class="form-control mb-4">
         <label class="label cursor-pointer justify-start gap-4">
           <input
             type="radio"
@@ -1566,16 +1677,16 @@
             bind:group={selectedBotMode}
             disabled={isSuperbotActive}
           />
-          <div>
+          <div class="flex-1">
             <span class="label-text font-bold text-base">Manual Mode</span>
-            <div class="text-xs text-base-content/60">
+            <div class="text-sm text-base-content/60 mt-1">
               Bot opens the application but stops immediately for human entry.
             </div>
           </div>
         </label>
       </div>
 
-      <div class="form-control mt-2">
+      <div class="form-control mb-4">
         <label class="label cursor-pointer justify-start gap-4">
           <input
             type="radio"
@@ -1585,11 +1696,11 @@
             bind:group={selectedBotMode}
             disabled={isSuperbotActive}
           />
-          <div>
+          <div class="flex-1">
             <span class="label-text font-bold text-base"
               >Review Mode (Recommended)</span
             >
-            <div class="text-xs text-base-content/60">
+            <div class="text-sm text-base-content/60 mt-1">
               Bot fills everything and generates docs, but halts for final human
               submit approval.
             </div>
@@ -1597,7 +1708,7 @@
         </label>
       </div>
 
-      <div class="form-control mt-2">
+      <div class="form-control mb-4">
         <label class="label cursor-pointer justify-start gap-4">
           <input
             type="radio"
@@ -1607,9 +1718,9 @@
             bind:group={selectedBotMode}
             disabled={isSuperbotActive}
           />
-          <div>
+          <div class="flex-1">
             <span class="label-text font-bold text-warning">Full Bot Mode</span>
-            <div class="text-xs text-base-content/60">
+            <div class="text-sm text-base-content/60 mt-1">
               Bot autonomously fires application. No human intervention unless
               crashed.
             </div>
@@ -1617,36 +1728,39 @@
         </label>
       </div>
 
-      <div class="divider my-2"></div>
+      <div class="divider my-4"></div>
 
       <div
-        class="form-control bg-base-200 p-4 rounded-xl border border-warning/30"
+        class="form-control bg-base-200 p-5 rounded-xl border border-warning/30 mb-4"
       >
         <label class="label cursor-pointer justify-between">
-          <div>
+          <div class="flex-1">
             <span
-              class="label-text font-bold text-warning flex items-center gap-2"
+              class="label-text font-bold text-warning flex items-center gap-2 text-base"
             >
               ⚠️ Superbot Override
             </span>
-            <div class="text-xs text-base-content/60 mt-1">
+            <div class="text-sm text-base-content/60 mt-2">
               Force all jobs globally into Full Bot Mode, overriding any
               individual pauses.
             </div>
           </div>
           <input
             type="checkbox"
-            class="toggle toggle-warning"
+            class="toggle toggle-warning ml-4"
             bind:checked={isSuperbotActive}
           />
         </label>
       </div>
 
-      <div class="modal-action">
+      <div class="modal-action mt-6">
         <button class="btn btn-ghost" on:click={() => (showBotOverlay = false)}
           >Cancel</button
         >
-        <button class="btn btn-primary" on:click={executeBulkQueue}
+        <button
+          class="btn btn-primary"
+          disabled={!selectedResumeFile}
+          on:click={executeBulkQueue}
           >Execute Queue</button
         >
       </div>

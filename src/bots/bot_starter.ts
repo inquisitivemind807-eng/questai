@@ -41,6 +41,20 @@ const print_log = (message: string) => {
   console.log(message);
 };
 
+const normalizeSeekJobUrl = (rawUrl: string): string => {
+  try {
+    const parsed = new URL(rawUrl);
+    if (!parsed.hostname.toLowerCase().includes('seek.com.au')) return rawUrl;
+    const queryJobId = parsed.searchParams.get('jobId');
+    if (queryJobId && /^\d+$/.test(queryJobId)) {
+      return `${parsed.protocol}//${parsed.host}/job/${queryJobId}`;
+    }
+  } catch {
+    // Keep original URL if parsing fails.
+  }
+  return rawUrl;
+};
+
 export interface BotRunOptions {
   bot_name: string;
   config?: any;
@@ -281,13 +295,22 @@ export class BotStarter {
 
   // Handle cleanup and browser management after execution
   private async handle_post_execution(context: WorkflowContext, keep_open: boolean): Promise<void> {
-    if (context.driver && keep_open) {
-      // Gracefully close browser monitoring when workflow completes
-      if (context.stopMonitoring) {
-        context.stopMonitoring();
-        print_log('✅ Stopped browser monitoring');
+    // Stop monitoring before closing browser to prevent false recovery attempts
+    if (context.driver && context.stopMonitoring) {
+      context.stopMonitoring();
+      print_log('✅ Stopped browser monitoring');
+    }
+    
+    // Mark workflow as completed on driver to prevent monitoring from trying to recover
+    if (context.driver) {
+      try {
+        (context.driver as any).__workflowCompleted = true;
+      } catch (e) {
+        // Ignore if driver is already invalid
       }
-
+    }
+    
+    if (context.driver && keep_open) {
       print_log('🎯 Workflow completed! Browser will remain open for you to continue using.');
       if (context.sessionsDir) {
         print_log(`📂 Session saved to: ${context.sessionsDir}`);
@@ -298,7 +321,12 @@ export class BotStarter {
       // The browser monitoring will handle process exit
     } else if (context.driver) {
       print_log('Closing browser...');
-      await context.driver.quit();
+      try {
+        await context.driver.quit();
+      } catch (e) {
+        // Driver might already be closed, that's ok
+        print_log('⚠️ Browser already closed or invalid');
+      }
     }
   }
 
@@ -353,19 +381,27 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
 
       try {
         const platform = (job.platform || 'seek').toLowerCase();
+        const botToRun = platform === 'seek' ? 'seek_apply' : platform;
 
         // Build the specific bot configuration tailored to this job & user preference
+        const normalizedDirectApplyUrl =
+          platform === 'seek' && typeof job.url === 'string'
+            ? normalizeSeekJobUrl(job.url)
+            : job.url;
+
         const bot_config = {
-          directApplyUrl: job.url,
+          directApplyUrl: normalizedDirectApplyUrl,
           botMode: superbot ? 'bot' : mode, // Superbot explicitly forces 'bot' mode globally
           targetJobId: job._id.toString()
         };
 
-        print_log(`[BOT_EVENT] {"event": "start", "jobId": "${job._id}", "platform": "${platform}"}`);
+        print_log(
+          `[BOT_EVENT] {"event": "start", "jobId": "${job._id}", "platform": "${platform}", "bot": "${botToRun}"}`
+        );
 
         // Await execution. This is fundamentally resilient because a failed job will 
         // throw an exception that is CAUGHT by this loop, allowing the next iteration.
-        await run_bot(platform, bot_config, { headless: false, keep_open: false });
+        await run_bot(botToRun, bot_config, { headless: false, keep_open: false });
 
         print_log(`✅ [BULK RUNNER] Successfully executed job ${job._id}. moving to next...`);
 
@@ -423,12 +459,12 @@ if (import.meta.main) {
   const job_url = url_arg ? url_arg.split('=')[1] : null;
 
   // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
-  if (job_url && bot_name === 'seek') {
+  if (job_url && (bot_name === 'seek' || bot_name === 'seek_apply')) {
     (async () => {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
-        const { runQuickApplyE2ETest } = await import('./seek/tests/seek_quick_apply_e2e_test.js');
-        await runQuickApplyE2ETest(job_url);
+        const normalizedUrl = normalizeSeekJobUrl(job_url);
+        await run_bot('seek_apply', { directApplyUrl: normalizedUrl }, { headless, keep_open: !no_keep_open });
       } catch (error) {
         console.error('Direct Apply execution failed:', error);
         process.exit(1);

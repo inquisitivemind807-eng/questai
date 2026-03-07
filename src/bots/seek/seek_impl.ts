@@ -1,4 +1,4 @@
-import { WebDriver, By } from 'selenium-webdriver';
+import { WebDriver, By, Key } from 'selenium-webdriver';
 import { setupChromeDriver } from '../core/browser_manager';
 import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/humanization';
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
@@ -14,6 +14,8 @@ import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_pat
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
+import { loadUserConfig } from '../core/config_loader';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -167,26 +169,65 @@ function build_search_url(base_url: string, keywords: string, location: string):
   return `${base_url}${search_path}`;
 }
 
+function normalize_seek_direct_url(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    const host = u.hostname.toLowerCase();
+    if (!host.includes('seek.com.au')) return rawUrl;
+
+    // Some stored URLs are search result links with ?jobId=...; convert to canonical job URL.
+    const queryJobId = u.searchParams.get('jobId');
+    if (queryJobId && /^\d+$/.test(queryJobId)) {
+      return `${u.protocol}//${u.host}/job/${queryJobId}`;
+    }
+
+    // Already a canonical job URL.
+    if (/\/job\/\d+/.test(u.pathname)) {
+      return rawUrl;
+    }
+  } catch {
+    // Keep original when URL parsing fails.
+  }
+  return rawUrl;
+}
+
 // Step 0: Initialize Context
 export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const selectors = JSON.parse(fs.readFileSync(path.join(__dirname, 'config/seek_selectors.json'), 'utf8'));
-  const fileConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '../user-bots-config.json'), 'utf8'));
+  const runtimeConfig = ((ctx.config as any) || {}) as Record<string, any>;
+  const fileConfig = loadUserConfig();
+
 
   // Capture maxJobsToProcess from runtime config BEFORE overwriting ctx.config
-  const runtimeLimit = (ctx.config as any)?.maxJobsToProcess;
+  const runtimeLimit = runtimeConfig?.maxJobsToProcess;
   ctx.maxJobsLimit = runtimeLimit ? Number(runtimeLimit) : 0;  // 0 = no limit
 
   // *** Capture directApplyUrl BEFORE ctx.config is overwritten with fileConfig ***
-  const directApplyUrl = (ctx.config as any)?.directApplyUrl as string | undefined;
+  const directApplyUrl = runtimeConfig?.directApplyUrl as string | undefined;
+
+  // Merge runtime config over disk config so UI-submitted values win.
+  // This prevents blank file values from overriding live form inputs.
+  const mergedConfig = {
+    ...fileConfig,
+    ...runtimeConfig,
+    formData: {
+      ...(fileConfig?.formData || {}),
+      ...(runtimeConfig?.formData || {})
+    }
+  };
 
   ctx.selectors = selectors;
-  ctx.config = fileConfig;
-  ctx.seek_url = build_search_url(BASE_URL, fileConfig.formData.keywords || "", fileConfig.formData.locations || "");
+  ctx.config = mergedConfig;
+  const mergedKeywords = String(mergedConfig?.formData?.keywords || mergedConfig?.formData?.keyword || '').trim();
+  const mergedLocations = String(mergedConfig?.formData?.locations || mergedConfig?.formData?.location || mergedConfig?.formData?.where || '').trim();
+  printLog(`Config values loaded: keywords='${mergedKeywords}', locations='${mergedLocations}'`);
+  ctx.seek_url = build_search_url(BASE_URL, mergedKeywords, mergedLocations);
 
   // Override seek_url if direct apply mode
   if (directApplyUrl) {
-    ctx.seek_url = directApplyUrl;
-    printLog(`🎯 Direct Apply mode detected. Bypassing search and targeting URL: ${directApplyUrl}`);
+    const normalizedDirectApplyUrl = normalize_seek_direct_url(directApplyUrl);
+    ctx.seek_url = normalizedDirectApplyUrl;
+    printLog(`🎯 Direct Apply mode detected. Bypassing search and targeting URL: ${normalizedDirectApplyUrl}`);
   }
 
   // Initialize retry counters to prevent infinite loops
@@ -286,6 +327,27 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
     // CRITICAL: Prevent multiple browser instances
     if (ctx.driver) {
       printLog("⚠️ Browser already exists, reusing existing instance");
+      
+      // CRITICAL: Check if driver session is still valid before reusing
+      const driverValid = await isDriverSessionValid(ctx.driver);
+      if (!driverValid) {
+        printLog("❌ Existing driver session is invalid - recreating driver...");
+        const recreated = await recreateDriverAndRestoreContext(ctx);
+        if (!recreated) {
+          printLog("❌ Failed to recreate driver - cannot continue");
+          yield "page_navigation_failed";
+          return;
+        }
+        printLog("✅ Driver recreated successfully");
+        // Continue with new driver below
+      } else {
+        // Driver is valid - ALWAYS re-register recovery callback with current context
+        // This ensures the callback always has access to the current context, not a stale one
+        printLog("🔧 Registering/updating recovery callback on existing driver with current context");
+        (ctx.driver as any).__recoverDriver = async () => {
+          return await recreateDriverAndRestoreContext(ctx);
+        };
+        
       // Just navigate to the URL instead of creating new browser
       await ctx.driver.get(ctx.seek_url || `${BASE_URL}/jobs`);
       await ctx.driver.sleep(5000);
@@ -302,6 +364,7 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
         yield "page_navigation_failed";
       }
       return;
+      }
     }
 
     const { driver, sessionExists, sessionsDir } = await setupChromeDriver('seek');
@@ -311,6 +374,11 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
     ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, 'Seek');
+
+    // Register recovery callback for browser monitoring
+    (driver as any).__recoverDriver = async () => {
+      return await recreateDriverAndRestoreContext(ctx);
+    };
 
     // Clear stale overlay state from any previous run so the fresh overlay shows correctly
     try {
@@ -423,22 +491,233 @@ export async function* detectPageState(ctx: WorkflowContext): AsyncGenerator<str
   yield hasSignIn ? "sign_in_required" : "logged_in";
 }
 
+// Step 3.2: Fill search form fields from user configuration (keywords/location)
+export async function* fillSearchForm(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const formData = ((ctx.config as any)?.formData || {}) as Record<string, string>;
+    const keywords = String(formData.keywords || formData.keyword || '').trim();
+    const location = String(formData.locations || formData.location || formData.where || '').trim();
+
+    const keywordSelectors = (ctx.selectors?.keywords || [
+      '#keywords-input',
+      'input[name="keywords"]',
+      '[data-automation="searchKeywordsField"] input'
+    ]) as string[];
+
+    const locationSelectors = (ctx.selectors?.location || [
+      '#SearchBar__Where',
+      'input[name="where"]',
+      'input[data-automation="SearchBar__Where"]',
+      '[data-automation="whereFieldOptions"] input[name="where"]'
+    ]) as string[];
+
+    type InputSetResult = { success: boolean; selector?: string; finalValue?: string; reason?: string };
+    const setInputValue = async (selectors: string[], value: string): Promise<InputSetResult> => {
+      if (!value) return { success: true, reason: 'empty_value_skipped' };
+      return await ctx.driver.executeScript(
+        `
+        const [selectors, value] = arguments;
+
+        function setNativeValue(input, val) {
+          const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+          if (descriptor && descriptor.set) descriptor.set.call(input, val);
+          else input.value = val;
+        }
+
+        function setReactTrackedValue(input, val) {
+          const previous = input.value;
+          setNativeValue(input, val);
+          // React-controlled inputs can ignore updates unless valueTracker is nudged.
+          if (input && input._valueTracker && typeof input._valueTracker.setValue === 'function') {
+            input._valueTracker.setValue(previous);
+          }
+        }
+
+        for (const sel of selectors || []) {
+          const el = document.querySelector(sel);
+          if (!el || el.offsetParent === null) continue;
+          try {
+            // Click first to open combobox state machine on SEEK inputs.
+            el.click();
+            el.focus();
+            setReactTrackedValue(el, '');
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            setReactTrackedValue(el, value);
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            el.dispatchEvent(new Event('blur', { bubbles: true }));
+            // Verify controlled input actually took the value.
+            if ((el.value || '').trim().toLowerCase() === String(value).trim().toLowerCase()) {
+              return { success: true, selector: sel, finalValue: String(el.value || '') };
+            }
+          } catch (e) {
+            console.error('setInputValue failed for', sel, e);
+          }
+        }
+        return { success: false, reason: 'no_selector_accepted_value' };
+      `,
+        selectors,
+        value
+      ) as InputSetResult;
+    };
+
+    printLog(`Search config values: keywords='${keywords}', location='${location}'`);
+
+    const keywordJsResult = await setInputValue(keywordSelectors, keywords);
+    const locationJsResult = await setInputValue(locationSelectors, location);
+    let keywordFilled = keywordJsResult.success;
+    let locationFilled = locationJsResult.success;
+
+    printLog(
+      `Keyword JS fill: success=${keywordJsResult.success}, selector='${keywordJsResult.selector || 'n/a'}', value='${keywordJsResult.finalValue || ''}', reason='${keywordJsResult.reason || ''}'`
+    );
+    printLog(
+      `Location JS fill: success=${locationJsResult.success}, selector='${locationJsResult.selector || 'n/a'}', value='${locationJsResult.finalValue || ''}', reason='${locationJsResult.reason || ''}'`
+    );
+
+    // Fallback pass with Selenium typing for Seek combobox controls.
+    if (!keywordFilled && keywords) {
+      for (const sel of keywordSelectors) {
+        try {
+          const el = await ctx.driver.findElement(By.css(sel));
+          if (!(await el.isDisplayed())) continue;
+          await ctx.driver.executeScript('arguments[0].scrollIntoView({block: "center"});', el);
+          await el.click();
+          try {
+            await el.sendKeys(Key.chord(Key.COMMAND, 'a'), Key.BACK_SPACE);
+          } catch {
+            await el.clear();
+          }
+          await el.sendKeys(keywords);
+          const typedValue = (await el.getAttribute('value')) || '';
+          if (!typedValue || typedValue.trim().toLowerCase() !== keywords.trim().toLowerCase()) {
+            // Final fallback for React-controlled input
+            await ctx.driver.executeScript(
+              `
+              const el = arguments[0];
+              const val = arguments[1];
+              const previous = el.value;
+              const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+              if (descriptor && descriptor.set) descriptor.set.call(el, val);
+              else el.value = val;
+              if (el && el._valueTracker && typeof el._valueTracker.setValue === 'function') {
+                el._valueTracker.setValue(previous);
+              }
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              `,
+              el,
+              keywords
+            );
+          }
+          const finalValue = (await el.getAttribute('value')) || '';
+          printLog(`Keyword Selenium fill selector='${sel}' final='${finalValue}'`);
+          keywordFilled = true;
+          break;
+        } catch (e) {
+          printLog(`Keyword Selenium fill failed selector='${sel}' error='${e}'`);
+          continue;
+        }
+      }
+    }
+
+    if (!locationFilled && location) {
+      for (const sel of locationSelectors) {
+        try {
+          const el = await ctx.driver.findElement(By.css(sel));
+          if (!(await el.isDisplayed())) continue;
+          await el.click();
+          await el.clear();
+          await el.sendKeys(location);
+          await el.sendKeys(Key.ENTER);
+          const finalValue = (await el.getAttribute('value')) || '';
+          printLog(`Location Selenium fill selector='${sel}' final='${finalValue}'`);
+          locationFilled = true;
+          break;
+        } catch (e) {
+          printLog(`Location Selenium fill failed selector='${sel}' error='${e}'`);
+          continue;
+        }
+      }
+    }
+
+    // Extra commit for where field when we already set value through JS path.
+    if (location && locationFilled) {
+      try {
+        const whereInput = await ctx.driver.findElement(By.css('#SearchBar__Where, input[name="where"]'));
+        await whereInput.click();
+        await whereInput.sendKeys(Key.ENTER);
+      } catch {
+        // no-op: continue even if Enter commit is unavailable
+      }
+    }
+
+
+    printLog(`Search form fill result: keywords=${keywordFilled}, location=${locationFilled}`);
+
+    if (keywordFilled && locationFilled) {
+      yield "search_form_filled";
+    } else {
+      yield "search_form_error";
+    }
+  } catch (error) {
+    printLog(`Search form fill error: ${error}`);
+    yield "search_form_error";
+  }
+}
+
 // Step 3.5: Click Search Button
 export async function* clickSearchButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  const searchSelectors = ['button[data-automation="searchSubmit"]', 'button[type="submit"]', 'input[type="submit"]'];
+  const searchSelectors = (ctx.selectors?.search_button || [
+    'button[data-automation="searchButton"]',
+    '#searchButton',
+    'button[data-automation="searchSubmit"]',
+    'button[type="submit"]',
+    'input[type="submit"]'
+  ]) as string[];
 
+  let clicked = false;
   for (const selector of searchSelectors) {
     try {
       const button = await ctx.driver.findElement(By.css(selector));
       if (await button.isDisplayed()) {
-        await button.click();
-        yield "search_clicked";
-        return;
+        try {
+          await button.click();
+        } catch {
+          await ctx.driver.executeScript('arguments[0].click();', button);
+        }
+        clicked = true;
+        break;
       }
-    } catch { continue; }
+    } catch {
+      continue;
+    }
   }
 
-  yield "search_clicked"; // Continue anyway
+  if (!clicked) {
+    // Fallback: commit search via Enter on where/keywords fields
+    for (const sel of ['#SearchBar__Where', 'input[name="where"]', '#keywords-input', 'input[name="keywords"]']) {
+      try {
+        const el = await ctx.driver.findElement(By.css(sel));
+        if (await el.isDisplayed()) {
+          await el.click();
+          await el.sendKeys(Key.ENTER);
+          clicked = true;
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  await ctx.driver.sleep(1500);
+
+  if (clicked) {
+    yield "search_clicked";
+  } else {
+    yield "search_failed";
+  }
 }
 
 // Step 4: Show Sign In Banner and Wait for Login
@@ -453,7 +732,202 @@ export async function* showSignInBanner(ctx: WorkflowContext): AsyncGenerator<st
 export async function* performBasicSearch(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   await ctx.driver.sleep(2000);
   const currentUrl = await ctx.driver.getCurrentUrl();
-  yield currentUrl.includes('jobs') ? "search_completed" : "search_failed";
+
+  const formData = ((ctx.config as any)?.formData || {}) as Record<string, string>;
+  const wantedKeyword = String(formData.keywords || formData.keyword || '').trim().toLowerCase();
+  const wantedLocation = String(formData.locations || formData.location || formData.where || '').trim().toLowerCase();
+
+  const pageState = (await ctx.driver.executeScript(
+    `
+    const kw = document.querySelector('#keywords-input, input[name="keywords"]');
+    const where = document.querySelector('#SearchBar__Where, input[name="where"]');
+    const cards = document.querySelectorAll('article[data-testid="job-card"]').length;
+    return {
+      keywordValue: (kw && kw.value ? String(kw.value) : '').toLowerCase(),
+      locationValue: (where && where.value ? String(where.value) : '').toLowerCase(),
+      cards
+    };
+    `
+  )) as { keywordValue: string; locationValue: string; cards: number };
+
+  const keywordOk = !wantedKeyword || pageState.keywordValue.includes(wantedKeyword);
+  const locationOk = !wantedLocation || pageState.locationValue.includes(wantedLocation);
+  const looksLikeResults = currentUrl.includes('/jobs') || pageState.cards > 0;
+
+  printLog(
+    `Search verify: url='${currentUrl}', wantedKeyword='${wantedKeyword}', fieldKeyword='${pageState.keywordValue}', wantedLocation='${wantedLocation}', fieldLocation='${pageState.locationValue}', cards=${pageState.cards}`
+  );
+
+  if (looksLikeResults && keywordOk && locationOk) {
+    yield "search_completed";
+  } else {
+    yield "search_failed";
+  }
+}
+
+// Step 5.5: Apply filters from user configuration (job type, remote preference, listed date, salary)
+export async function* applySeekFilters(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const formData = ((ctx.config as any)?.formData || {}) as Record<string, string>;
+    const filters = (ctx.selectors?.filters || {}) as any;
+
+    const jobType = String(formData.jobType || 'any').trim().toLowerCase();
+    const remotePreference = String(formData.remotePreference || 'any').trim().toLowerCase();
+    const listedDate = String(formData.listedDate || '').trim().toLowerCase();
+    const minSalary = String(formData.minSalary || '').trim();
+    const maxSalary = String(formData.maxSalary || '').trim();
+
+    const applyResult = await ctx.driver.executeScript(
+      `
+      const [filters, config] = arguments;
+
+      function clickIfVisible(sel) {
+        if (!sel) return false;
+        const el = document.querySelector(sel);
+        if (!el || el.offsetParent === null) return false;
+        el.click();
+        return true;
+      }
+
+      function clickById(id) {
+        if (!id) return false;
+        const label = document.querySelector('label[for="' + id + '"]');
+        if (label && label.offsetParent !== null) {
+          label.click();
+          return true;
+        }
+        const node = document.getElementById(id);
+        if (node && node.offsetParent !== null) {
+          node.click();
+          return true;
+        }
+        return false;
+      }
+
+      function clickDateOption(dateNavSel, wanted) {
+        if (!wanted) return false;
+        wanted = String(wanted).toLowerCase().replace(/_/g, ' ');
+        const nav = dateNavSel ? document.querySelector(dateNavSel) : null;
+        const root = nav || document;
+
+        const map = [
+          ['today', ['today']],
+          ['3d', ['last 3 days', '3 days']],
+          ['7d', ['last 7 days', '7 days', 'week']],
+          ['14d', ['last 14 days', '14 days', 'fortnight']],
+          ['30d', ['last 30 days', '30 days', 'month']]
+        ];
+
+        let wantedKeywords = [];
+        for (const [k, vals] of map) {
+          if (wanted.includes(k) || vals.some(v => wanted.includes(v))) {
+            wantedKeywords = vals;
+            break;
+          }
+        }
+        if (!wantedKeywords.length) return false;
+
+        const candidates = Array.from(root.querySelectorAll('a, button, label, [role="radio"], [role="checkbox"]'));
+        for (const el of candidates) {
+          const txt = (el.textContent || '').trim().toLowerCase();
+          if (!txt) continue;
+          if (wantedKeywords.some(k => txt.includes(k)) && el.offsetParent !== null) {
+            el.click();
+            return true;
+          }
+        }
+        return false;
+      }
+
+      function setSalary(fromAttr, toAttr, minVal, maxVal) {
+        let changed = false;
+        const fromCandidates = [
+          fromAttr ? 'input[name="' + fromAttr + '"]' : null,
+          'input[name="salaryFieldFrom"]',
+          'input[id*="salary"][id*="From"]',
+          'input[aria-label*="minimum" i]',
+          'input[placeholder*="min" i]'
+        ].filter(Boolean);
+
+        const toCandidates = [
+          toAttr ? 'input[name="' + toAttr + '"]' : null,
+          'input[name="salaryFieldTo"]',
+          'input[id*="salary"][id*="To"]',
+          'input[aria-label*="maximum" i]',
+          'input[placeholder*="max" i]'
+        ].filter(Boolean);
+
+        function setFirst(selectors, value) {
+          if (!value) return false;
+          for (const sel of selectors) {
+            const el = document.querySelector(sel);
+            if (el && 'value' in el && el.offsetParent !== null) {
+              el.focus();
+              el.value = value;
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+              return true;
+            }
+          }
+          return false;
+        }
+
+        if (setFirst(fromCandidates, minVal)) changed = true;
+        if (setFirst(toCandidates, maxVal)) changed = true;
+        return changed;
+      }
+
+      const results = {
+        workTypeApplied: false,
+        remoteApplied: false,
+        dateApplied: false,
+        salaryApplied: false
+      };
+
+      if (config.jobType && config.jobType !== 'any') {
+        clickIfVisible(filters.work_type_toggle);
+        const id = filters.work_type_ids ? filters.work_type_ids[config.jobType] : null;
+        results.workTypeApplied = clickById(id);
+      }
+
+      if (config.remotePreference && config.remotePreference !== 'any') {
+        clickIfVisible(filters.work_arrangement_toggle);
+        const id = filters.work_arrangement_ids ? filters.work_arrangement_ids[config.remotePreference] : null;
+        results.remoteApplied = clickById(id);
+      }
+
+      if (config.listedDate) {
+        clickIfVisible(filters.date_toggle);
+        results.dateApplied = clickDateOption(filters.date_nav, config.listedDate);
+      }
+
+      if (config.minSalary || config.maxSalary) {
+        clickIfVisible(filters.salary_toggle);
+        results.salaryApplied = setSalary(
+          filters.salary_field_label_from_attr,
+          filters.salary_field_label_to_attr,
+          config.minSalary,
+          config.maxSalary
+        );
+      }
+
+      return results;
+      `,
+      filters,
+      { jobType, remotePreference, listedDate, minSalary, maxSalary }
+    ) as {
+      workTypeApplied: boolean;
+      remoteApplied: boolean;
+      dateApplied: boolean;
+      salaryApplied: boolean;
+    };
+
+    printLog(`Filters result: workType=${applyResult.workTypeApplied}, remote=${applyResult.remoteApplied}, date=${applyResult.dateApplied}, salary=${applyResult.salaryApplied}`);
+    yield 'filters_applied_successfully';
+  } catch (error) {
+    printLog(`Filter application error: ${error}`);
+    yield 'filters_application_failed';
+  }
 }
 
 // Step 6: Collect Job Cards
@@ -551,10 +1025,20 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
   }
 }
 
-// Detect Apply Button Type
+// Detect Apply Button Type (with retries to handle slow-loading pages)
 export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    const result = (await ctx.driver.executeScript(`
+    let result: { hasQuickApply: boolean; hasRegularApply: boolean; jobTitle?: string; companyName?: string } = {
+      hasQuickApply: false,
+      hasRegularApply: false,
+      jobTitle: '',
+      companyName: ''
+    };
+
+    const maxAttempts = 3;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      result = (await ctx.driver.executeScript(`
       const container = document.querySelector('[data-automation="jobDetailsPage"]') || document.body;
 
       // Snapshot job title/company for logging (before we return apply result)
@@ -603,6 +1087,19 @@ export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<str
 
       return { hasQuickApply: foundQuickApply, hasRegularApply: foundRegularApply, jobTitle: jobTitle, companyName: companyName };
     `)) as { hasQuickApply: boolean; hasRegularApply: boolean; jobTitle?: string; companyName?: string };
+
+      if (result.hasQuickApply || result.hasRegularApply) {
+        if (attempt > 1) {
+          printLog(`Apply detection succeeded on attempt ${attempt}/${maxAttempts}`);
+        }
+        break;
+      }
+
+      if (attempt < maxAttempts) {
+        printLog(`Apply button not found yet (attempt ${attempt}/${maxAttempts}). Waiting for page to finish loading...`);
+        await ctx.driver.sleep(2000);
+      }
+    }
 
     ctx.currentJobTitlePreview = result?.jobTitle || '';
     ctx.currentJobCompanyPreview = result?.companyName || '';
@@ -1085,7 +1582,7 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
     };
 
     try {
-      // Use apiRequest which handles JWT caching + session token auth properly
+      // Primary path: API client with JWT/session conversion
       const result = await apiRequest('/api/scraped-jobs', 'POST', payload);
       if (result?.success) {
         printLog(`✅ Saved to DB: ${payload.title} at ${payload.company} (id: ${result.id || 'new'})`);
@@ -1093,7 +1590,36 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
         printLog(`⚠️ DB save returned unexpected response: ${JSON.stringify(result)}`);
       }
     } catch (apiErr) {
-      printLog(`⚠️ Failed to save to database: ${apiErr}`);
+      printLog(`⚠️ Failed to save via apiRequest: ${apiErr}`);
+
+      // Fallback path for environments where JWT conversion fails.
+      try {
+        const baseUrl = process.env.API_BASE || process.env.PUBLIC_API_BASE || 'http://localhost:3000';
+        const tokenFromEnv = process.env.CORPUS_RAG_TOKEN || process.env.CORPUS_RAG_API_TOKEN || '';
+        const tokenPath = path.join(process.cwd(), '.cache', 'api_token.txt');
+        const tokenFromCache = fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, 'utf8').trim() : '';
+        const token = tokenFromEnv || tokenFromCache;
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json'
+        };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const resp = await fetch(`${baseUrl}/api/scraped-jobs`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        });
+
+        if (resp.ok) {
+          printLog(`✅ Saved to DB via fallback: ${payload.title} at ${payload.company}`);
+        } else {
+          const txt = await resp.text().catch(() => '');
+          printLog(`⚠️ Fallback DB save failed (${resp.status}): ${txt}`);
+        }
+      } catch (fallbackErr) {
+        printLog(`⚠️ Fallback DB save error: ${fallbackErr}`);
+      }
     }
 
     if (ctx.isQuickApply) {
@@ -1283,6 +1809,69 @@ export async function* getCurrentStep(ctx: WorkflowContext): AsyncGenerator<stri
 
 
 
+// Check for Submit Button
+export async function* checkForSubmitButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    logCurrentJob(ctx);
+    printLog("Checking for submit button...");
+    
+    // Initialize continue click counter if not exists
+    if (!ctx.continueClickCount) {
+      ctx.continueClickCount = 0;
+    }
+    
+    // Safety limit: don't click continue more than 10 times
+    const MAX_CONTINUE_CLICKS = 10;
+    if (ctx.continueClickCount >= MAX_CONTINUE_CLICKS) {
+      printLog(`⚠️ Reached maximum continue clicks (${MAX_CONTINUE_CLICKS}), proceeding to submit check`);
+      yield "max_continue_reached";
+      return;
+    }
+
+    // Check if submit button exists
+    const submitCheck = await ctx.driver.executeScript(`
+      const submitCandidates = [
+        'button[data-automation="submitButton"]',
+        'button[type="submit"]',
+        '[data-testid="review-submit-button"]',
+        '[data-automation="reviewSubmitButton"]'
+      ];
+
+      const isVisible = (el) => !!el && el.offsetParent !== null;
+      
+      for (const sel of submitCandidates) {
+        const el = document.querySelector(sel);
+        if (el && isVisible(el) && !el.disabled) {
+          return { found: true, selector: sel };
+        }
+      }
+
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const textButton = buttons.find((b) => {
+        const t = (b.textContent || '').trim().toLowerCase();
+        return isVisible(b) && !b.disabled && (t.includes('submit application') || t === 'submit');
+      });
+      
+      if (textButton) {
+        return { found: true, selector: 'button:text-match' };
+      }
+
+      return { found: false, selector: '' };
+    `) as { found: boolean; selector: string };
+
+    if (submitCheck.found) {
+      printLog(`✅ Submit button found: ${submitCheck.selector}`);
+      yield "submit_button_found";
+    } else {
+      printLog(`⚠️ Submit button not found (continue clicks: ${ctx.continueClickCount}/${MAX_CONTINUE_CLICKS})`);
+      yield "submit_button_not_found";
+    }
+  } catch (error) {
+    printLog(`Error checking for submit button: ${error}`);
+    yield "submit_button_not_found";
+  }
+}
+
 // Click Continue Button
 export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
@@ -1352,11 +1941,16 @@ export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator
     `);
 
     if (continueClicked) {
-      await ctx.driver.sleep(2000); // Wait for navigation/page change
-      printLog("Continue button clicked successfully");
+      // Increment continue click counter
+      if (!ctx.continueClickCount) {
+        ctx.continueClickCount = 0;
+      }
+      ctx.continueClickCount++;
+      printLog(`✅ Continue button clicked successfully (count: ${ctx.continueClickCount})`);
+      await ctx.driver.sleep(3000); // Wait longer for navigation/page change
       yield "continue_clicked";
     } else {
-      printLog("Continue button not found");
+      printLog("⚠️ Continue button not found - may have reached final step");
       yield "continue_button_not_found";
     }
 
@@ -1366,55 +1960,377 @@ export async function* clickContinueButton(ctx: WorkflowContext): AsyncGenerator
   }
 }
 
+// Helper function to check if driver session is valid
+async function isDriverSessionValid(driver: WebDriver): Promise<boolean> {
+  try {
+    await driver.getCurrentUrl();
+    return true;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes('session') || errorMsg.includes('session ID') || errorMsg.includes('quit')) {
+      return false;
+    }
+    // Other errors might be transient, assume valid
+    return true;
+  }
+}
+
+/**
+ * Recreate driver instance and restore context when session is invalid
+ * This allows the bot to continue working even if the browser session is lost
+ */
+async function recreateDriverAndRestoreContext(ctx: WorkflowContext): Promise<boolean> {
+  try {
+    printLog("🔄 Driver session invalid - recreating driver instance...");
+    
+    // Save current URL if possible (before old driver is gone)
+    let currentUrl: string | null = null;
+    try {
+      if (ctx.driver) {
+        currentUrl = await ctx.driver.getCurrentUrl();
+        printLog(`📍 Current URL: ${currentUrl}`);
+      }
+    } catch (e) {
+      printLog("⚠️ Could not get current URL from old driver");
+    }
+
+    // Clean up old driver if it exists
+    try {
+      if (ctx.driver) {
+        // Try to quit gracefully, but don't wait if it's already dead
+        try {
+          await ctx.driver.quit().catch(() => {});
+        } catch (e) {
+          // Driver already dead, that's ok
+        }
+      }
+    } catch (e) {
+      // Old driver is already invalid, that's expected
+    }
+
+    // Create new driver instance
+    printLog("🔧 Setting up new Chrome driver...");
+    const { driver: newDriver, sessionExists, sessionsDir } = await setupChromeDriver('seek');
+    
+    // Restore context properties
+    ctx.driver = newDriver;
+    ctx.sessionExists = sessionExists;
+    ctx.sessionsDir = sessionsDir;
+    
+    // Reinitialize context objects
+    if (!ctx.humanBehavior) {
+      ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
+    }
+    ctx.sessionManager = new UniversalSessionManager(newDriver, SessionConfigs.seek);
+    ctx.overlay = new UniversalOverlay(newDriver, 'Seek');
+
+    // Apply stealth features
+    await StealthFeatures.hideWebDriver(newDriver);
+    await StealthFeatures.randomizeUserAgent(newDriver);
+
+    // Re-register recovery callback on new driver
+    (newDriver as any).__recoverDriver = async () => {
+      return await recreateDriverAndRestoreContext(ctx);
+    };
+
+    // Clear stale overlay state
+    try {
+      await newDriver.executeScript(`
+        sessionStorage.removeItem('universal_overlay_state');
+        window.__overlaySystemInitialized = false;
+      `);
+    } catch (e) {
+      // Page not loaded yet, that's ok
+    }
+
+    // Navigate to saved URL or homepage
+    if (currentUrl && currentUrl.startsWith('http')) {
+      printLog(`🌐 Navigating to saved URL: ${currentUrl}`);
+      try {
+        await newDriver.get(currentUrl);
+        await newDriver.sleep(3000);
+        printLog("✅ Successfully navigated to saved URL");
+      } catch (navError) {
+        printLog(`⚠️ Could not navigate to saved URL, going to homepage: ${navError}`);
+        await newDriver.get(ctx.seek_url || `${BASE_URL}/jobs`);
+        await newDriver.sleep(3000);
+      }
+    } else {
+      printLog(`🌐 Navigating to homepage: ${ctx.seek_url || `${BASE_URL}/jobs`}`);
+      await newDriver.get(ctx.seek_url || `${BASE_URL}/jobs`);
+      await newDriver.sleep(3000);
+    }
+
+    printLog("✅ Driver recreated and context restored successfully");
+    return true;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    printLog(`❌ Failed to recreate driver: ${errorMsg}`);
+    return false;
+  }
+}
+
 // Close Quick Apply and Continue Search
 export async function* closeQuickApplyAndContinueSearch(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    // Record application to corpus-rag (loosely coupled; no block on failure)
-    if (ctx.currentJobFile) {
-      try {
-        const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
-        const jobId = jobData.jobId || '';
-        if (jobId) {
-          const jobDirPath = getJobDirPathFromJobFile(ctx.currentJobFile, jobId);
-          const result = await recordJobApplicationToBackend({
-            jobFilePath: ctx.currentJobFile,
-            jobDirPath
-          });
-          if (!result.ok) {
-            printLog(`[JobRecorder] Backend record skipped: ${result.error}`);
-          }
-        }
-      } catch (recordErr) {
-        printLog(`[JobRecorder] Record failed (continuing): ${recordErr}`);
+    // Note: Application is already recorded with status "applied" in submitApplication step
+    // This function just handles closing the Quick Apply tab and keeping browser open
+
+    printLog("Closing Quick Apply page...");
+
+    // Temporarily disable browser monitoring to prevent false shutdowns during window operations
+    try {
+      const disableMonitoring = (ctx.driver as any).__disableBrowserMonitoring;
+      if (typeof disableMonitoring === 'function') {
+        disableMonitoring();
+      } else {
+        printLog("⚠️ Browser monitoring disable function not available (continuing anyway)");
       }
+    } catch (e) {
+      // Monitor functions might not exist, that's ok - continue anyway
+      printLog(`⚠️ Could not disable browser monitoring: ${e}`);
     }
 
-    printLog("Closing Quick Apply page and continuing search...");
+    // Validate driver session before proceeding
+    const driverValid = await isDriverSessionValid(ctx.driver);
+    if (!driverValid) {
+      printLog(`❌ Driver session is invalid - attempting to recreate driver...`);
+      const recreated = await recreateDriverAndRestoreContext(ctx);
+      if (!recreated) {
+        printLog("❌ Failed to recreate driver - cannot continue");
+        yield "hunting_next_job"; // Continue workflow but skip window operations
+        return;
+      }
+      printLog("✅ Driver recreated successfully - continuing with workflow");
+      yield "hunting_next_job"; // Continue workflow with new driver
+      return;
+    }
 
+    try {
     const handles = await ctx.driver.getAllWindowHandles();
     printLog(`Found ${handles.length} window handles`);
 
+      // CRITICAL: Never close if there's only one window - it will close the entire browser session
     if (handles.length > 1) {
-      // Close current tab/window
+        // Get current window handle before closing
+        const currentHandle = await ctx.driver.getWindowHandle();
+        printLog(`Current window handle: ${currentHandle}`);
+        
+        // Find the main window handle (not the current one)
+        const mainHandle = handles.find((h: string) => h !== currentHandle) || handles[0];
+        printLog(`Main window handle: ${mainHandle}`);
+
+        // CRITICAL: Switch to main window FIRST to ensure we're not on the tab we're about to close
+        // This prevents closing the last window which would invalidate the driver session
+        try {
+          await ctx.driver.switchTo().window(mainHandle);
+          await ctx.driver.sleep(500);
+          printLog("✅ Switched to main window before closing Quick Apply tab");
+          
+          // Verify we successfully switched by checking current handle
+          const verifyHandle = await ctx.driver.getWindowHandle();
+          if (verifyHandle !== mainHandle) {
+            printLog("⚠️ Warning: Window switch verification failed, aborting tab close");
+            yield "hunting_next_job";
+            return;
+          }
+        } catch (switchError) {
+          const errorMsg = switchError instanceof Error ? switchError.message : String(switchError);
+          printLog(`❌ Could not switch to main window: ${errorMsg}`);
+          printLog("⚠️ Aborting tab close to prevent session invalidation");
+          yield "hunting_next_job";
+          return;
+        }
+
+        // Now close the Quick Apply tab (which should be the previous current window)
+        // We're now safely on the main window, so closing the other tab won't invalidate the session
+        try {
+          // Verify the handle still exists before trying to switch
+          const currentHandles = await ctx.driver.getAllWindowHandles();
+          if (currentHandles.length <= 1) {
+            printLog("⚠️ Only one window remaining - cannot close (would invalidate session)");
+            yield "hunting_next_job";
+            return;
+          }
+
+          if (currentHandles.includes(currentHandle)) {
+            // CRITICAL: Double-check we have more than one window before closing
+            if (currentHandles.length <= 1) {
+              printLog("⚠️ CRITICAL: Only one window - aborting close to prevent session invalidation");
+              yield "hunting_next_job";
+              return;
+            }
+
+            // Verify session is still valid before closing
+            if (!(await isDriverSessionValid(ctx.driver))) {
+              printLog("❌ Driver session invalid before closing tab - attempting recovery...");
+              const recreated = await recreateDriverAndRestoreContext(ctx);
+              if (!recreated) {
+                printLog("❌ Failed to recreate driver - cannot continue");
+                yield "hunting_next_job";
+                return;
+              }
+              printLog("✅ Driver recreated - continuing");
+              yield "hunting_next_job";
+              return;
+            }
+
+            await ctx.driver.switchTo().window(currentHandle);
       await ctx.driver.close();
+            printLog("✅ Closed Quick Apply tab");
+            
+            // Immediately switch back to main window to ensure we're on a valid window
+            await ctx.driver.sleep(200);
+            
+            // Verify session is still valid after closing
+            if (!(await isDriverSessionValid(ctx.driver))) {
+              printLog("❌ CRITICAL: Driver session was invalidated after closing tab - attempting recovery...");
+              const recreated = await recreateDriverAndRestoreContext(ctx);
+              if (!recreated) {
+                printLog("❌ Failed to recreate driver - cannot continue");
+                yield "hunting_next_job";
+                return;
+              }
+              printLog("✅ Driver recreated - continuing");
+              yield "hunting_next_job";
+              return;
+            }
 
-      // Switch back to main window (first handle)
-      await ctx.driver.switchTo().window(handles[0]);
-      await ctx.driver.sleep(1000);
+            const remainingHandles = await ctx.driver.getAllWindowHandles();
+            if (remainingHandles.length > 0 && remainingHandles.includes(mainHandle)) {
+              await ctx.driver.switchTo().window(mainHandle);
+            } else if (remainingHandles.length > 0) {
+              await ctx.driver.switchTo().window(remainingHandles[0]);
+            } else {
+              printLog("❌ CRITICAL: No windows remaining after closing tab!");
+              yield "hunting_next_job";
+              return;
+            }
+          } else {
+            printLog("Quick Apply tab already closed");
+          }
+        } catch (closeError) {
+          const errorMsg = closeError instanceof Error ? closeError.message : String(closeError);
+          // Check if it's a "no such window" error (tab already closed) - that's ok
+          if (errorMsg.includes('no such window') || errorMsg.includes('target window already closed')) {
+            printLog("Quick Apply tab was already closed");
+          } else if (errorMsg.includes('session') || errorMsg.includes('session ID')) {
+            printLog(`❌ Driver session invalidated during tab close: ${errorMsg}`);
+            printLog("⚠️ This should not happen - session was closed unexpectedly");
+            yield "hunting_next_job";
+            return;
+          } else {
+            printLog(`Warning: Could not close Quick Apply tab: ${errorMsg}`);
+          }
+        }
 
-      // Verify we're back on the job search page
+        // Verify we're on a valid window and session is still active
+        try {
+          await ctx.driver.sleep(500); // Wait a bit for window operations to complete
+          const remainingHandles = await ctx.driver.getAllWindowHandles();
+          
+          if (remainingHandles.length === 0) {
+            printLog("❌ CRITICAL: No windows remaining - browser session was closed!");
+            printLog("⚠️ This should not happen - all windows were closed");
+            yield "hunting_next_job";
+            return;
+          }
+
+          // Ensure we're on a valid window
+          const currentHandle = await ctx.driver.getWindowHandle();
+          if (!remainingHandles.includes(currentHandle)) {
+            // We're on an invalid window, switch to a valid one
+            printLog("⚠️ Current window is invalid, switching to valid window...");
+            await ctx.driver.switchTo().window(remainingHandles[0]);
+          }
+
+          // Verify session is still valid
       const currentUrl = await ctx.driver.getCurrentUrl();
-      printLog(`Switched back to main window: ${currentUrl}`);
+          printLog(`✅ Switched back to main window: ${currentUrl}`);
+          printLog(`✅ Driver session is valid - ${remainingHandles.length} window(s) remaining`);
+          
+        } catch (sessionError) {
+          const errorMsg = sessionError instanceof Error ? sessionError.message : String(sessionError);
+          if (errorMsg.includes('session') || errorMsg.includes('session ID') || errorMsg.includes('quit')) {
+            printLog(`❌ Driver session was invalidated: ${errorMsg}`);
+            printLog("⚠️ Cannot continue - browser session was closed");
+            yield "hunting_next_job";
+            return;
     } else {
-      printLog("Only one window found, staying on current page");
-    }
+            printLog(`⚠️ Error verifying window switch: ${errorMsg}`);
+            // Continue anyway - might be a transient error
+          }
+        }
+      } else {
+        // Only one window - navigate back instead of closing
+        printLog("Only one window found, navigating back instead of closing");
+        try {
+          await ctx.driver.navigate().back();
+          await ctx.driver.sleep(1000);
+          const currentUrl = await ctx.driver.getCurrentUrl();
+          printLog(`Navigated back to: ${currentUrl}`);
+        } catch (navError) {
+          printLog(`Warning: Could not navigate back: ${navError}`);
+        }
+      }
 
-    printLog("Returned to job search page");
+      printLog("✅ Application completed. Browser kept open for next job.");
+      printLog("🔄 Ready to process next job in queue...");
+      
+    } catch (windowError) {
+      const errorMsg = windowError instanceof Error ? windowError.message : String(windowError);
+      printLog(`⚠️ Window handling error (continuing anyway): ${errorMsg}`);
+      
+      // Check if browser is still accessible
+      try {
+        await ctx.driver.getCurrentUrl();
+        printLog("✅ Browser is still accessible, continuing...");
+      } catch (browserError) {
+        printLog(`❌ Browser is no longer accessible: ${browserError}`);
+        // Don't yield error - let the workflow handle it
+      }
+    } finally {
+      // Re-enable browser monitoring after window operations complete
+      try {
+        const enableMonitoring = (ctx.driver as any).__enableBrowserMonitoring;
+        if (typeof enableMonitoring === 'function') {
+          enableMonitoring();
+        } else {
+          printLog("⚠️ Browser monitoring enable function not available");
+        }
+      } catch (e) {
+        // Monitor functions might not exist, that's ok
+        printLog(`⚠️ Could not re-enable browser monitoring: ${e}`);
+      }
+    }
+    
+    // Keep browser open - don't quit it
+    // The workflow can loop back or end gracefully without closing browser
     yield "hunting_next_job";
 
   } catch (error) {
-    printLog(`Close and continue error: ${error}`);
-    // Try to continue anyway
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    printLog(`❌ Close and continue error: ${errorMsg}`);
+    
+    // Re-enable monitoring even on error
+    try {
+      const enableMonitoring = (ctx.driver as any).__enableBrowserMonitoring;
+      if (typeof enableMonitoring === 'function') {
+        enableMonitoring();
+      }
+    } catch (e) {
+      // Ignore - monitoring might not be set up
+    }
+    
+    // Check if browser is still accessible
+    try {
+      await ctx.driver.getCurrentUrl();
+      printLog("✅ Browser is still accessible despite error, continuing...");
+    } catch (browserError) {
+      printLog(`❌ Browser is no longer accessible: ${browserError}`);
+    }
+    
+    // Try to continue anyway - keep browser open
     yield "hunting_next_job";
   }
 }
@@ -1422,14 +2338,14 @@ export async function* closeQuickApplyAndContinueSearch(ctx: WorkflowContext): A
 // Pause for Cover Letter Review
 export async function* pauseForCoverLetterReview(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("📄 COVER LETTER REVIEW TIME");
-  printLog("🔍 Take 5 minutes to read and review the AI-generated cover letter");
+  printLog("🔍 Quickly review the AI-generated cover letter");
   printLog("📋 Check the personalization, tone, and relevance to the job posting");
-  printLog("⏳ Pausing for 5 minutes...");
+  printLog("⏳ Briefly pausing for review...");
 
-  // Wait 5 minutes (300 seconds)
-  await ctx.driver.sleep(300000);
+  // Short pause (2 seconds) just to allow the user to glance at the content
+  await ctx.driver.sleep(2000);
 
-  printLog("⏰ 5-minute review period complete");
+  printLog("⏰ Review pause complete");
   printLog("▶️ Continuing with resume selection...");
 
   yield "review_complete";
@@ -1439,13 +2355,295 @@ export async function* pauseForCoverLetterReview(ctx: WorkflowContext): AsyncGen
 export async function* stayPutForInspection(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("🔍 STAYING PUT FOR MANUAL INSPECTION - Still on Choose Documents tab");
   printLog("📋 Check the form manually to see what validation errors are present");
-  printLog("⏳ Waiting 5 minutes for inspection, then will continue...");
+  printLog("⏳ Brief pause for inspection, then will continue...");
 
-  // Wait 5 minutes (300 seconds) for manual inspection
-  await ctx.driver.sleep(300000);
+  // Short pause (2 seconds) to allow a quick inspection without blocking for minutes
+  await ctx.driver.sleep(2000);
 
-  printLog("⏰ Inspection timeout reached, continuing workflow...");
+  printLog("⏰ Inspection pause complete, continuing workflow...");
   yield "inspection_complete";
+}
+
+// Submit application on review page
+export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    printLog("Attempting to submit application...");
+
+    const clicked = await ctx.driver.executeScript(`
+      const candidates = [
+        'button[data-automation="submitButton"]',
+        'button[type="submit"]',
+        '[data-testid="review-submit-button"]',
+        '[data-automation="reviewSubmitButton"]'
+      ];
+
+      const isVisible = (el) => !!el && el.offsetParent !== null;
+      for (const sel of candidates) {
+        const el = document.querySelector(sel);
+        if (isVisible(el)) {
+          el.click();
+          return { clicked: true, selector: sel };
+        }
+      }
+
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const textButton = buttons.find((b) => {
+        const t = (b.textContent || '').trim().toLowerCase();
+        return isVisible(b) && (t.includes('submit application') || t === 'submit');
+      });
+      if (textButton) {
+        textButton.click();
+        return { clicked: true, selector: 'button:text-match' };
+      }
+
+      return { clicked: false, selector: '' };
+    `) as { clicked: boolean; selector: string };
+
+    if (clicked?.clicked) {
+      printLog(`✅ Submit clicked using selector: ${clicked.selector}`);
+      await ctx.driver.sleep(5000); // Wait longer for submission to process
+      
+      // Verify submission was successful by checking for success indicators
+      let submissionConfirmed = false;
+      try {
+        const submissionStatus = await ctx.driver.executeScript(`
+          // Check for common success indicators
+          const successIndicators = [
+            'application submitted',
+            'application received',
+            'thank you',
+            'successfully submitted',
+            'application complete',
+            'submitted successfully',
+            'your application has been submitted',
+            'application sent'
+          ];
+          
+          const pageText = document.body.innerText.toLowerCase();
+          const url = window.location.href.toLowerCase();
+          
+          // Check page text for success messages
+          const hasSuccessText = successIndicators.some(indicator => 
+            pageText.includes(indicator)
+          );
+          
+          // Check URL for success indicators
+          const hasSuccessUrl = url.includes('submitted') || 
+                                url.includes('success') || 
+                                url.includes('confirmation') ||
+                                url.includes('thank') ||
+                                url.includes('complete');
+          
+          // Check for success elements
+          const successElements = document.querySelectorAll(
+            '[data-automation*="success"], [class*="success"], [id*="success"], [class*="confirmation"]'
+          );
+          
+          // Check if submit button is gone (another indicator of success)
+          const submitButtonStillVisible = document.querySelector('button[data-automation="submitButton"]') !== null;
+          
+          return {
+            confirmed: hasSuccessText || hasSuccessUrl || successElements.length > 0 || !submitButtonStillVisible,
+            hasSuccessText,
+            hasSuccessUrl,
+            successElementsCount: successElements.length,
+            submitButtonGone: !submitButtonStillVisible
+          };
+        `) as { confirmed: boolean; hasSuccessText: boolean; hasSuccessUrl: boolean; successElementsCount: number; submitButtonGone: boolean };
+        
+        submissionConfirmed = submissionStatus.confirmed;
+        
+        if (submissionConfirmed) {
+          printLog(`✅ Submission confirmed: success indicators found (text: ${submissionStatus.hasSuccessText}, URL: ${submissionStatus.hasSuccessUrl}, elements: ${submissionStatus.successElementsCount}, button gone: ${submissionStatus.submitButtonGone})`);
+        } else {
+          printLog(`⚠️ Submission confirmation unclear, but proceeding to mark as applied (submit button was clicked)`);
+          // Still proceed - sometimes success indicators aren't immediately visible
+          submissionConfirmed = true;
+        }
+      } catch (verifyError) {
+        printLog(`⚠️ Could not verify submission status, but proceeding: ${verifyError}`);
+        // Still proceed - assume success if submit button was clicked
+        submissionConfirmed = true;
+      }
+      
+      // CRITICAL: Always record application if submit button was clicked, regardless of verification
+      // The submit button click is the definitive action that means the job should be marked as applied
+      printLog(`📝 Recording application - submit button was clicked, marking as applied...`);
+      printLog(`   Current job file: ${ctx.currentJobFile || 'NOT SET'}`);
+      printLog(`   Current job dir: ${ctx.currentJobDir || 'NOT SET'}`);
+      printLog(`   Current job title: ${ctx.currentJobTitle || 'NOT SET'}`);
+      
+      // Always try to record - don't skip if currentJobFile is missing, try to recover it
+      let jobFileToUse = ctx.currentJobFile;
+      
+      if (!jobFileToUse && ctx.currentJobDir) {
+        const possibleJobFile = path.join(ctx.currentJobDir, 'job_details.json');
+        if (fs.existsSync(possibleJobFile)) {
+          printLog(`   ✅ Recovered job file from currentJobDir: ${possibleJobFile}`);
+          jobFileToUse = possibleJobFile;
+          ctx.currentJobFile = possibleJobFile;
+        }
+      }
+      
+      if (jobFileToUse) {
+        try {
+          if (!fs.existsSync(jobFileToUse)) {
+            printLog(`❌ [JobRecorder] Job file does not exist: ${jobFileToUse}`);
+            throw new Error(`Job file not found: ${jobFileToUse}`);
+          }
+          
+          const jobData = JSON.parse(fs.readFileSync(jobFileToUse, 'utf8'));
+          printLog(`   ✅ Job file loaded, keys: ${Object.keys(jobData).join(', ')}`);
+          
+          // Try multiple ways to get jobId: from jobData, from URL in jobData, or from current URL
+          let jobId = jobData.jobId || jobData.job_id || '';
+          
+          // If not in jobData, try to extract from URL in jobData
+          if (!jobId && jobData.url) {
+            try {
+              const urlMatch = jobData.url.match(/job\/(\d+)/);
+              if (urlMatch) {
+                jobId = urlMatch[1];
+                printLog(`📝 Extracted jobId from URL in job file: ${jobId}`);
+              }
+            } catch (e) {
+              // Ignore URL parsing errors
+            }
+          }
+          
+          // If still no jobId, try to get from current browser URL
+          if (!jobId) {
+            try {
+              const currentUrl = await ctx.driver.getCurrentUrl();
+              const urlMatch = currentUrl.match(/job\/(\d+)/);
+              if (urlMatch) {
+                jobId = urlMatch[1];
+                printLog(`📝 Extracted jobId from current browser URL: ${jobId}`);
+              } else {
+                // Try query param
+                try {
+                  const url = new URL(currentUrl);
+                  jobId = url.searchParams.get('jobId') || '';
+                  if (jobId) {
+                    printLog(`📝 Extracted jobId from URL query param: ${jobId}`);
+                  }
+                } catch (e) {
+                  // Ignore URL parsing errors
+                }
+              }
+            } catch (e) {
+              printLog(`⚠️ Could not get current URL to extract jobId: ${e}`);
+            }
+          }
+          
+          // Last resort: use timestamp as fallback (but still try to record)
+          if (!jobId) {
+            jobId = Date.now().toString();
+            printLog(`⚠️ No jobId found, using timestamp fallback: ${jobId}`);
+          }
+          
+          if (jobId) {
+            printLog(`📝 Recording application with status 'applied' for job ${jobId}...`);
+            printLog(`   Job file: ${jobFileToUse}`);
+            printLog(`   Job ID: ${jobId}`);
+            printLog(`   Title: ${jobData.title || 'N/A'}`);
+            printLog(`   Company: ${jobData.company || 'N/A'}`);
+            
+            const jobDirPath = getJobDirPathFromJobFile(jobFileToUse, jobId);
+            printLog(`   Job dir path: ${jobDirPath}`);
+            
+            const result = await recordJobApplicationToBackend({
+              jobFilePath: jobFileToUse,
+              jobDirPath,
+              platform: 'seek'
+            });
+            if (result.ok) {
+              printLog(`✅ Application recorded successfully with status 'applied' in database`);
+              printLog(`✅ Job ${jobId} marked as APPLIED`);
+            } else {
+              printLog(`❌ [JobRecorder] CRITICAL: Backend record failed: ${result.error}`);
+              printLog(`   This means the job was NOT marked as applied in the database!`);
+            }
+          } else {
+            printLog(`❌ [JobRecorder] CRITICAL: Could not determine jobId, cannot mark as applied`);
+            printLog(`   Job file exists: ${ctx.currentJobFile}`);
+            if (jobData) {
+              printLog(`   Job file content keys: ${Object.keys(jobData).join(', ')}`);
+              printLog(`   Job data URL: ${jobData.url || 'N/A'}`);
+            }
+          }
+        } catch (recordErr) {
+          const errorMsg = recordErr instanceof Error ? recordErr.message : String(recordErr);
+          printLog(`❌ [JobRecorder] CRITICAL ERROR - Record failed: ${errorMsg}`);
+          if (recordErr instanceof Error && recordErr.stack) {
+            printLog(`   Stack: ${recordErr.stack.substring(0, 500)}`);
+          }
+        }
+      } else {
+        printLog(`❌ [JobRecorder] CRITICAL: No currentJobFile in context, cannot mark as applied`);
+        printLog(`   Context has job-related keys: ${Object.keys(ctx).filter(k => k.toLowerCase().includes('job')).join(', ') || 'NONE'}`);
+        printLog(`   Current job title: ${ctx.currentJobTitle || 'N/A'}`);
+        printLog(`   Current job company: ${ctx.currentJobCompany || 'N/A'}`);
+        printLog(`   Current job dir: ${ctx.currentJobDir || 'N/A'}`);
+        
+        // Try to find job file from context or reconstruct it
+        if (ctx.currentJobDir) {
+          const possibleJobFile = path.join(ctx.currentJobDir, 'job_details.json');
+          if (fs.existsSync(possibleJobFile)) {
+            printLog(`   ✅ Found job file in currentJobDir: ${possibleJobFile}`);
+            ctx.currentJobFile = possibleJobFile;
+            // Retry recording
+            try {
+              const jobData = JSON.parse(fs.readFileSync(possibleJobFile, 'utf8'));
+              let jobId = jobData.jobId || jobData.job_id || '';
+              if (!jobId && jobData.url) {
+                const urlMatch = jobData.url.match(/job\/(\d+)/);
+                if (urlMatch) jobId = urlMatch[1];
+              }
+              if (!jobId) {
+                try {
+                  const currentUrl = await ctx.driver.getCurrentUrl();
+                  const urlMatch = currentUrl.match(/job\/(\d+)/);
+                  if (urlMatch) jobId = urlMatch[1];
+                } catch (e) {
+                  // Ignore
+                }
+              }
+              if (jobId) {
+                printLog(`   🔄 Retrying with recovered job file, jobId: ${jobId}`);
+                const jobDirPath = getJobDirPathFromJobFile(possibleJobFile, jobId);
+                const result = await recordJobApplicationToBackend({
+                  jobFilePath: possibleJobFile,
+                  jobDirPath,
+                  platform: 'seek'
+                });
+                if (result.ok) {
+                  printLog(`✅ Application recorded successfully with status 'applied' (recovered from context)`);
+                  printLog(`✅ Job ${jobId} marked as APPLIED`);
+                } else {
+                  printLog(`❌ [JobRecorder] Retry also failed: ${result.error}`);
+                }
+              } else {
+                printLog(`   ⚠️ Could not extract jobId even from recovered file`);
+              }
+            } catch (retryErr) {
+              printLog(`   ❌ Retry failed: ${retryErr}`);
+            }
+          } else {
+            printLog(`   ⚠️ Job file not found at expected path: ${possibleJobFile}`);
+          }
+        }
+      }
+      
+      yield "application_submitted";
+    } else {
+      printLog("Submit button not found on review page.");
+      yield "submit_not_found";
+    }
+  } catch (error) {
+    printLog(`Submit application failed: ${error}`);
+    yield "submit_failed";
+  }
 }
 
 // Skip to Next Card
@@ -1573,9 +2771,11 @@ export const seekStepFunctions = {
   waitForPageLoad,
   refreshPage,
   detectPageState,
+  fillSearchForm,
   clickSearchButton,
   showSignInBanner,
   performBasicSearch,
+  applySeekFilters,
   collectJobCards,
   clickJobCard,
   detectApplyType,
@@ -1590,9 +2790,11 @@ export const seekStepFunctions = {
   extractEmployerQuestions,
   handleEmployerQuestions,
   clickContinueButton,
+  checkForSubmitButton,
   closeQuickApplyAndContinueSearch,
   stayPutForInspection,
   pauseForCoverLetterReview,
+  submitApplication,
   skipToNextCard,
   skipResume,
   skipDocuments,

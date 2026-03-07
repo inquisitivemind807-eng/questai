@@ -135,13 +135,17 @@ export class UniversalOverlay {
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
             pointerEvents: 'none', // Allow clicks to pass through to page beneath
-            width: collapsed ? '60px' : '450px',
+            width: collapsed ? '60px' : '600px',
+            maxWidth: 'calc(100vw - 40px)', // Prevent overflow beyond viewport
             height: collapsed ? '60px' : 'auto',
             maxHeight: collapsed ? '60px' : '90vh',
-            minHeight: collapsed ? '60px' : '100px',
+            minHeight: collapsed ? '60px' : '120px',
             display: 'flex',
             flexDirection: 'column',
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            overflow: 'hidden', // Prevent content from overflowing container
+            wordWrap: 'break-word', // Break long words
+            overflowWrap: 'break-word' // Break long words
           };
 
           Object.assign(overlay.style, baseStyles);
@@ -160,16 +164,21 @@ export class UniversalOverlay {
           header.className = 'overlay-header';
 
           const headerStyles = {
-            padding: collapsed ? '0' : '12px 16px',
+            padding: collapsed ? '0' : '16px 20px',
             borderBottom: collapsed ? 'none' : '1px solid #00ffff40',
             display: 'flex',
             justifyContent: collapsed ? 'center' : 'space-between',
             alignItems: 'center',
             cursor: 'move',
             width: '100%',
+            maxWidth: '100%', // Prevent overflow
             height: collapsed ? '100%' : 'auto',
+            minWidth: 0, // Allow flex items to shrink
             pointerEvents: 'auto', // Override parent so header/buttons remain clickable
-            boxSizing: 'border-box'
+            boxSizing: 'border-box',
+            overflow: 'hidden', // Prevent header content from overflowing
+            flexShrink: 0, // Prevent header from shrinking
+            gap: '12px' // Add gap between title and controls
           };
 
           Object.assign(header.style, headerStyles);
@@ -178,15 +187,24 @@ export class UniversalOverlay {
           const title = document.createElement('div');
           title.style.display = collapsed ? 'none' : 'block';
           title.style.fontWeight = 'bold';
-          title.style.fontSize = '16px';
+          title.style.fontSize = '18px';
           title.style.color = '#00ffff';
+          title.style.overflow = 'hidden';
+          title.style.textOverflow = 'ellipsis';
+          title.style.whiteSpace = 'nowrap';
+          title.style.flexShrink = 1;
+          title.style.minWidth = 0;
+          title.style.maxWidth = '100%';
+          title.style.letterSpacing = '0.3px';
           title.textContent = \`🤖 \${BOT_NAME} Bot\`;
 
           // Controls
           const controls = document.createElement('div');
           controls.style.display = 'flex';
-          controls.style.gap = '8px';
+          controls.style.gap = '10px';
           controls.style.alignItems = 'center';
+          controls.style.flexShrink = 0; // Prevent controls from shrinking
+          controls.style.overflow = 'visible'; // Allow buttons to be visible
 
           // Collapse button
           const collapseBtn = document.createElement('button');
@@ -230,14 +248,21 @@ export class UniversalOverlay {
           // Content area
           const content = document.createElement('div');
           content.className = 'overlay-content';
-          content.style.padding = '16px';
-          content.style.fontSize = '13px';
-          content.style.lineHeight = '1.4';
+          content.style.padding = '20px 24px';
+          content.style.fontSize = '14px';
+          content.style.lineHeight = '1.6';
           content.style.maxHeight = '60vh';
           content.style.overflowY = 'auto';
+          content.style.overflowX = 'hidden'; // Prevent horizontal scroll
           content.style.display = collapsed ? 'none' : 'block';
           content.style.pointerEvents = 'auto'; // Override parent so content buttons remain clickable
           content.style.boxSizing = 'border-box';
+          content.style.width = '100%';
+          content.style.maxWidth = '100%';
+          content.style.wordWrap = 'break-word';
+          content.style.overflowWrap = 'break-word';
+          content.style.flexShrink = 1;
+          content.style.minWidth = 0;
 
           // Populate content based on type
           if (state.type === 'job_progress') {
@@ -258,42 +283,48 @@ export class UniversalOverlay {
             }
 
             content.innerHTML = \`
-              <div style="display: flex; flex-direction: column; gap: 10px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="color: #00ffff;">Jobs Extracted:</span>
-                  <span style="font-weight: bold; font-size: 16px;">\${appliedJobs}/\${totalJobs}</span>
+              <div style="display: flex; flex-direction: column; gap: 16px; width: 100%; max-width: 100%; box-sizing: border-box;">
+                <div style="display: flex; justify-content: space-between; align-items: center; gap: 12px; min-width: 0; padding-bottom: 4px;">
+                  <span style="color: #00ffff; flex-shrink: 0; font-size: 15px; font-weight: 500;">Jobs Extracted:</span>
+                  <span style="font-weight: bold; font-size: 20px; flex-shrink: 0; color: #ffffff;">\${appliedJobs}/\${totalJobs}</span>
                 </div>
-                <div style="display: flex; gap: 8px; font-size: 11px;">
-                  <span style="background:#00bb6630; border:1px solid #00bb6666; border-radius:6px; padding:2px 8px; color:#00dd88;">📋 Internal: \${internalJobs}</span>
-                  <span style="background:#ff880030; border:1px solid #ff880066; border-radius:6px; padding:2px 8px; color:#ffaa44;">🌐 External: \${externalJobs}</span>
+                <div style="display: flex; gap: 10px; font-size: 12px; flex-wrap: wrap; width: 100%;">
+                  <span style="background:#00bb6630; border:1px solid #00bb6666; border-radius:8px; padding:6px 12px; color:#00dd88; white-space: nowrap; flex-shrink: 0; font-weight: 500;">📋 Internal: \${internalJobs}</span>
+                  <span style="background:#ff880030; border:1px solid #ff880066; border-radius:8px; padding:6px 12px; color:#ffaa44; white-space: nowrap; flex-shrink: 0; font-weight: 500;">🌐 External: \${externalJobs}</span>
                 </div>
-                <div style="background: #333; border-radius: 6px; height: 8px; overflow: hidden;">
-                  <div style="background: linear-gradient(90deg, #00ffff, #00dd88); height: 100%; width: \${percentage}%; transition: width 0.3s ease;"></div>
+                <div style="background: #333; border-radius: 8px; height: 10px; overflow: hidden; width: 100%; box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);">
+                  <div style="background: linear-gradient(90deg, #00ffff, #00dd88); height: 100%; width: \${percentage}%; transition: width 0.3s ease; box-shadow: 0 0 8px rgba(0, 255, 255, 0.4);"></div>
                 </div>
-                <div style="font-size: 11px; opacity: 0.8; color: #00dd88;">\${currentStep}</div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div style="width: 8px; height: 8px; border-radius: 50%; background: #00ffff; animation: pulse 1.5s ease-in-out infinite;"></div>
-                  <span style="font-size: 11px; opacity: 0.6;">Working...</span>
+                <div style="font-size: 13px; opacity: 0.9; color: #00dd88; word-wrap: break-word; overflow-wrap: break-word; width: 100%; line-height: 1.5; padding: 8px 0;">\${currentStep}</div>
+                <div style="display: flex; align-items: center; gap: 10px; width: 100%; padding-top: 4px;">
+                  <div style="width: 10px; height: 10px; border-radius: 50%; background: #00ffff; animation: pulse 1.5s ease-in-out infinite; flex-shrink: 0; box-shadow: 0 0 6px rgba(0, 255, 255, 0.6);"></div>
+                  <span style="font-size: 12px; opacity: 0.7; color: #ffffff;">Working...</span>
                 </div>
               </div>
             \`;
           } else if (state.type === 'sign_in') {
             content.innerHTML = \`
-              <div style="text-align: center;">
-                <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #ffdd00;">
+              <div style="text-align: center; padding: 8px 0;">
+                <p style="margin: 0 0 24px 0; font-size: 15px; line-height: 1.7; color: #ffdd00; font-weight: 500;">
                   Please sign in to your account manually in this window.
                 </p>
                 <button id="signin-continue-btn" style="
                   background: #00dd88;
                   color: #1a1a1a;
                   border: none;
-                  border-radius: 8px;
-                  padding: 12px 20px;
-                  font-size: 14px;
+                  border-radius: 10px;
+                  padding: 14px 24px;
+                  font-size: 15px;
                   font-weight: bold;
                   cursor: pointer;
                   width: 100%;
+                  max-width: 100%;
+                  box-sizing: border-box;
                   transition: all 0.2s ease;
+                  word-wrap: break-word;
+                  overflow-wrap: break-word;
+                  white-space: normal;
+                  box-shadow: 0 4px 12px rgba(0, 221, 136, 0.3);
                 ">
                   ✅ I have logged in - Continue
                 </button>
@@ -304,8 +335,16 @@ export class UniversalOverlay {
             setTimeout(() => {
               const button = document.getElementById('signin-continue-btn');
               if (button) {
-                button.onmouseover = () => button.style.background = '#00bb66';
-                button.onmouseout = () => button.style.background = '#00dd88';
+                button.onmouseover = () => {
+                  button.style.background = '#00bb66';
+                  button.style.transform = 'translateY(-2px)';
+                  button.style.boxShadow = '0 6px 16px rgba(0, 221, 136, 0.4)';
+                };
+                button.onmouseout = () => {
+                  button.style.background = '#00dd88';
+                  button.style.transform = 'translateY(0)';
+                  button.style.boxShadow = '0 4px 12px rgba(0, 221, 136, 0.3)';
+                };
                 button.onclick = () => {
                   window.__overlaySignInComplete = true;
                   sessionStorage.setItem('overlay_signin_complete', 'true');
@@ -314,22 +353,28 @@ export class UniversalOverlay {
             }, 100);
           } else if (state.type === 'manual_review') {
             content.innerHTML = \`
-              <div style="text-align: center;">
-                <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.6; color: #00ffff;">
-                  <strong>Manual Review Required</strong><br/>
+              <div style="text-align: center; padding: 8px 0;">
+                <p style="margin: 0 0 24px 0; font-size: 16px; line-height: 1.7; color: #00ffff; font-weight: 500;">
+                  <strong style="display: block; margin-bottom: 8px; font-size: 18px;">Manual Review Required</strong>
                   Please review the application before submitting.
                 </p>
                 <button id="manual-review-btn" style="
                   background: #00dd88;
                   color: #1a1a1a;
                   border: none;
-                  border-radius: 8px;
-                  padding: 12px 20px;
-                  font-size: 14px;
+                  border-radius: 10px;
+                  padding: 14px 24px;
+                  font-size: 15px;
                   font-weight: bold;
                   cursor: pointer;
                   width: 100%;
+                  max-width: 100%;
+                  box-sizing: border-box;
                   transition: all 0.2s ease;
+                  word-wrap: break-word;
+                  overflow-wrap: break-word;
+                  white-space: normal;
+                  box-shadow: 0 4px 12px rgba(0, 221, 136, 0.3);
                 ">
                   ✅ Looks Good - Submit Application
                 </button>
@@ -340,8 +385,16 @@ export class UniversalOverlay {
             setTimeout(() => {
               const button = document.getElementById('manual-review-btn');
               if (button) {
-                button.onmouseover = () => button.style.background = '#00bb66';
-                button.onmouseout = () => button.style.background = '#00dd88';
+                button.onmouseover = () => {
+                  button.style.background = '#00bb66';
+                  button.style.transform = 'translateY(-2px)';
+                  button.style.boxShadow = '0 6px 16px rgba(0, 221, 136, 0.4)';
+                };
+                button.onmouseout = () => {
+                  button.style.background = '#00dd88';
+                  button.style.transform = 'translateY(0)';
+                  button.style.boxShadow = '0 4px 12px rgba(0, 221, 136, 0.3)';
+                };
                 button.onclick = () => {
                   window.__overlayManualReviewComplete = true;
                   sessionStorage.setItem('overlay_manual_review_complete', 'true');
@@ -357,27 +410,32 @@ export class UniversalOverlay {
           // Activity Log Section
           if (!collapsed) {
             const logsContainer = document.createElement('div');
-            logsContainer.style.marginTop = '16px';
-            logsContainer.style.padding = '12px';
+            logsContainer.style.marginTop = '20px';
+            logsContainer.style.padding = '16px';
             logsContainer.style.background = '#0a0a0a';
             logsContainer.style.border = '1px solid #00ffff40';
-            logsContainer.style.borderRadius = '8px';
-            logsContainer.style.maxHeight = '150px';
+            logsContainer.style.borderRadius = '10px';
+            logsContainer.style.maxHeight = '180px';
             logsContainer.style.overflowY = 'auto';
+            logsContainer.style.overflowX = 'hidden'; // Prevent horizontal scroll
             logsContainer.style.fontFamily = 'monospace';
-            logsContainer.style.fontSize = '12px';
+            logsContainer.style.fontSize = '13px';
             logsContainer.style.boxSizing = 'border-box';
             logsContainer.style.display = 'flex';
             logsContainer.style.flexDirection = 'column';
-            logsContainer.style.gap = '4px';
+            logsContainer.style.gap = '6px';
+            logsContainer.style.width = '100%';
+            logsContainer.style.maxWidth = '100%';
+            logsContainer.style.wordWrap = 'break-word';
+            logsContainer.style.overflowWrap = 'break-word';
 
             const logTitle = document.createElement('div');
             logTitle.style.color = '#00ffff';
-            logTitle.style.marginBottom = '6px';
+            logTitle.style.marginBottom = '10px';
             logTitle.style.fontWeight = 'bold';
-            logTitle.style.fontSize = '10px';
+            logTitle.style.fontSize = '11px';
             logTitle.style.textTransform = 'uppercase';
-            logTitle.style.letterSpacing = '1px';
+            logTitle.style.letterSpacing = '1.2px';
             logTitle.innerHTML = '⚡ Activity Log';
             logsContainer.appendChild(logTitle);
 
@@ -392,6 +450,11 @@ export class UniversalOverlay {
               logs.forEach(msg => {
                 const logEntry = document.createElement('div');
                 logEntry.style.color = '#00dd88';
+                logEntry.style.wordWrap = 'break-word';
+                logEntry.style.overflowWrap = 'break-word';
+                logEntry.style.width = '100%';
+                logEntry.style.maxWidth = '100%';
+                logEntry.style.overflow = 'hidden';
                 logEntry.textContent = msg;
                 logsContainer.appendChild(logEntry);
               });
@@ -437,9 +500,11 @@ export class UniversalOverlay {
             const viewportWidth = window.innerWidth;
             const viewportHeight = window.innerHeight;
             const rect = overlay.getBoundingClientRect();
+            const overlayWidth = Math.min(rect.width, viewportWidth - 40); // Account for padding
+            const overlayHeight = Math.min(rect.height, viewportHeight - 40);
 
-            currentX = Math.max(0, Math.min(currentX, viewportWidth - rect.width));
-            currentY = Math.max(0, Math.min(currentY, viewportHeight - rect.height));
+            currentX = Math.max(0, Math.min(currentX, viewportWidth - overlayWidth));
+            currentY = Math.max(0, Math.min(currentY, viewportHeight - overlayHeight));
 
             xOffset = currentX;
             yOffset = currentY;

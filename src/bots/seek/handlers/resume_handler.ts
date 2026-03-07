@@ -8,6 +8,8 @@ import { Document, Paragraph, TextRun, Packer } from 'docx';
 import PDFDocument from 'pdfkit';
 import { getJobArtifactDir } from '../../core/client_paths';
 import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { callApiWithFallback } from './api_fallback';
+import { resolveUseAi } from './ai_provider';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -78,12 +80,12 @@ async function generateAIResume(ctx: WorkflowContext): Promise<string> {
   printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
 
   const resumeText = await resolveResumeText(ctx);
+  const useAi = resolveUseAi(ctx);
 
-  const requestBody = {
+  const requestBody: Record<string, any> = {
     job_id: `seek_${jobId}`,
     job_details: jobData.details || `${jobData.title} at ${jobData.company}`,
     resume_text: resumeText,
-    useAi: "deepseek-chat",
 
     // Required tracking fields per API docs
     platform: "seek",
@@ -97,6 +99,7 @@ Optimize for ATS (Applicant Tracking Systems) by including relevant keywords fro
 Highlight experience and skills that directly match the job requirements.
 Keep formatting clean and professional. Focus on quantifiable achievements.`
   };
+  requestBody.useAi = useAi;
 
   const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
 
@@ -105,18 +108,25 @@ Keep formatting clean and professional. Focus on quantifiable achievements.`
     JSON.stringify(requestBody, null, 2)
   );
 
-  // Fetch resume tailor prompt from corpus-rag
+  // Fetch resume-enhancement prompt from corpus-rag, fallback to legacy resume-tailor key.
   const { apiRequest } = await import('../../core/api_client');
   try {
-    const promptRes = await apiRequest('/api/prompts/resume-tailor', 'GET');
-    if (promptRes?.content) {
-      requestBody.prompt = promptRes.content;
+    let promptRes = await apiRequest('/api/prompts/resume-enhancement', 'GET');
+    if (!promptRes?.content) {
+      promptRes = await apiRequest('/api/prompts/resume-tailor', 'GET');
     }
+    if (promptRes?.content) requestBody.prompt = promptRes.content;
   } catch (e) {
-    printLog('⚠️ Could not fetch resume-tailor prompt, using embedded fallback');
+    printLog('⚠️ Could not fetch resume-enhancement prompt, using embedded fallback');
   }
 
-  const data = await apiRequest('/api/resume', 'POST', requestBody);
+  let data: any;
+  try {
+    data = await callApiWithFallback('/api/resume', 'POST', requestBody);
+  } catch (err) {
+    printLog(`⚠️ Resume enhancement API unavailable, using canonical resume text. Error: ${err}`);
+    return resumeText;
+  }
 
   fs.writeFileSync(
     path.join(jobDir, 'resume_response.json'),
@@ -135,93 +145,103 @@ Keep formatting clean and professional. Focus on quantifiable achievements.`
 // Handle Resume Upload/Selection (Choose Documents step)
 export async function* handleResumeSelection(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    printLog("Handling resume with AI generation and upload...");
+    printLog("Handling resume with mandatory AI generation + upload...");
 
-    // Step 1: Generate AI resume
-    printLog("🤖 Generating AI-tailored resume...");
+    const resumeUi = await ctx.driver.executeScript(`
+      const uploadRadio =
+        document.querySelector('input[data-testid="resume-method-upload"][value="upload"]') ||
+        document.querySelector('input[type="radio"][value="upload"]');
+      const fileInput =
+        document.querySelector('input[data-testid="file-input"][type="file"]') ||
+        document.querySelector('input[type="file"]');
+      const resumeSelect =
+        document.querySelector('select[data-testid="select-input"]') ||
+        document.querySelector('select[name*="resume" i]');
+      return {
+        hasUploadRadio: !!uploadRadio,
+        hasFileInput: !!fileInput,
+        hasResumeSelect: !!resumeSelect
+      };
+    `) as { hasUploadRadio: boolean; hasFileInput: boolean; hasResumeSelect: boolean };
+
+    if (!resumeUi.hasUploadRadio && !resumeUi.hasFileInput && !resumeUi.hasResumeSelect) {
+      printLog("ℹ️ Resume field not present in this Quick Apply step");
+      yield "resume_not_required";
+      return;
+    }
+
+    printLog("🤖 Resume requested by Seek - generating AI-enhanced resume...");
     const resumeText = await generateAIResume(ctx);
 
-    // Step 2: Create resume file
     let jobData: any = {};
     if (ctx.currentJobFile) {
       jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
     }
-    const resumeFilePath = await createResumeFile(
-      ctx,
-      resumeText,
-      jobData.jobId || 'unknown'
-    );
+    const resumeFilePath = await createResumeFile(ctx, resumeText, jobData.jobId || 'unknown');
+    const uploadedFileName = path.basename(resumeFilePath);
 
-    // Step 3: Click "Upload a resumé" radio button
-    printLog("🔍 Looking for upload resume option...");
-
-    const uploadRadioClicked = await ctx.driver.executeScript(`
-      // Find and click the "Upload a resumé" radio button
-      const uploadRadio = document.querySelector('input[data-testid="resume-method-upload"][value="upload"]');
-      if (uploadRadio) {
+    if (resumeUi.hasUploadRadio) {
+      const uploadRadioClicked = await ctx.driver.executeScript(`
+        const uploadRadio =
+          document.querySelector('input[data-testid="resume-method-upload"][value="upload"]') ||
+          document.querySelector('input[type="radio"][value="upload"]');
+        if (!uploadRadio) return false;
         uploadRadio.click();
         uploadRadio.checked = true;
         uploadRadio.dispatchEvent(new Event('change', { bubbles: true }));
         uploadRadio.dispatchEvent(new Event('click', { bubbles: true }));
-        console.log('Upload radio button clicked');
         return true;
+      `);
+      if (!uploadRadioClicked) {
+        throw new Error('Resume upload radio exists but could not be selected');
       }
-      return false;
-    `);
+      await ctx.driver.sleep(800);
+    }
 
-    if (uploadRadioClicked) {
-      printLog("✅ Upload resume option selected");
-      await ctx.driver.sleep(1000); // Wait for UI to update
+    printLog("📤 Uploading API-generated resume file...");
+    const fileInputSelectors = [
+      'input[data-testid="file-input"][type="file"]',
+      'input[type="file"]'
+    ];
+    let uploaded = false;
+    let lastUploadError: unknown = null;
 
-      // Step 4: Upload the file
-      printLog("📤 Uploading resume file...");
-
+    for (const selector of fileInputSelectors) {
       try {
-        // Find the hidden file input - it should be visible now
-        const fileInput = await ctx.driver.findElement(By.css('input[data-testid="file-input"][type="file"]'));
-
-        // Send the absolute file path to the input
-        await fileInput.sendKeys(resumeFilePath);
-        printLog("✅ Resume file uploaded successfully");
-
-        await ctx.driver.sleep(3000); // Wait for upload to process
-
-        yield "resume_selected";
-        return;
-      } catch (uploadError) {
-        printLog(`⚠️ File upload failed: ${uploadError}`);
-        printLog("Falling back to existing resume selection...");
+        const input = await ctx.driver.findElement(By.css(selector));
+        await input.sendKeys(resumeFilePath);
+        uploaded = true;
+        break;
+      } catch (e) {
+        lastUploadError = e;
       }
-    } else {
-      printLog("⚠️ Upload resume radio button not found");
     }
 
-    // Step 4: Fallback - try to select existing resume
-    printLog("📋 Checking for existing resume options...");
-    const resumeSelected = await ctx.driver.executeScript(`
-      const select = document.querySelector('select[data-testid="select-input"]');
-      if (select && select.options && select.options.length > 1) {
-        for (let i = 1; i < select.options.length; i++) {
-          if (select.options[i].value && select.options[i].value !== '') {
-            select.value = select.options[i].value;
-            select.dispatchEvent(new Event('change', { bubbles: true }));
-            console.log('Selected resume:', select.options[i].text);
-            return true;
-          }
-        }
-      }
-      return false;
-    `);
-
-    if (resumeSelected) {
-      await ctx.driver.sleep(1000);
-      printLog("✅ Selected existing resume from dropdown");
-      yield "resume_selected";
-      return;
+    if (!uploaded) {
+      throw new Error(`Failed to upload generated resume file: ${String(lastUploadError)}`);
     }
 
-    printLog("ℹ️ No upload option or existing resume found - will skip resume");
-    yield "resume_not_required";
+    await ctx.driver.sleep(2500);
+    const uploadVerified = await ctx.driver.executeScript(`
+      const expected = arguments[0].toLowerCase();
+      const fileInputs = Array.from(document.querySelectorAll('input[type="file"]'));
+      const inputHasFile = fileInputs.some((i) => {
+        const anyI = i;
+        const hasFiles = anyI.files && anyI.files.length > 0;
+        const hasValue = typeof anyI.value === 'string' && anyI.value.toLowerCase().includes(expected);
+        return hasFiles || hasValue;
+      });
+      if (inputHasFile) return true;
+      const bodyText = (document.body && document.body.innerText ? document.body.innerText : '').toLowerCase();
+      return bodyText.includes(expected);
+    `, uploadedFileName) as boolean;
+
+    if (!uploadVerified) {
+      throw new Error('Resume upload could not be verified on page');
+    }
+
+    printLog("✅ AI-generated resume uploaded successfully");
+    yield "resume_selected";
 
   } catch (error) {
     printLog(`💥 Resume handling error: ${error}`);
