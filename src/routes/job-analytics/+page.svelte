@@ -58,6 +58,14 @@
   let isBotRunning = false;
   let isLoading = true;
   let error = "";
+  let refreshDebounceTimer;
+
+  function scheduleApplicationsRefresh(delayMs = 1200) {
+    if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
+    refreshDebounceTimer = setTimeout(() => {
+      loadApplications();
+    }, delayMs);
+  }
 
   // Set up Tauri IPC listening for live Bot output
   onMount(async () => {
@@ -111,11 +119,22 @@
               time: new Date(),
             },
           ];
+
+          // Keep tabs in sync as soon as backend confirms applied status.
+          if (
+            logLine.includes(
+              "Application recorded successfully with status 'applied'",
+            ) ||
+            logLine.includes("JobRecorder] API call successful!")
+          ) {
+            scheduleApplicationsRefresh();
+          }
         }
       });
 
       return () => {
         unlisten();
+        if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
       };
     } catch (e) {
       console.error(
@@ -476,7 +495,8 @@
       if (data.success && Array.isArray(data.data)) {
         applications = data.data.map((job) => ({
           ...job,
-          status: job.status || "pending",
+          // Normalize backend status so filters/tabs behave consistently.
+          status: String(job.status || "pending").toLowerCase(),
         }));
       } else {
         applications = [];
