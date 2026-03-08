@@ -1,0 +1,239 @@
+workflow_meta:
+  title: "Seek Quick Apply (Single Job URL)"
+  description: "Open a specific Seek job URL, detect Quick Apply, fill cover letter, resume, and employer questions, then pause for manual submit."
+  start_step: "init_context"
+
+steps_config:
+  init_context:
+    step: 0
+    func: "step0"
+    transitions:
+      direct_apply_ready: "open_job_url"
+      ctx_ready: "open_job_url"
+    timeout: 30
+    on_timeout_event: "direct_apply_ready"
+
+  open_job_url:
+    step: 0.5
+    func: "openJobUrl"
+    transitions:
+      job_url_opened: "detect_page_state"
+      job_url_failed: "done"
+    timeout: 60
+    on_timeout_event: "job_url_failed"
+
+  detect_page_state:
+    step: 1
+    func: "detectPageState"
+    transitions:
+      logged_in: "detect_apply_type"
+      sign_in_required: "show_sign_in_banner"
+      no_cards_found: "detect_apply_type"
+    timeout: 20
+    on_timeout_event: "detect_apply_type"
+
+  show_sign_in_banner:
+    step: 1.5
+    func: "showSignInBanner"
+    transitions:
+      signin_banner_shown: "detect_page_state"
+      signin_banner_retry: "open_job_url"
+    timeout: 300
+    on_timeout_event: "signin_banner_retry"
+
+  detect_apply_type:
+    step: 2
+    func: "detectApplyType"
+    transitions:
+      quick_apply_found: "parse_job_details"
+      regular_apply_found: "close_quick_apply_and_end"
+      no_apply_found: "close_quick_apply_and_end"
+      detect_apply_failed: "close_quick_apply_and_end"
+    timeout: 15
+    on_timeout_event: "close_quick_apply_and_end"
+
+  parse_job_details:
+    step: 3
+    func: "parseJobDetails"
+    transitions:
+      job_parsed: "save_scraped_job"
+      parse_failed: "close_quick_apply_and_end"
+    timeout: 20
+    on_timeout_event: "parse_failed"
+
+  save_scraped_job:
+    step: 3.5
+    func: "saveScrapedJob"
+    transitions:
+      job_saved_quick_apply: "click_quick_apply"
+      job_saved: "click_quick_apply"
+      save_failed: "close_quick_apply_and_end"
+    timeout: 20
+    on_timeout_event: "save_failed"
+
+  click_quick_apply:
+    step: 4
+    func: "clickQuickApply"
+    transitions:
+      quick_apply_clicked: "wait_for_quick_apply_page"
+      quick_apply_failed: "close_quick_apply_and_end"
+    timeout: 20
+    on_timeout_event: "quick_apply_failed"
+
+  wait_for_quick_apply_page:
+    step: 5
+    func: "waitForQuickApplyPage"
+    transitions:
+      quick_apply_page_ready: "get_current_step"
+      page_load_timeout: "close_quick_apply_and_end"
+    timeout: 30
+    on_timeout_event: "page_load_timeout"
+
+  get_current_step:
+    step: 6
+    func: "getCurrentStep"
+    transitions:
+      current_step_choose_documents: "handle_cover_letter"
+      current_step_employer_questions: "handle_employer_questions"
+      current_step_update_profile: "check_for_submit_button"
+      current_step_review_submit: "submit_application"
+      current_step_unknown: "close_quick_apply_and_end"
+      progress_bar_not_found: "handle_cover_letter"
+      progress_bar_evaluation_error: "close_quick_apply_and_end"
+    timeout: 15
+    on_timeout_event: "progress_bar_evaluation_error"
+
+  handle_cover_letter:
+    step: 7
+    func: "handleCoverLetter"
+    transitions:
+      cover_letter_filled: "handle_resume_selection"
+      cover_letter_not_required: "handle_resume_selection"
+      cover_letter_error: "stay_put_for_inspection"
+    timeout: 90
+    on_timeout_event: "cover_letter_error"
+
+  handle_resume_selection:
+    step: 8
+    func: "handleResumeSelection"
+    transitions:
+      resume_selected: "click_continue_button"
+      resume_not_required: "click_continue_button"
+      resume_selection_error: "close_quick_apply_and_end"
+    timeout: 90
+    on_timeout_event: "resume_selection_error"
+
+  click_continue_button:
+    step: 9
+    func: "clickContinueButton"
+    transitions:
+      continue_clicked: "check_progress_after_continue"
+      continue_button_not_found: "check_progress_after_continue"
+      continue_button_error: "check_progress_after_continue"
+    timeout: 20
+    on_timeout_event: "check_progress_after_continue"
+
+  check_progress_after_continue:
+    step: 9.5
+    func: "getCurrentStep"
+    transitions:
+      current_step_choose_documents: "stay_put_for_inspection"
+      current_step_employer_questions: "extract_employer_questions"
+      current_step_update_profile: "check_for_submit_button"
+      current_step_review_submit: "submit_application"
+      current_step_unknown: "check_for_submit_button"
+      progress_bar_not_found: "check_for_submit_button"
+      progress_bar_evaluation_error: "check_for_submit_button"
+    timeout: 15
+    on_timeout_event: "check_for_submit_button"
+
+  extract_employer_questions:
+    step: 10
+    func: "extractEmployerQuestions"
+    transitions:
+      employer_questions_saved: "handle_employer_questions"
+      no_employer_questions: "submit_application"
+      employer_questions_error: "close_quick_apply_and_end"
+    timeout: 45
+    on_timeout_event: "employer_questions_error"
+
+  handle_employer_questions:
+    step: 11
+    func: "handleEmployerQuestions"
+    transitions:
+      employer_questions_saved: "click_continue_after_questions"
+      no_questions: "click_continue_after_questions"
+      no_job_data: "click_continue_after_questions"
+      employer_questions_error: "stay_put_for_inspection"
+    timeout: 45
+    on_timeout_event: "employer_questions_error"
+
+  click_continue_after_questions:
+    step: 11.2
+    func: "clickContinueButton"
+    transitions:
+      continue_clicked: "check_step_after_continue"
+      continue_button_not_found: "check_step_after_continue"
+      continue_button_error: "check_step_after_continue"
+    timeout: 20
+    on_timeout_event: "check_step_after_continue"
+
+  check_step_after_continue:
+    step: 11.3
+    func: "getCurrentStep"
+    transitions:
+      current_step_employer_questions: "handle_employer_questions"
+      current_step_review_submit: "submit_application"
+      current_step_choose_documents: "handle_cover_letter"
+      current_step_update_profile: "check_for_submit_button"
+      current_step_unknown: "check_for_submit_button"
+      progress_bar_not_found: "check_for_submit_button"
+      progress_bar_evaluation_error: "check_for_submit_button"
+    timeout: 15
+    on_timeout_event: "check_for_submit_button"
+
+  check_for_submit_button:
+    step: 11.4
+    func: "checkForSubmitButton"
+    transitions:
+      submit_button_found: "submit_application"
+      submit_button_not_found: "click_continue_after_questions"
+      max_continue_reached: "submit_application"
+    timeout: 10
+    on_timeout_event: "submit_application"
+
+  stay_put_for_inspection:
+    step: 11.5
+    func: "stayPutForInspection"
+    transitions:
+      inspection_complete: "close_quick_apply_and_end"
+    timeout: 300
+    on_timeout_event: "inspection_complete"
+
+  submit_application:
+    step: 12
+    func: "submitApplication"
+    transitions:
+      application_submitted: "close_quick_apply_and_end"
+      submit_not_found: "pause_for_manual_review"
+      submit_failed: "pause_for_manual_review"
+    timeout: 30
+    on_timeout_event: "submit_failed"
+
+  pause_for_manual_review:
+    step: 12.5
+    func: "pauseForCoverLetterReview"
+    transitions:
+      review_complete: "close_quick_apply_and_end"
+    timeout: 1800
+    on_timeout_event: "close_quick_apply_and_end"
+
+  close_quick_apply_and_end:
+    step: 13
+    func: "closeQuickApplyAndContinueSearch"
+    transitions:
+      hunting_next_job: "done"
+      close_and_continue_error: "done"
+    timeout: 20
+    on_timeout_event: "hunting_next_job"
+

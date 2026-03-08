@@ -266,12 +266,13 @@ export async function POST({ request }) {
       prompt = 'Write a compelling, professional cover letter for this job posting. Highlight relevant experience and skills. Keep it concise (300-400 words) and personalized.';
     }
 
+    const requestedAi = String(body.useAi || '').trim();
+
     // Prepare request for corpus-rag API
     const requestBody = {
       job_id: generatedJobId,  // Required field
       job_details: jobDescription,
       resume_text: resumeText,
-      useAi: "deepseek-chat",
       platform: "manual",
       job_title: "",
       company: "",
@@ -281,6 +282,7 @@ export async function POST({ request }) {
       contact_profile: contactProfile,
       prompt
     };
+    if (requestedAi) requestBody.useAi = requestedAi;
 
     console.log('🔄 Calling corpus-rag API for cover letter generation...');
 
@@ -311,7 +313,7 @@ export async function POST({ request }) {
         success: true,
         coverLetter: data.cover_letter,
         metadata: {
-          provider: 'deepseek-chat',
+          provider: requestedAi || 'default',
           timestamp: new Date().toISOString(),
           qualityScore: data.qualityScore,
           qualityControl: data.qualityControl,

@@ -277,13 +277,32 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     return null;
   }
 
-  const platformJobId = jobData.job_id || jobData.jobId || '';
+  let platformJobId = jobData.job_id || jobData.jobId || '';
+  
+  // If jobId is missing, try to extract from URL
+  if (!platformJobId && jobData.url) {
+    try {
+      const urlMatch = jobData.url.match(/job\/(\d+)/);
+      if (urlMatch) {
+        platformJobId = urlMatch[1];
+        printLog(`[JobRecorder] Extracted platformJobId from URL: ${platformJobId}`);
+      }
+    } catch (e) {
+      // Ignore URL parsing errors
+    }
+  }
+  
   const title = jobData.title || jobData.raw_title || '';
   const company = jobData.company || '';
   const platform = inputPlatform ?? (jobFilePath.includes('linkedinjobs') ? 'linkedin' : 'seek');
 
   if (!platformJobId || !title || !company) {
-    printLog('[JobRecorder] Job file missing jobId, title or company');
+    printLog(`[JobRecorder] Job file missing required fields:`);
+    printLog(`  - platformJobId: ${platformJobId || 'MISSING'}`);
+    printLog(`  - title: ${title || 'MISSING'}`);
+    printLog(`  - company: ${company || 'MISSING'}`);
+    printLog(`  - Job file path: ${jobFilePath}`);
+    printLog(`  - Job data keys: ${Object.keys(jobData).join(', ')}`);
     return null;
   }
 
@@ -335,14 +354,27 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
  * Does not throw; logs and returns success/failure so the bot workflow can continue.
  */
 export async function recordJobApplicationToBackend(input: RecordJobApplicationInput): Promise<{ ok: boolean; id?: string; error?: string }> {
+  printLog(`[JobRecorder] Starting to record job application...`);
+  printLog(`  Job file path: ${input.jobFilePath}`);
+  printLog(`  Job dir path: ${input.jobDirPath}`);
+  printLog(`  Platform: ${input.platform}`);
+  
   const payload = buildJobApplicationPayload(input);
   if (!payload) {
-    logger.warn('recorder.payload_invalid', 'Could not build payload from job file and dir', {
+    const errorMsg = 'Could not build payload from job file and dir';
+    printLog(`❌ [JobRecorder] ${errorMsg}`);
+    logger.warn('recorder.payload_invalid', errorMsg, {
       jobFilePath: input.jobFilePath,
       jobDirPath: input.jobDirPath
     });
-    return { ok: false, error: 'Could not build payload from job file and dir' };
+    return { ok: false, error: errorMsg };
   }
+  
+  printLog(`[JobRecorder] Payload built successfully:`);
+  printLog(`  Platform: ${payload.platform}`);
+  printLog(`  Platform Job ID: ${payload.platformJobId}`);
+  printLog(`  Title: ${payload.title}`);
+  printLog(`  Company: ${payload.company}`);
 
   const maxAttempts = 3;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -358,9 +390,14 @@ export async function recordJobApplicationToBackend(input: RecordJobApplicationI
         platform: payload.platform,
         jobId: payload.platformJobId
       });
+      printLog(`[JobRecorder] Attempting API call (attempt ${attempt}/${maxAttempts})...`);
       const result = await apiRequest('/api/job-applications', 'POST', payload);
       const id = result?.id ?? result?.data?.id;
-      printLog(`[JobRecorder] Recorded application: ${payload.company} / ${payload.title} (${id ?? 'ok'})`);
+      printLog(`✅ [JobRecorder] API call successful!`);
+      printLog(`  Recorded application: ${payload.company} / ${payload.title}`);
+      printLog(`  Database ID: ${id ?? 'N/A'}`);
+      printLog(`  Platform Job ID: ${payload.platformJobId}`);
+      printLog(`  Status: APPLIED (set by upsertJobApplication)`);
       logger.info('recorder.post_success', 'Recorded job application', {
         id,
         attempt
@@ -371,6 +408,10 @@ export async function recordJobApplicationToBackend(input: RecordJobApplicationI
       return { ok: true, id };
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
+      printLog(`❌ [JobRecorder] API call failed (attempt ${attempt}/${maxAttempts}): ${message}`);
+      if (e instanceof Error && e.stack) {
+        printLog(`   Stack: ${e.stack.substring(0, 300)}`);
+      }
       const isLast = attempt === maxAttempts;
       printLog(`[JobRecorder] Record attempt ${attempt}/${maxAttempts} failed: ${message}`);
       logger.error('recorder.post_failed', 'Record attempt failed', {

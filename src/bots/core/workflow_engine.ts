@@ -106,7 +106,7 @@ export class WorkflowEngine {
         this.executeGenerator(generator),
         timeoutPromise
       ]);
-      logger.debug('workflow.step_result', 'Step executed', {
+      logger.debug('workflow.step_result', `Step ${stepConfig.step} '${stepName}' (${stepConfig.func}) executed -> ${result}`, {
         stepName,
         stepNumber: stepConfig.step,
         func: stepConfig.func,
@@ -197,7 +197,7 @@ export class WorkflowEngine {
 
 
     // Initialize fallback overlay if no bot overlay and driver is available
-    console.log('🔍 Debug: Checking for driver and overlay in context...', !!this.context.driver, !!this.context.overlay);
+    console.log('🔍 Workflow context at start: driver=', !!this.context.driver, 'overlay=', !!this.context.overlay);
     if (this.context.driver && !this.context.overlay && !this.overlay) {
       console.log('🎨 Debug: Creating fallback overlay (bot should create its own)...');
       this.overlay = new UniversalOverlay(this.context.driver, 'Workflow');
@@ -220,9 +220,10 @@ export class WorkflowEngine {
         this.overlay = null;
       }
     } else if (this.context.overlay) {
-      console.log('✅ Debug: Using bot\'s overlay');
+      console.log('✅ Using bot-provided overlay');
     } else if (!this.context.driver) {
-      console.log('❌ Debug: No driver found in context');
+      // Expected for bots that initialize the browser in step0/openJobUrl.
+      console.log('ℹ️ Driver is not initialized yet; bot will create it in early workflow steps.');
     }
 
     let currentStepName = this.currentStep;
@@ -236,19 +237,29 @@ export class WorkflowEngine {
       const stepConfig = this.config.steps_config[currentStepName];
 
       if (stepConfig.transitions[event]) {
-        logger.info('workflow.transition', 'Workflow transition', {
+        const nextStepName = stepConfig.transitions[event];
+        const nextStepConfig = this.config.steps_config[nextStepName];
+        logger.info(
+          'workflow.transition',
+          `Transition: step ${stepConfig.step} '${currentStepName}' --(${event})-> step ${nextStepConfig?.step ?? '?'} '${nextStepName}'`,
+          {
           fromStep: currentStepName,
+          fromStepNumber: stepConfig.step,
           event,
-          toStep: stepConfig.transitions[event]
-        }, {
+          toStep: nextStepName,
+          toStepNumber: nextStepConfig?.step
+        },
+          {
           sessionId: this.context.sessionId,
           botName: this.context.bot_name
-        });
-        currentStepName = stepConfig.transitions[event];
+          }
+        );
+        currentStepName = nextStepName;
       } else {
         console.warn(`❌ No transition found for event '${event}' in step '${currentStepName}'`);
-        logger.warn('workflow.transition_missing', 'No transition found for event', {
+        logger.warn('workflow.transition_missing', `No transition for event '${event}' in step ${stepConfig.step} '${currentStepName}'`, {
           step: currentStepName,
+          stepNumber: stepConfig.step,
           event
         }, {
           sessionId: this.context.sessionId,
