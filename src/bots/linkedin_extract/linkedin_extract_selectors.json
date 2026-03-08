@@ -1,0 +1,193 @@
+{
+  "urls": {
+    "home_url": "https://www.linkedin.com/",
+    "feed_url": "https://www.linkedin.com/feed/",
+    "login_url": "https://www.linkedin.com/login",
+    "jobs_url": "https://www.linkedin.com/jobs/",
+    "jobs_search_url": "https://www.linkedin.com/jobs/search/"
+  },
+  "auth": {
+    "signin_link_text": "Sign in",
+    "join_now_link_text": "Join now",
+    "forgot_password_link_text": "Forgot password?",
+    "signin_button_xpath": "//button[@type=\"submit\" and contains(text(), \"Sign in\")]",
+    "username_input_id": "username",
+    "password_input_id": "password"
+  },
+  "jobs": {
+    "keywords_input_candidates": [
+      "input[aria-label='Search by title, skill, or company']",
+      "input.jobs-search-box__keyboard-text-input",
+      "input[id^='jobs-search-box-keyword-id']",
+      "input[aria-label*='Search by title']",
+      "input[placeholder*='Title, skill, or company']",
+      "input[role='combobox'][aria-label*='title']"
+    ],
+    "location_input_candidates": [
+      "input[aria-label='City, state, or zip code']",
+      "input[id^='jobs-search-box-location-id']",
+      "input.jobs-search-box__text-input[aria-label*='City']",
+      "input[role='combobox'][aria-label*='City']",
+      "input[aria-label*='Location']"
+    ],
+    "location_input_xpath": ".//input[@aria-label='City, state, or zip code'and not(@disabled)]",
+    "cancel_button": {
+      "css": "button[aria-label='Cancel']",
+      "xpath": ".//button[@aria-label='Cancel']"
+    },
+    "all_filters_button": {
+      "css": "button.search-reusables__all-filters-pill-button",
+      "xpath": "//button[normalize-space()='All filters']",
+      "aria_label_xpath": "//button[contains(@aria-label, 'all filter')]"
+    },
+    "show_results_button": {
+      "css": "button[aria-label*='Apply current filters to show']",
+      "xpath": "//button[contains(@aria-label, 'Apply current filters to show')]"
+    },
+    "job_list_item_xpath": "//li[@data-occludable-job-id]",
+    "job_time_posted_relative_xpath": ".//span[contains(normalize-space(), ' ago')]",
+    "keywords_label_xpath": ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']",
+    "job_details_panel": {
+      "container_css": "div.jobs-details__main-content",
+      "title_css": "div.job-details-jobs-unified-top-card__job-title h1",
+      "title_link_css": "div.job-details-jobs-unified-top-card__job-title h1 a",
+      "company_name_css": "div.job-details-jobs-unified-top-card__company-name a",
+      "company_logo_css": "a[aria-label*='logo'] img",
+      "location_xpath": "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--low-emphasis')][1]",
+      "time_posted_xpath": "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--positive')]//span",
+      "applicants_count_xpath": "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(text(), 'applicants')]",
+      "job_type_tags_css": "div.job-details-fit-level-preferences button",
+      "description_css": "div.jobs-description__content article",
+      "description_text_css": "div.jobs-box__html-content"
+    }
+  },
+  "pagination": {
+    "container_candidates": [
+      "ul.artdeco-pagination__pages.jobs-search-pagination__pages",
+      "ul.jobs-search-pagination__pages",
+      "ul.artdeco-pagination__pages",
+      "nav[aria-label='Pagination']",
+      "div.jobs-search-two-pane__pagination",
+      "div.jobs-search-pagination"
+    ],
+    "active_page_candidates": [
+      "button[aria-current='page']",
+      "button[aria-current='true']",
+      "li.active button",
+      "button.artdeco-pagination__indicator.artdeco-pagination__indicator--number[aria-current]",
+      "button:has(svg[data-test-pagination-current-page-icon])"
+    ],
+    "active_button_xpath": "//button[contains(@class, 'active')]",
+    "next_page_button_xpath_template": "//button[@aria-label='Page {page}']"
+  },
+  "easy_apply": {
+    "button_css_candidates": [
+      "button#jobs-apply-button-id",
+      "button.jobs-apply-button[aria-label*='Easy Apply']",
+      "button.jobs-apply-button[data-job-id]"
+    ],
+    "button_xpath": ".//button[contains(@class,'jobs-apply-button') and contains(@aria-label, 'Easy Apply')]",
+    "general_apply_button_xpath": ".//button[contains(@class,'jobs-apply-button')]",
+    "modal_class": "jobs-easy-apply-modal",
+    "modal_container_css": "div.jobs-easy-apply-modal",
+    "review_button_xpath": "//button[contains(., 'Review')]",
+    "next_button_xpath": "//button[contains(., 'Next') or contains(., 'Continue')]",
+    "submit_button_xpath": "//button[contains(., 'Submit application') or contains(., 'Submit')]",
+    "submit_button_text": "Submit application",
+    "done_button_text": "Done",
+    "discard_button_xpath": "//button[contains(., 'Discard')]",
+    "follow_company": {
+      "checkbox_input_xpath": ".//input[@id='follow-company-checkbox' and @type='checkbox']",
+      "checkbox_label_xpath": ".//label[@for='follow-company-checkbox']"
+    },
+    "resume_file_input_css": "input[type='file']",
+    "resume_file_input_xpath": ".//input[@type='file']",
+    "cover_letter_textarea_css": "textarea[placeholder*='cover letter'], textarea[aria-label*='cover letter'], textarea[data-test-single-line-text-form-component]",
+    "cover_letter_textarea_xpath": "//textarea[contains(@placeholder, 'cover letter') or contains(@aria-label, 'cover letter')]"
+  },
+  "forms": {
+    "question_container_xpath": ".//div[@data-test-form-element]",
+    "question_list_component_xpath": ".//div[@data-test-text-entity-list-form-component]",
+    "question_single_line_component_xpath": ".//div[@data-test-single-line-text-form-component]",
+    "select_xpath": ".//select",
+    "radio_fieldset_xpath": ".//fieldset[@data-test-form-builder-radio-button-form-component=\"true\"]",
+    "radio_title_xpath": ".//span[@data-test-form-builder-radio-button-form-component__title]",
+    "radio_label_by_text_xpath_template": ".//label[normalize-space()='{text}']",
+    "label_for_id_xpath_template": ".//label[@for='{id}']",
+    "text_input_xpath": ".//input[@type='text']",
+    "label_for_xpath": ".//label[@for]",
+    "textarea_xpath": ".//textarea",
+    "checkbox_input_xpath": ".//input[@type='checkbox']",
+    "checkbox_label_visually_hidden_xpath": ".//span[@class='visually-hidden']",
+    "today_button_xpath": "//button[contains(@aria-label, 'This is today')]"
+  },
+  "hr_messaging": {
+    "message_button_xpath": ".//span[normalize-space()='Message']",
+    "message_box_xpath": "//div[@aria-label='Write a message…']"
+  },
+  "classes": {
+    "profile_details": "profile__details",
+    "jobs_company_box": "jobs-company__box",
+    "jobs_box_html_content": "jobs-box__html-content",
+    "artdeco_inline_feedback_message": "artdeco-inline-feedback__message",
+    "jobs_easy_apply_modal": "jobs-easy-apply-modal",
+    "jobs_easy_apply_form_element": "jobs-easy-apply-form-element",
+    "jobs_s_apply_application_link": "jobs-s-apply__application-link",
+    "hirer_card_information": "hirer-card__hirer-information",
+    "jobs_unified_top_card_posted_date": "jobs-unified-top-card__posted-date",
+    "job_details_top_card_primary_description_container": "job-details-jobs-unified-top-card__primary-description-container",
+    "job_details_top_card_primary_description": "job-details-jobs-unified-top-card__primary-description",
+    "jobs_unified_top_card_primary_description": "jobs-unified-top-card__primary-description",
+    "jobs_details_main_content": "jobs-details__main-content",
+    "job_card_list_title": "job-card-list__title",
+    "job_card_container_primary_description": "job-card-container__primary-description",
+    "job_card_container_metadata_item": "job-card-container__metadata-item",
+    "job_card_footer_job_state": "job-card-container__footer-job-state",
+    "artdeco_entity_lockup_subtitle": "artdeco-entity-lockup__subtitle",
+    "jobs_apply_button": "jobs-apply-button",
+    "artdeco_button_3": "artdeco-button--3",
+    "active": "active",
+    "visually_hidden": "visually-hidden",
+    "jobs_search_pagination_pages": "jobs-search-pagination__pages",
+    "artdeco_pagination": "artdeco-pagination",
+    "artdeco_pagination_pages": "artdeco-pagination__pages",
+    "jobs_search_box_input_icon": "jobs-search-box__input-icon",
+    "jobs_search_box_keywords_label": "jobs-search-box__keywords-label"
+  },
+  "texts": {
+    "all_filters": "All filters",
+    "easy_apply": "Easy Apply",
+    "under_10_applicants": "Under 10 applicants",
+    "in_your_network": "In your network",
+    "fair_chance_employer": "Fair Chance Employer",
+    "continue": "Continue",
+    "next": "Next",
+    "review": "Review",
+    "submit_application": "Submit application",
+    "done": "Done",
+    "discard": "Discard",
+    "more": "More",
+    "connect": "Connect",
+    "add_a_note": "Add a note",
+    "message": "Message",
+    "start_a_post": "Start a post",
+    "apply_current_filters_to_show": "Apply current filters to show",
+    "this_is_today": "This is today"
+  },
+  "tag_names": [
+    "a",
+    "label",
+    "span",
+    "input"
+  ],
+  "home_url": "https://www.linkedin.com/",
+  "feed_url": "https://www.linkedin.com/feed/",
+  "login_url": "https://www.linkedin.com/login",
+  "jobs_url": "https://www.linkedin.com/jobs/",
+  "jobs_search_url": "https://www.linkedin.com/jobs/search/",
+  "signin_link_text": "Sign in",
+  "join_now_link_text": "Join now",
+  "signin_button_xpath": "//button[@type=\"submit\" and contains(text(), \"Sign in\")]",
+  "username_input_id": "username",
+  "password_input_id": "password"
+}

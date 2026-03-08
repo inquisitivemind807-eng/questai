@@ -5,6 +5,8 @@ import * as path from 'path';
 import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
 import { logger } from '../../core/logger';
 import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { callApiWithFallback } from './api_fallback';
+import { resolveUseAi } from './ai_provider';
 
 /**
  * Parse API response text like "**Question 1:**\nAnswer one\n\n**Question 2:**\nAnswer two"
@@ -209,8 +211,6 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
         throw new Error(`Canonical resume ${resume.filename} is empty for intelligent Q&A fallback.`);
       }
 
-      const { apiRequest: apiClient } = await import('../../core/api_client');
-
       const compareRequestBody = {
         userId: userEmail || 'unknown@local',
         prompt: getEmployerQuestionsComparePrompt(),
@@ -229,7 +229,6 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
         job_id: `${platform}_${jobId}`,
         questions: aiQuestions,
         resume_text: resumeText,
-        useAi: "deepseek-chat",
         job_details: compareRequestBody.details,
         platform,
         platform_job_id: jobId,
@@ -237,6 +236,8 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
         company: jobData.company || '',
         prompt: compareRequestBody.prompt
       };
+      const useAi = resolveUseAi(ctx);
+      (fallbackRequestBody as any).useAi = useAi;
 
       const jobDir = getJobArtifactDir(ctx, platform === 'linkedin' ? 'linkedin' : 'seek', jobId);
 
@@ -256,7 +257,7 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
       let data: any;
       let answerPayload: unknown;
       try {
-        data = await apiClient('/api/employer-questions/compare', 'POST', compareRequestBody);
+        data = await callApiWithFallback('/api/employer-questions/compare', 'POST', compareRequestBody);
         const results = Array.isArray(data?.results) ? data.results : [];
         const firstSuccessful = results.find((r: any) => r && !r.error && typeof r.text === 'string');
         answerPayload = firstSuccessful?.text ?? '';
@@ -264,7 +265,7 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
         logger.warn('qa.compare_api_failed', 'Primary compare API failed, using questionAndAnswers fallback', {
           error: compareError instanceof Error ? compareError.message : String(compareError)
         });
-        data = await apiClient('/api/questionAndAnswers', 'POST', fallbackRequestBody);
+        data = await callApiWithFallback('/api/questionAndAnswers', 'POST', fallbackRequestBody);
         answerPayload = data?.answers;
       }
 

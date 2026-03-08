@@ -110,17 +110,19 @@ export async function POST({ request }) {
       prompt = `Enhance my resume for this job with focus on: ${enhancementFocus}. Return ONLY the complete enhanced resume text—no scores, no analysis, no commentary.`;
     }
 
+    const requestedAi = String(body.useAi || '').trim();
+
     // Prepare request for corpus-rag API
     const requestBody = {
       job_id: jobId,
       job_details: jobDescription,
       resume_text: resumeText,
-      useAi: "deepseek-chat",
       platform: "manual",
       job_title: "",
       company: "",
       prompt
     };
+    if (requestedAi) requestBody.useAi = requestedAi;
 
     console.log('🔄 Calling corpus-rag API for resume enhancement...');
 
@@ -161,7 +163,7 @@ export async function POST({ request }) {
         originalFitScore: originalFitMatch ? parseInt(originalFitMatch[1]) : null,
         enhancedFitScore: enhancedFitMatch ? parseInt(enhancedFitMatch[1]) : null,
         metadata: {
-          provider: 'deepseek-chat',
+          provider: requestedAi || 'default',
           focus: enhancementFocus,
           timestamp: new Date().toISOString()
         }

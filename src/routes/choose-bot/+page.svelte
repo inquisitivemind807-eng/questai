@@ -8,15 +8,27 @@
   // Dynamic bot list
   let bots = [
     {
-      name: "seek_bot",
+      name: "seek_extract_bot",
       description:
-        "Automate job searching on Seek.com.au with advanced filtering and application features",
+        "Extract jobs from Seek.com.au using keywords, location, and filters (no apply)",
       image: "/seek-logo.png",
     },
     {
-      name: "linkedin_bot",
+      name: "seek_apply_bot",
       description:
-        "Automate job searching on LinkedIn with Easy Apply and smart filtering",
+        "Apply to a single Seek job URL with Quick Apply flow",
+      image: "/seek-logo.png",
+    },
+    {
+      name: "linkedin_extract_bot",
+      description:
+        "Extract jobs from LinkedIn using keywords, location, and filters (no apply)",
+      image: "/linkedin-logo.png",
+    },
+    {
+      name: "linkedin_apply_bot",
+      description:
+        "Apply to a single LinkedIn job URL with Easy Apply flow",
       image: "/linkedin-logo.png",
     },
     {
@@ -86,7 +98,7 @@
       event.message?.includes("initialized")
     ) {
       bot = {
-        name: "seek_bot",
+        name: `${event.data?.botName || "seek_extract"}_bot`,
         botId: event.data?.botId || `bot_${Date.now()}`, // Fallback ID
         currentStep: "Initializing...",
         totalJobs: 0,
@@ -185,7 +197,12 @@
     const alreadyRunning = runningBots.some((bot) => bot.name === botName);
     if (alreadyRunning) return; // Prevent multiple instances of same bot
 
-    if (botName === "seek_bot") {
+    if (
+      botName === "seek_extract_bot" ||
+      botName === "seek_bot" ||
+      botName === "linkedin_extract_bot" ||
+      botName === "linkedin_bot"
+    ) {
       // Toggle configuration field visibility for seek bot
       showConfigForBot = showConfigForBot === botName ? null : botName;
     } else {
@@ -220,13 +237,20 @@
 
       console.log(`Starting ${botName} with streaming...`);
 
-      // Convert bot names: seek_bot -> seek
+      // Convert card names to bot names and preserve backward compatibility.
       const cleanBotName = botName.replace("_bot", "");
+      const resolvedBotName = cleanBotName === "seek" ? "seek_extract" : cleanBotName;
 
       // Start bot with streaming support
-      const params = { botName: cleanBotName };
-      if (cleanBotName === "seek") {
-        params.extractLimit = parseInt(extractCount, 10) || 10;
+      const params = /** @type {any} */ ({ botName: resolvedBotName });
+      if (
+        resolvedBotName === "seek_extract" ||
+        resolvedBotName === "linkedin_extract"
+      ) {
+        const limit = Number(extractCount) || 10;
+        // Pass both naming variants so Rust command mapping is never missed.
+        params.extractLimit = limit;
+        params.extract_limit = limit;
         showConfigForBot = null; // Hide config after starting
       }
 
@@ -350,7 +374,12 @@
                     d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
                   />
                 </svg>
-                {bot.name === "seek_bot" ? "Configure & Start" : "Start Bot"}
+                {bot.name === "seek_extract_bot" ||
+                bot.name === "seek_bot" ||
+                bot.name === "linkedin_extract_bot" ||
+                bot.name === "linkedin_bot"
+                  ? "Configure & Start"
+                  : "Start Bot"}
               </button>
             {/if}
           </div>

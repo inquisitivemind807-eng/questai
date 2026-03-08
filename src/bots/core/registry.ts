@@ -54,8 +54,9 @@ export class BotRegistry {
 
   // Validate bot has required files
   private validate_bot_structure(bot_name: string, bot_path: string): boolean {
+    const resolvedYaml = this.resolve_yaml_path(bot_name, bot_path);
     const required_files = [
-      `${bot_name}_steps.yaml`,
+      resolvedYaml ? path.basename(resolvedYaml) : `${bot_name}_steps.yaml`,
       `${bot_name}_impl.ts`
     ];
 
@@ -85,16 +86,33 @@ export class BotRegistry {
     const selectors_root = path.join(bot_path, `${bot_name}_selectors.json`);
     const selectors_config = path.join(bot_path, 'config', `${bot_name}_selectors.json`);
     const selectors_path = fs.existsSync(selectors_config) ? selectors_config : selectors_root;
+    const yaml_path = this.resolve_yaml_path(bot_name, bot_path) || path.join(bot_path, `${bot_name}_steps.yaml`);
 
     return {
       name: bot_name,
       display_name: this.format_display_name(bot_name),
       description: `Automation bot for ${this.format_display_name(bot_name)}`,
-      yaml_path: path.join(bot_path, `${bot_name}_steps.yaml`),
+      yaml_path,
       impl_path: path.join(bot_path, `${bot_name}_impl.ts`),
       config_path: path.join(bot_path, `${bot_name}_configuration.ts`),
       selectors_path: selectors_path
     };
+  }
+
+  // Resolve workflow YAML with seek-specific fallback naming.
+  private resolve_yaml_path(bot_name: string, bot_path: string): string | null {
+    const candidates =
+      bot_name === 'seek'
+        ? ['seek_extract_steps.yaml', 'seek_steps.yaml']
+        : [`${bot_name}_steps.yaml`];
+
+    for (const candidate of candidates) {
+      const file_path = path.join(bot_path, candidate);
+      if (fs.existsSync(file_path)) {
+        return file_path;
+      }
+    }
+    return null;
   }
 
   // Format bot name for display
@@ -132,10 +150,43 @@ export class BotRegistry {
           return JSON.parse(fs.readFileSync(core_config_path, 'utf8'));
         } else {
           console.warn(`[Registry] Configuration file not found for '${bot_name}', using defaults`);
-          return {};
+          // Return default structure similar to user-bots-config.json
+          return {
+            formData: {
+              fullName: "",
+              email: "",
+              phone: "",
+              linkedinUrl: "",
+              keywords: "",
+              locations: "",
+              minSalary: "",
+              maxSalary: "",
+              jobType: "any",
+              experienceLevel: "any",
+              industry: "",
+              listedDate: "",
+              remotePreference: "any",
+              rightToWork: "citizen",
+              rewriteResume: false,
+              excludedCompanies: "",
+              excludedKeywords: "",
+              skillWeight: "0.4",
+              locationWeight: "0.2",
+              salaryWeight: "0.3",
+              companyWeight: "0.1",
+              enableDeepSeek: false,
+              deepSeekApiKey: "",
+              acceptTerms: false,
+              resumeFileName: "",
+              botMode: "superbot"
+            },
+            industries: [],
+            workRightOptions: []
+          };
         }
       }
     } catch (error) {
+
       console.error(`[Registry] Error loading config for '${bot_name}': ${error}`);
       return {};
     }

@@ -75,9 +75,10 @@ function resolveEntryPath(userId: string, entry: ManagedFileEntry): string {
   if (!rel || path.isAbsolute(rel)) {
     throw new Error('Managed file path must be relative');
   }
-  const normalizedRel = rel.split('/').join(path.sep);
-  const parts = normalizedRel.split(path.sep);
-  if (parts[0] !== 'storage' || parts.includes('..')) {
+  const normalizedRel = path.normalize(rel.split('\\').join('/')).split('/').join(path.sep);
+  const parts = normalizedRel.split(path.sep).filter(Boolean);
+  const allowedRoots = new Set(['storage', 'resumes']);
+  if (parts.length === 0 || !allowedRoots.has(parts[0]) || parts.includes('..')) {
     throw new Error('Invalid managed file path');
   }
   const full = path.join(userRoot, normalizedRel);
@@ -85,6 +86,16 @@ function resolveEntryPath(userId: string, entry: ManagedFileEntry): string {
     throw new Error('Managed file path escaped user root');
   }
   return full;
+}
+
+function resolvePreferredTextPath(fullPath: string): string {
+  const ext = path.extname(fullPath).toLowerCase();
+  if (ext === '.txt') return fullPath;
+  const sidecarTxt = fullPath.slice(0, fullPath.length - ext.length) + '.txt';
+  if (fs.existsSync(sidecarTxt)) {
+    return sidecarTxt;
+  }
+  return fullPath;
 }
 
 function sortByUpdatedDesc(a: ManagedFileEntry, b: ManagedFileEntry): number {
@@ -114,17 +125,38 @@ export function readCanonicalResumeText(userId: string, preferredResumeFileName 
     throw new Error(`No canonical .doc/.docx/.pdf resume files found for userId ${userId}`);
   }
 
-  const selected =
-    (preferredResumeFileName
+  const preferred =
+    preferredResumeFileName
       ? candidates.find((entry) => entry.filename === preferredResumeFileName)
-      : undefined) ||
-    candidates.find((entry) => entry.filename.toLowerCase().includes('resume')) ||
-    candidates[0];
-
-  const fullPath = resolveEntryPath(userId, selected);
-  const content = fs.readFileSync(fullPath, 'utf8').trim();
-  if (!content) {
-    throw new Error(`Canonical resume file ${selected.filename} is empty for userId ${userId}`);
+      : undefined;
+  const fallback = candidates.find((entry) => entry.filename.toLowerCase().includes('resume')) || candidates[0];
+  const orderedCandidates: ManagedFileEntry[] = [];
+  if (preferred) orderedCandidates.push(preferred);
+  for (const entry of candidates) {
+    if (!orderedCandidates.includes(entry)) orderedCandidates.push(entry);
   }
-  return { filename: selected.filename, content };
+  if (!orderedCandidates.includes(fallback)) orderedCandidates.push(fallback);
+
+  let lastError: unknown = null;
+  for (const entry of orderedCandidates) {
+    try {
+      const fullPath = resolveEntryPath(userId, entry);
+      const readablePath = resolvePreferredTextPath(fullPath);
+      if (!fs.existsSync(readablePath)) {
+        throw new Error(`Resume file not found at ${readablePath}`);
+      }
+      const content = fs.readFileSync(readablePath, 'utf8').trim();
+      if (!content) {
+        throw new Error(`Canonical resume file ${entry.filename} is empty for userId ${userId}`);
+      }
+      return { filename: entry.filename, content };
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+  }
+
+  throw new Error(
+    `Failed to read canonical resume for userId ${userId}: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
 }

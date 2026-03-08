@@ -3,7 +3,15 @@
 		"#keywords-input"
 	],
 	"location": [
-		"input[name=\"where\"]"
+		"#SearchBar__Where",
+		"input[name=\"where\"]",
+		"input[data-automation=\"SearchBar__Where\"]",
+		"[data-automation=\"whereFieldOptions\"] input[name=\"where\"]"
+	],
+	"search_button": [
+		"button[data-automation=\"searchButton\"]",
+		"#searchButton",
+		"button[type=\"submit\"]"
 	],
 	"job_cards": [
 		"article[data-testid=\"job-card\"]"
