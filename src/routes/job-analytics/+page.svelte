@@ -544,7 +544,12 @@
         return;
       }
       await persistSelectedResumeForBotRun();
-      const mappedBotName = app.platform === "seek" ? "seek_apply" : app.platform;
+      const mappedBotName =
+        app.platform === "seek"
+          ? "seek_apply"
+          : app.platform === "linkedin"
+            ? "linkedin_apply"
+            : app.platform;
       alert(
         `Triggering Bot Apply for ${app.platform} job: ${app.title} via direct job URL... Watch the Tauri console!`,
       );

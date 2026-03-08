@@ -1,0 +1,176 @@
+workflow_meta:
+  title: "LinkedIn Extract"
+  description: "Search LinkedIn jobs and extract/save job details without applying"
+  start_step: "start"
+
+steps_config:
+  start:
+    step: 0
+    func: "step0"
+    transitions:
+      direct_apply_requested: "open_check_login"
+      step0_complete: "open_check_login"
+      ctx_failed: "start"
+    timeout: 30
+    on_timeout_event: "ctx_failed"
+
+  open_check_login:
+    step: 1
+    func: "openCheckLogin"
+    transitions:
+      login_not_needed: "open_jobs_page"
+      user_needs_to_login: "credential_login"
+      cannot_determine_login_status: "open_jobs_page"
+      no_available_page: "show_manual_login_prompt"
+      failed_to_navigate: "show_manual_login_prompt"
+      failed_checking_login_status: "show_manual_login_prompt"
+    timeout: 30
+    on_timeout_event: "failed_to_navigate"
+
+  credential_login:
+    step: 2
+    func: "credentialLogin"
+    transitions:
+      login_successful_on_feed: "open_jobs_page"
+      on_feed_login_successful: "open_jobs_page"
+      no_login_credentials_found: "show_manual_login_prompt"
+      credentials_login_incomplete: "show_manual_login_prompt"
+      no_available_page: "open_check_login"
+      username_input_not_found: "show_manual_login_prompt"
+      password_input_not_found: "show_manual_login_prompt"
+      signin_button_click_failed: "show_manual_login_prompt"
+      wait_for_redirect_timeout: "show_manual_login_prompt"
+      credential_login_failed: "show_manual_login_prompt"
+    timeout: 40
+    on_timeout_event: "credential_login_failed"
+
+  show_manual_login_prompt:
+    step: 4
+    func: "showManualLoginPrompt"
+    transitions:
+      prompt_displayed_to_user: "open_jobs_page"
+      error_showing_manual_login: "open_jobs_page"
+    timeout: 20
+    on_timeout_event: "prompt_displayed_to_user"
+
+  open_jobs_page:
+    step: 5
+    func: "openJobsPage"
+    transitions:
+      jobs_page_loaded: "set_search_keywords"
+      failed_opening_jobs_page: "open_jobs_page"
+    timeout: 30
+    on_timeout_event: "failed_opening_jobs_page"
+
+  set_search_keywords:
+    step: 6
+    func: "setSearchKeywords"
+    transitions:
+      search_keywords_set: "set_search_location"
+      no_keywords_in_settings: "set_search_location"
+      keywords_input_not_found: "set_search_keywords"
+      failed_setting_search_keywords: "set_search_keywords"
+      jobs_page_missing: "set_search_keywords"
+    timeout: 30
+    on_timeout_event: "failed_setting_search_keywords"
+
+  set_search_location:
+    step: 7
+    func: "setSearchLocation"
+    transitions:
+      search_location_set: "apply_filters"
+      no_search_location_in_settings: "apply_filters"
+      location_input_not_found: "apply_filters"
+      failed_setting_search_location: "apply_filters"
+      jobs_page_missing: "set_search_location"
+    timeout: 30
+    on_timeout_event: "failed_setting_search_location"
+
+  apply_filters:
+    step: 8
+    func: "applyFilters"
+    transitions:
+      filters_applied_successfully: "get_page_info"
+      filters_application_failed: "get_page_info"
+      jobs_page_missing: "apply_filters"
+    timeout: 40
+    on_timeout_event: "filters_application_failed"
+
+  get_page_info:
+    step: 9
+    func: "getPageInfo"
+    transitions:
+      page_info_extracted: "extract_job_details"
+      pagination_not_found: "extract_job_details"
+      failed_extracting_page_info: "get_page_info"
+      jobs_page_missing: "get_page_info"
+    timeout: 20
+    on_timeout_event: "failed_extracting_page_info"
+
+  extract_job_details:
+    step: 10
+    func: "extractJobDetails"
+    transitions:
+      jobs_prepared: "open_current_job_card"
+      max_jobs_reached: "finish"
+      no_jobs_page_found: "open_jobs_page"
+      no_job_cards_found: "navigate_to_next_page"
+      failed_extracting_jobs: "extract_job_details"
+    timeout: 60
+    on_timeout_event: "failed_extracting_jobs"
+
+  open_current_job_card:
+    step: 11
+    func: "openCurrentExtractJobCard"
+    transitions:
+      job_card_opened: "parse_job_details_from_panel"
+      no_jobs_to_process: "navigate_to_next_page"
+      job_open_failed: "advance_to_next_job"
+      max_jobs_reached: "finish"
+    timeout: 30
+    on_timeout_event: "job_open_failed"
+
+  parse_job_details_from_panel:
+    step: 12
+    func: "extractJobDetailsFromPanel"
+    transitions:
+      job_details_extracted: "save_scraped_job"
+      job_details_extraction_failed: "advance_to_next_job"
+    timeout: 45
+    on_timeout_event: "job_details_extraction_failed"
+
+  save_scraped_job:
+    step: 13
+    func: "saveLinkedInScrapedJob"
+    transitions:
+      job_saved: "advance_to_next_job"
+      save_failed: "advance_to_next_job"
+    timeout: 45
+    on_timeout_event: "save_failed"
+
+  advance_to_next_job:
+    step: 14
+    func: "advanceExtractCursor"
+    transitions:
+      process_next_job: "open_current_job_card"
+      page_complete: "navigate_to_next_page"
+      max_jobs_reached: "finish"
+    timeout: 10
+    on_timeout_event: "page_complete"
+
+  navigate_to_next_page:
+    step: 15
+    func: "navigateToNextPage"
+    transitions:
+      extract_job_details: "extract_job_details"
+      finish: "finish"
+    timeout: 30
+    on_timeout_event: "finish"
+
+  finish:
+    step: 16
+    func: "finish"
+    transitions:
+      done: "done"
+    timeout: 10
+    on_timeout_event: "done"

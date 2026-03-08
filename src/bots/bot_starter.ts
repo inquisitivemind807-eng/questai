@@ -381,7 +381,12 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
 
       try {
         const platform = (job.platform || 'seek').toLowerCase();
-        const botToRun = platform === 'seek' ? 'seek_apply' : platform;
+        const botToRun =
+          platform === 'seek'
+            ? 'seek_apply'
+            : platform === 'linkedin'
+              ? 'linkedin_apply'
+              : platform;
 
         // Build the specific bot configuration tailored to this job & user preference
         const normalizedDirectApplyUrl =
@@ -470,12 +475,11 @@ if (import.meta.main) {
         process.exit(1);
       }
     })();
-  } else if (job_url && bot_name === 'linkedin') {
+  } else if (job_url && (bot_name === 'linkedin' || bot_name === 'linkedin_apply')) {
     (async () => {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
-        // For LinkedIn, we just pass directApplyUrl into the config and let the standard runner handle it
-        await run_bot('linkedin', { directApplyUrl: job_url }, { headless, keep_open: !no_keep_open });
+        await run_bot('linkedin_apply', { directApplyUrl: job_url }, { headless, keep_open: !no_keep_open });
       } catch (error) {
         console.error('LinkedIn Direct Apply execution failed:', error);
         process.exit(1);

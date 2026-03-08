@@ -22,6 +22,119 @@ const printLog = (message: string) => {
   console.log(message);
 };
 
+function parseLinkedInJobId(rawUrl: string | undefined): string {
+  if (!rawUrl) return '';
+  try {
+    const parsed = new URL(rawUrl);
+    const pathMatch = parsed.pathname.match(/\/jobs\/view\/(\d+)/);
+    if (pathMatch?.[1]) return pathMatch[1];
+    const queryId = parsed.searchParams.get('currentJobId') || parsed.searchParams.get('jobId');
+    return queryId || '';
+  } catch {
+    const fallbackMatch = String(rawUrl).match(/\/jobs\/view\/(\d+)/);
+    return fallbackMatch?.[1] || '';
+  }
+}
+
+function getLinkedInExtractLimit(ctx: WorkflowContext): number {
+  const cfg: any = (ctx as any)?.config || {};
+  const candidates = [
+    cfg.maxJobsToProcess,
+    cfg.extractLimit,
+    cfg.extract_limit,
+    cfg?.formData?.maxJobsToProcess,
+    cfg?.formData?.extractLimit
+  ];
+  for (const raw of candidates) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+  }
+  return 0;
+}
+
+function getLinkedInOverlayProgress(ctx: WorkflowContext): { done: number; total: number } {
+  const done = Number((ctx as any).jobs_extracted || 0);
+  const configuredTotal = getLinkedInExtractLimit(ctx);
+  const runtimeTotal = Number((ctx as any).total_jobs || 0);
+  const total = configuredTotal > 0 ? configuredTotal : runtimeTotal;
+  return { done, total: total > 0 ? total : 0 };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      })
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function normalizeComparableText(value: string): string {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function isLikelySameText(a: string, b: string): boolean {
+  const left = normalizeComparableText(a);
+  const right = normalizeComparableText(b);
+  if (!left || !right) return false;
+  return left.includes(right) || right.includes(left);
+}
+
+async function waitForLinkedInPanelSync(
+  driver: WebDriver,
+  selectors: any,
+  expected: { job_id?: string; title?: string; company?: string },
+  timeoutMs: number = 9000
+): Promise<boolean> {
+  const started = Date.now();
+  const titleSelector = selectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1';
+  const companySelector = selectors?.company_name_css || 'div.job-details-jobs-unified-top-card__company-name a';
+
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const currentUrl = await driver.getCurrentUrl().catch(() => '');
+      const urlJobId = parseLinkedInJobId(currentUrl);
+      if (expected.job_id && urlJobId && String(urlJobId) === String(expected.job_id)) {
+        return true;
+      }
+
+      let panelTitle = '';
+      let panelCompany = '';
+      try {
+        panelTitle = (await (await driver.findElement(By.css(titleSelector))).getText()).trim();
+      } catch {
+        panelTitle = '';
+      }
+      try {
+        panelCompany = (await (await driver.findElement(By.css(companySelector))).getText()).trim();
+      } catch {
+        panelCompany = '';
+      }
+
+      const titleMatches = expected.title ? isLikelySameText(panelTitle, expected.title) : Boolean(panelTitle);
+      const companyMatches = expected.company ? isLikelySameText(panelCompany, expected.company) : true;
+      if (titleMatches && companyMatches) {
+        return true;
+      }
+    } catch {
+      // continue polling
+    }
+    await driver.sleep(300);
+  }
+
+  return false;
+}
+
 // #region agent log
 const DEBUG_LOG = (location: string, message: string, data: Record<string, unknown>, hypothesisId: string) => {
   const payload = { location, message, data, timestamp: Date.now(), sessionId: 'debug-session', hypothesisId };
@@ -222,7 +335,10 @@ export async function* openJobsPage(ctx: WorkflowContext): AsyncGenerator<string
       printLog("Warning: Search form not found after waiting; proceeding anyway.");
     }
 
-    await ctx.overlay.showJobProgress(0, 0, "Initializing LinkedIn bot...", 5);
+    {
+      const progress = getLinkedInOverlayProgress(ctx);
+      await ctx.overlay.showJobProgress(progress.done, progress.total, "Initializing LinkedIn bot...", 5);
+    }
 
     yield "jobs_page_loaded";
   } catch (error) {
@@ -257,7 +373,10 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
       if (urlLocation && urlLocation.toLowerCase().includes(location.toLowerCase())) {
         printLog(`Location already in URL: ${urlLocation}, skipping form fill`);
         ctx.search_location = location;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location already set via URL", 7).catch(() => { });
+        if (ctx.overlay) {
+          const progress = getLinkedInOverlayProgress(ctx);
+          await ctx.overlay.showJobProgress(progress.done, progress.total, "Location already set via URL", 7).catch(() => { });
+        }
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Location already in URL, skipping', { urlLocation, yielded: 'search_location_set' }, 'H1');
         // #endregion
@@ -295,7 +414,10 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
 
         printLog(`Location: ${location}`);
         ctx.search_location = location;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location set", 7).catch(() => { });
+        if (ctx.overlay) {
+          const progress = getLinkedInOverlayProgress(ctx);
+          await ctx.overlay.showJobProgress(progress.done, progress.total, "Location set", 7).catch(() => { });
+        }
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Location set', { selectorIndex: idx, yielded: 'search_location_set' }, 'H2');
         // #endregion
@@ -322,7 +444,10 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
         await locationInput.sendKeys(Key.ENTER);
         printLog(`Location (XPath): ${location}`);
         ctx.search_location = location;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location set", 7).catch(() => { });
+        if (ctx.overlay) {
+          const progress = getLinkedInOverlayProgress(ctx);
+          await ctx.overlay.showJobProgress(progress.done, progress.total, "Location set", 7).catch(() => { });
+        }
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Location set via XPath', { xpathIndex: idx, yielded: 'search_location_set' }, 'H2');
         // #endregion
@@ -334,13 +459,19 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
     }
 
     // Location input not found - yield outcome that transitions to set_search_keywords (so we always proceed without requiring YAML change / restart)
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Location not set", 7).catch(() => { });
+    if (ctx.overlay) {
+      const progress = getLinkedInOverlayProgress(ctx);
+      await ctx.overlay.showJobProgress(progress.done, progress.total, "Location not set", 7).catch(() => { });
+    }
     // #region agent log
     DEBUG_LOG('linkedin_impl.ts:setSearchLocation', 'Yield no_search_location_in_settings (proceed to keywords)', { yielded: 'no_search_location_in_settings' }, 'H2');
     // #endregion
     yield "no_search_location_in_settings";
   } catch (error) {
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Error setting location", 7).catch(() => { });
+    if (ctx.overlay) {
+      const progress = getLinkedInOverlayProgress(ctx);
+      await ctx.overlay.showJobProgress(progress.done, progress.total, "Error setting location", 7).catch(() => { });
+    }
     yield "failed_setting_search_location";
   }
 }
@@ -369,7 +500,10 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
       if (urlKeywords && urlKeywords.toLowerCase().includes(keywords.toLowerCase())) {
         printLog(`Keywords already in URL: ${urlKeywords}, skipping form fill`);
         ctx.search_keywords = keywords;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords already set via URL", 6).catch(() => { });
+        if (ctx.overlay) {
+          const progress = getLinkedInOverlayProgress(ctx);
+          await ctx.overlay.showJobProgress(progress.done, progress.total, "Keywords already set via URL", 6).catch(() => { });
+        }
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchKeywords', 'Keywords already in URL, skipping', { urlKeywords, yielded: 'search_keywords_set' }, 'H1');
         // #endregion
@@ -405,7 +539,10 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
 
         printLog(`Keywords: ${keywords}`);
         ctx.search_keywords = keywords;
-        if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords set", 6).catch(() => { });
+        if (ctx.overlay) {
+          const progress = getLinkedInOverlayProgress(ctx);
+          await ctx.overlay.showJobProgress(progress.done, progress.total, "Keywords set", 6).catch(() => { });
+        }
         // #region agent log
         DEBUG_LOG('linkedin_impl.ts:setSearchKeywords', 'Keywords set', { selectorIndex: idx, yielded: 'search_keywords_set' }, 'H2');
         // #endregion
@@ -419,13 +556,19 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
       }
     }
 
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Keywords input not found", 6).catch(() => { });
+    if (ctx.overlay) {
+      const progress = getLinkedInOverlayProgress(ctx);
+      await ctx.overlay.showJobProgress(progress.done, progress.total, "Keywords input not found", 6).catch(() => { });
+    }
     // #region agent log
     DEBUG_LOG('linkedin_impl.ts:setSearchKeywords', 'Yield keywords_input_not_found', { yielded: 'keywords_input_not_found' }, 'H2');
     // #endregion
     yield "keywords_input_not_found";
   } catch (error) {
-    if (ctx.overlay) await ctx.overlay.showJobProgress(0, 0, "Error setting keywords", 6).catch(() => { });
+    if (ctx.overlay) {
+      const progress = getLinkedInOverlayProgress(ctx);
+      await ctx.overlay.showJobProgress(progress.done, progress.total, "Error setting keywords", 6).catch(() => { });
+    }
     yield "failed_setting_search_keywords";
   }
 }
@@ -561,34 +704,39 @@ export async function* getPageInfo(ctx: WorkflowContext): AsyncGenerator<string,
 export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
+    const extractLimit = getLinkedInExtractLimit(ctx);
+    const alreadyExtracted = Number((ctx as any).jobs_extracted || 0);
+    if (extractLimit > 0) {
+      printLog(`LinkedIn extract limit: ${extractLimit} (already processed: ${alreadyExtracted})`);
+    }
+
+    if (extractLimit > 0 && alreadyExtracted >= extractLimit) {
+      printLog(`Reached extract limit (${extractLimit}), finishing extract flow`);
+      yield "max_jobs_reached";
+      return;
+    }
 
     await driver.sleep(2000);
 
-    // Wait for job list to load (up to 15s) then find job cards
-    let jobCards: Awaited<ReturnType<WebDriver['findElements']>>;
+    // Wait for list to load and only prepare page cursor (no pre-iteration over every card).
+    let jobCards: Awaited<ReturnType<WebDriver['findElements']>> = [];
     try {
-      await driver.wait(until.elementsLocated(By.css('li[data-occludable-job-id]')), 15000);
-      jobCards = await driver.findElements(By.css('li[data-occludable-job-id]'));
+      await driver.wait(until.elementsLocated(By.css('li[data-occludable-job-id], li[data-job-id]')), 15000);
+      jobCards = await driver.findElements(By.css('li[data-occludable-job-id], li[data-job-id]'));
     } catch {
       jobCards = [];
-    }
-    // Fallback: LinkedIn sometimes uses different list structure
-    if (jobCards.length === 0) {
-      jobCards = await driver.findElements(By.css('li[data-job-id]'));
     }
     if (jobCards.length === 0) {
       const jobLinks = await driver.findElements(By.css('a[href*="/jobs/view/"]'));
       if (jobLinks.length > 0) {
-        const listItems: Awaited<ReturnType<WebDriver['findElements']>> = [];
         for (const link of jobLinks) {
           try {
             const li = await link.findElement(By.xpath('./ancestor::li[1]'));
-            listItems.push(li);
+            jobCards.push(li);
           } catch {
             // skip
           }
         }
-        jobCards = listItems;
       }
     }
 
@@ -603,87 +751,49 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
       return;
     }
 
-    printLog(`Found ${jobCards.length} jobs`);
+    printLog(`Found ${jobCards.length} jobs on current page`);
+    const remaining = extractLimit > 0 ? Math.max(0, extractLimit - alreadyExtracted) : jobCards.length;
+    const pageJobCount = Math.min(jobCards.length, remaining);
 
-    const extractedJobs: any[] = [];
+    ctx.extracted_jobs = [];
+    (ctx as any).page_job_count = pageJobCount;
+    ctx.total_jobs = extractLimit > 0 ? extractLimit : Math.max(Number(ctx.total_jobs || 0), alreadyExtracted + pageJobCount);
+    ctx.applied_jobs = ctx.applied_jobs || 0;
+    ctx.skipped_jobs = ctx.skipped_jobs || 0;
+    (ctx as any).jobs_extracted = alreadyExtracted;
+    (ctx as any).last_extract_success = false;
+    ctx.current_job_index = 0;
+    ctx.current_job = null;
 
-    for (let i = 0; i < jobCards.length; i++) {
-      try {
-        const card = jobCards[i];
-
-        // Scroll to card
-        await driver.executeScript("arguments[0].scrollIntoView(true);", card);
-        await driver.sleep(500);
-
-        let jobId = await card.getAttribute('data-occludable-job-id') || await card.getAttribute('data-job-id');
-        if (!jobId) {
-          try {
-            const link = await card.findElement(By.css('a[href*="/jobs/view/"]'));
-            const href = await link.getAttribute('href') || '';
-            const match = href.match(/\/jobs\/view\/(\d+)/);
-            if (match) jobId = match[1];
-          } catch {
-            // skip
-          }
-        }
-        if (!jobId) continue;
-
-        // Extract title (primary and fallback selectors)
-        let title = '';
-        try {
-          const titleElement = await card.findElement(By.css('a.job-card-list__title--link'));
-          title = (await titleElement.getText()).trim();
-        } catch {
-          try {
-            const titleElement = await card.findElement(By.css('a[href*="/jobs/view/"]'));
-            title = (await titleElement.getText()).trim();
-          } catch (error) {
-            continue;
-          }
-        }
-
-        // Extract company
-        let company = '';
-        try {
-          const companyElement = await card.findElement(By.css('.artdeco-entity-lockup__subtitle span'));
-          company = (await companyElement.getText()).trim();
-        } catch (error) {
-          // Ignore
-        }
-
-        // Extract location
-        let location = '';
-        try {
-          const locationElement = await card.findElement(By.css('.job-card-container__metadata-wrapper li span'));
-          location = (await locationElement.getText()).trim();
-        } catch (error) {
-          // Ignore
-        }
-
-        extractedJobs.push({
-          job_id: jobId,
-          title: title,
-          company: company,
-          work_location: location,
-          is_applied: false
-        });
-      } catch (error) {
-        continue;
+    const toProcess = pageJobCount;
+    if (toProcess === 0) {
+      if (extractLimit > 0 && alreadyExtracted >= extractLimit) {
+        yield "max_jobs_reached";
+      } else {
+        yield "no_job_cards_found";
       }
+      return;
     }
 
-    ctx.extracted_jobs = extractedJobs;
-    ctx.total_jobs = extractedJobs.length;
-    ctx.applied_jobs = 0;
-    ctx.skipped_jobs = 0;
-    ctx.current_job_index = 0;
-
-    await ctx.overlay.updateJobProgress(0, extractedJobs.length, "Jobs extracted", 10);
+    await ctx.overlay.updateJobProgress(
+      alreadyExtracted,
+      ctx.total_jobs || toProcess,
+      `Prepared ${toProcess} jobs on page ${ctx.pagination_current_page || 1}`,
+      10
+    );
+    await ctx.overlay.addLogEvent(
+      `Prepared ${toProcess} jobs on page ${ctx.pagination_current_page || 1} (${alreadyExtracted}/${ctx.total_jobs || toProcess} done)`
+    );
 
     // #region agent log
-    DEBUG_LOG('linkedin_impl.ts:extractJobDetails', 'Extract done', { extractedCount: extractedJobs.length, yielded: 'proceed_to_process_jobs' }, 'H3');
+    DEBUG_LOG('linkedin_impl.ts:extractJobDetails', 'Page prepared for sequential extraction', { pageJobCount: toProcess, yielded: 'jobs_prepared' }, 'H3');
     // #endregion
-    yield "proceed_to_process_jobs";
+    if ((ctx as any).bot_name === 'linkedin_extract') {
+      yield "jobs_prepared";
+    } else {
+      // Backward-compatible path for legacy linkedin_steps.yaml
+      yield "proceed_to_process_jobs";
+    }
   } catch (error) {
     printLog(`Error extracting job details: ${error}`);
     // #region agent log
@@ -739,15 +849,372 @@ export async function* processJobs(ctx: WorkflowContext): AsyncGenerator<string,
   yield "jobs_saved";
 }
 
+// Open current card from prepared extracted_jobs list (extract-only pipeline).
+export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const driver = ctx.driver;
+    const panelSelectors = ctx.selectors?.jobs?.job_details_panel;
+    const totalJobs = Number(ctx.total_jobs || 0);
+    const currentIndex = Number(ctx.current_job_index || 0);
+    const pageJobCount = Number((ctx as any).page_job_count || 0);
+    const extractLimit = getLinkedInExtractLimit(ctx);
+    const alreadyExtracted = Number((ctx as any).jobs_extracted || 0);
+
+    if (extractLimit > 0 && alreadyExtracted >= extractLimit) {
+      yield "max_jobs_reached";
+      return;
+    }
+    if (pageJobCount <= 0 || currentIndex >= pageJobCount) {
+      yield "no_jobs_to_process";
+      return;
+    }
+
+    let jobCards = await driver.findElements(By.css('li[data-occludable-job-id], li[data-job-id]'));
+    if (jobCards.length === 0) {
+      const links = await driver.findElements(By.css('a[href*="/jobs/view/"]'));
+      const listItems: Awaited<ReturnType<WebDriver['findElements']>> = [];
+      for (const link of links) {
+        try {
+          listItems.push(await link.findElement(By.xpath('./ancestor::li[1]')));
+        } catch {
+          // skip
+        }
+      }
+      jobCards = listItems;
+    }
+    if (jobCards.length === 0 || currentIndex >= jobCards.length) {
+      yield "no_jobs_to_process";
+      return;
+    }
+
+    const card = jobCards[currentIndex];
+    await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card);
+    await driver.sleep(200);
+
+    let jobId = await card.getAttribute('data-occludable-job-id') || await card.getAttribute('data-job-id');
+    if (!jobId) {
+      try {
+        const link = await card.findElement(By.css('a[href*="/jobs/view/"]'));
+        const href = await link.getAttribute('href') || '';
+        const match = href.match(/\/jobs\/view\/(\d+)/);
+        if (match?.[1]) jobId = match[1];
+      } catch {
+        // ignore
+      }
+    }
+
+    if (!jobId) {
+      (ctx as any).last_extract_success = false;
+      yield "job_open_failed";
+      return;
+    }
+    let title = '';
+    let company = '';
+    let location = '';
+    try {
+      const titleEl = await card.findElement(By.css('a.job-card-list__title--link, a[href*="/jobs/view/"]'));
+      title = (await titleEl.getText()).trim();
+    } catch {
+      // ignore
+    }
+    try {
+      const companyEl = await card.findElement(By.css('.artdeco-entity-lockup__subtitle span'));
+      company = (await companyEl.getText()).trim();
+    } catch {
+      // ignore
+    }
+    try {
+      const locationEl = await card.findElement(By.css('.job-card-container__metadata-wrapper li span'));
+      location = (await locationEl.getText()).trim();
+    } catch {
+      // ignore
+    }
+    const currentJob = {
+      job_id: String(jobId),
+      title,
+      company,
+      work_location: location,
+      location,
+      url: `https://www.linkedin.com/jobs/view/${jobId}`
+    };
+    ctx.current_job = currentJob;
+    // Reset parsed artifacts to avoid stale file reuse between cards.
+    ctx.currentJobFile = '';
+    ctx.currentJobDir = '';
+    ctx.current_job_details = null;
+
+    const originalWindow = await driver.getWindowHandle().catch(() => '');
+    let opened = false;
+    try {
+      await withTimeout(
+        driver.executeScript(`
+          const card = arguments[0];
+          const link = card?.querySelector?.('a[href*="/jobs/view/"]');
+          if (link) {
+            link.setAttribute('target', '_self');
+            link.removeAttribute('rel');
+          }
+          card?.click?.();
+        `, card),
+        6000,
+        'Open LinkedIn job card click'
+      );
+      opened = true;
+    } catch {
+      // fallback handled below
+    }
+
+    // Guardrail: if LinkedIn still opens a new tab, close it and stay in the original tab.
+    try {
+      const handles = await driver.getAllWindowHandles();
+      if (handles.length > 1) {
+        const original = originalWindow || handles[0];
+        for (const handle of handles) {
+          if (handle !== original) {
+            await driver.switchTo().window(handle);
+            await driver.close();
+          }
+        }
+        await driver.switchTo().window(original);
+      }
+    } catch {
+      // keep flow running even if window-handle operations fail
+    }
+
+    if (!opened) {
+      // If we are already on that job details URL, continue.
+      const currentUrl = await driver.getCurrentUrl().catch(() => '');
+      opened = currentUrl.includes(`/jobs/view/${jobId}`);
+    }
+    if (!opened) {
+      try {
+        const directUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
+        await withTimeout(driver.get(directUrl), 12000, 'Open LinkedIn direct job URL');
+        await driver.sleep(2000);
+        opened = true;
+      } catch {
+        // keep failure path below
+      }
+    }
+    if (!opened) {
+      printLog(`⚠️ Could not open LinkedIn card ${currentIndex + 1}/${pageJobCount} (jobId=${jobId})`);
+      await ctx.overlay.addLogEvent(`Failed to open card ${currentIndex + 1}/${pageJobCount} (${jobId})`);
+      (ctx as any).last_extract_success = false;
+      yield "job_open_failed";
+      return;
+    }
+
+    // Ensure details panel actually became readable; otherwise skip this card.
+    let panelReady = false;
+    const readyCandidates = [
+      panelSelectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1',
+      panelSelectors?.description_text_css || 'div.jobs-box__html-content',
+      'div.jobs-search__job-details--wrapper'
+    ];
+    for (const selector of readyCandidates) {
+      if (!selector) continue;
+      try {
+        await withTimeout(driver.wait(until.elementLocated(By.css(selector)), 3000), 5000, `Wait job details selector: ${selector}`);
+        panelReady = true;
+        break;
+      } catch {
+        // try next candidate
+      }
+    }
+    if (!panelReady) {
+      printLog(`⚠️ Job details panel not readable for jobId=${jobId}; skipping`);
+      await ctx.overlay.addLogEvent(`Skipping unreadable job ${currentIndex + 1}/${pageJobCount} (${jobId})`);
+      (ctx as any).last_extract_success = false;
+      yield "job_open_failed";
+      return;
+    }
+
+    // Critical guard: ensure the details panel switched to the clicked card context.
+    const synced = await waitForLinkedInPanelSync(driver, panelSelectors, currentJob, 9000);
+    if (!synced) {
+      printLog(`⚠️ Panel did not sync to clicked job ${jobId}; skipping to avoid duplicate save`);
+      await ctx.overlay.addLogEvent(`Skipping unsynced panel for ${jobId}`);
+      (ctx as any).last_extract_success = false;
+      yield "job_open_failed";
+      return;
+    }
+
+    await driver.sleep(500);
+    const progressMsg = `${alreadyExtracted + 1}/${totalJobs || pageJobCount} ${currentJob?.title || 'LinkedIn job'}`;
+    printLog(`🔍 Processing LinkedIn job ${progressMsg}`);
+    await ctx.overlay.updateJobProgress(
+      alreadyExtracted,
+      totalJobs || pageJobCount,
+      `Opening job ${alreadyExtracted + 1}/${totalJobs || pageJobCount}`,
+      11
+    );
+    await ctx.overlay.addLogEvent(
+      `Opening: ${currentJob?.title || 'Unknown title'} @ ${currentJob?.company || 'Unknown company'}`
+    );
+    yield "job_card_opened";
+  } catch (error) {
+    printLog(`openCurrentExtractJobCard error: ${error}`);
+    (ctx as any).last_extract_success = false;
+    yield "job_open_failed";
+  }
+}
+
+// Save a parsed LinkedIn job one-by-one, using Seek-style robust save path.
+export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    if (!ctx.currentJobFile || !fs.existsSync(ctx.currentJobFile)) {
+      throw new Error("No parsed LinkedIn job details file found.");
+    }
+
+    const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
+    const platformJobId = String(
+      jobData.job_id ||
+      parseLinkedInJobId(jobData.url) ||
+      ctx.current_job?.job_id ||
+      Date.now()
+    );
+    const payload = {
+      platform: 'linkedin',
+      platformJobId,
+      title: jobData.title || ctx.current_job?.title || 'Unknown Job Title',
+      company: jobData.company || ctx.current_job?.company || 'Unknown Company',
+      url: jobData.url || `https://www.linkedin.com/jobs/view/${platformJobId}`,
+      location: jobData.location || ctx.current_job?.work_location || undefined,
+      description: jobData.description || jobData.details || undefined,
+      postedDate: jobData.time_posted || jobData.postedDate || undefined,
+      workMode: Array.isArray(jobData.job_type_tags)
+        ? (jobData.job_type_tags.find((tag: string) => /remote|hybrid|on[- ]?site|onsite/i.test(String(tag))) || undefined)
+        : undefined,
+      jobType: Array.isArray(jobData.job_type_tags)
+        ? (jobData.job_type_tags.find((tag: string) => /full[- ]?time|part[- ]?time|contract|intern|temporary|casual/i.test(String(tag))) || undefined)
+        : undefined,
+      salary: jobData.salary || undefined,
+      clientEmail: jobData.clientEmail || getClientEmailFromContext(ctx) || undefined,
+      rawData: jobData
+    };
+
+    let saved = false;
+    try {
+      const { apiRequest } = await import('../core/api_client.js');
+      const result = await apiRequest('/api/scraped-jobs', 'POST', payload);
+      if (result?.success) {
+        printLog(`✅ Saved LinkedIn job to DB: ${payload.title} (${platformJobId})`);
+        saved = true;
+      } else {
+        printLog(`⚠️ LinkedIn save returned unexpected response: ${JSON.stringify(result)}`);
+      }
+    } catch (apiErr) {
+      printLog(`⚠️ LinkedIn save via apiRequest failed: ${apiErr}`);
+    }
+
+    if (!saved) {
+      try {
+        const baseUrl = process.env.API_BASE || process.env.PUBLIC_API_BASE || 'http://localhost:3000';
+        const tokenFromEnv = process.env.CORPUS_RAG_TOKEN || process.env.CORPUS_RAG_API_TOKEN || '';
+        const tokenPath = path.join(process.cwd(), '.cache', 'api_token.txt');
+        const tokenFromCache = fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, 'utf8').trim() : '';
+        const token = tokenFromEnv || tokenFromCache;
+
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json'
+        };
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+
+        const response = await fetch(`${baseUrl}/api/scraped-jobs`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        });
+
+        if (response.ok) {
+          printLog(`✅ Saved LinkedIn job via fallback: ${payload.title} (${platformJobId})`);
+          saved = true;
+        } else {
+          const errText = await response.text().catch(() => '');
+          printLog(`⚠️ LinkedIn fallback save failed (${response.status}): ${errText}`);
+        }
+      } catch (fallbackErr) {
+        printLog(`⚠️ LinkedIn fallback save error: ${fallbackErr}`);
+      }
+    }
+
+    const extractedCount = Number((ctx as any).jobs_extracted || 0);
+    const totalJobs = Number(ctx.total_jobs || (ctx.extracted_jobs || []).length || extractedCount);
+    const statusText = saved ? 'saved' : 'save failed';
+    await ctx.overlay.updateJobProgress(
+      extractedCount,
+      totalJobs,
+      `${saved ? 'Saved' : 'Failed to save'} job ${Math.min(extractedCount + 1, totalJobs)}/${totalJobs}`,
+      13
+    );
+    await ctx.overlay.addLogEvent(
+      `${saved ? 'Saved' : 'Failed'} ${Math.min(extractedCount + 1, totalJobs)}/${totalJobs}: ${payload.title} @ ${payload.company}`
+    );
+    (ctx as any).last_extract_success = saved;
+
+    yield saved ? "job_saved" : "save_failed";
+  } catch (error) {
+    printLog(`saveLinkedInScrapedJob error: ${error}`);
+    (ctx as any).last_extract_success = false;
+    yield "save_failed";
+  }
+}
+
+// Move to next card or next page for extract-only flow.
+export async function* advanceExtractCursor(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  const pageJobCount = Number((ctx as any).page_job_count || 0);
+  const currentIndex = Number(ctx.current_job_index || 0);
+  const nextIndex = currentIndex + 1;
+  const extractLimit = getLinkedInExtractLimit(ctx);
+  const didSaveCurrentJob = Boolean((ctx as any).last_extract_success);
+  const extractedCount = Number((ctx as any).jobs_extracted || 0) + (didSaveCurrentJob ? 1 : 0);
+  (ctx as any).jobs_extracted = extractedCount;
+  const totalJobs = Number(ctx.total_jobs || pageJobCount || extractedCount);
+  (ctx as any).last_extract_success = false;
+
+  if (extractLimit > 0 && extractedCount >= extractLimit) {
+    void ctx.overlay.addLogEvent(`Reached extract limit (${extractLimit})`);
+    yield "max_jobs_reached";
+    return;
+  }
+  if (nextIndex < pageJobCount) {
+    ctx.current_job_index = nextIndex;
+    ctx.current_job = null;
+    void ctx.overlay.updateJobProgress(
+      extractedCount,
+      totalJobs,
+      didSaveCurrentJob
+        ? `Moving to next job ${nextIndex + 1}/${pageJobCount}`
+        : `Skipping failed job, moving to ${nextIndex + 1}/${pageJobCount}`,
+      14
+    );
+    yield "process_next_job";
+    return;
+  }
+  void ctx.overlay.addLogEvent(`Completed page ${ctx.pagination_current_page || 1} (${extractedCount}/${totalJobs})`);
+  yield "page_complete";
+}
+
 // Attempt Easy Apply
 export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
-    const currentJob = ctx.current_job;
+    let currentJob = ctx.current_job;
 
     if (!currentJob) {
-      yield "no_job_to_process";
-      return;
+      const currentUrl = await driver.getCurrentUrl().catch(() => '');
+      const inferredJobId = parseLinkedInJobId(currentUrl) || parseLinkedInJobId(ctx.config?.directApplyUrl);
+      if (!inferredJobId) {
+        yield "no_job_to_process";
+        return;
+      }
+      currentJob = {
+        job_id: inferredJobId,
+        title: await driver.getTitle().catch(() => 'LinkedIn Job'),
+        company: '',
+        work_location: ''
+      };
+      ctx.current_job = currentJob;
     }
 
     const jobId = currentJob.job_id;
@@ -756,12 +1223,21 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
 
     printLog(`Processing: ${jobTitle}`);
 
-    // Click on the job card to load details
+    // Click on the job card to load details. In direct URL mode the card might not exist.
+    let onJobDetailsPage = false;
     try {
       const jobCard = await driver.findElement(By.css(`[data-occludable-job-id="${jobId}"]`));
       await jobCard.click();
       await driver.sleep(2000);
-    } catch (error) {
+      onJobDetailsPage = true;
+    } catch {
+      const currentUrl = await driver.getCurrentUrl().catch(() => '');
+      if (currentUrl.includes('/jobs/view/')) {
+        onJobDetailsPage = true;
+      }
+    }
+
+    if (!onJobDetailsPage) {
       yield "job_card_not_found";
       return;
     }
@@ -848,6 +1324,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     const currentJob = ctx.current_job;
 
     if (!currentJob || !currentJob.job_id) {
+      (ctx as any).last_extract_success = false;
       yield "job_details_extraction_failed";
       return;
     }
@@ -855,8 +1332,44 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     const jobId = currentJob.job_id;
     const selectors = ctx.selectors?.jobs?.job_details_panel;
 
+    // Fast-fail when the details view is not actually loaded for this card.
+    let detailsReady = false;
+    const readinessSelectors = [
+      selectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1',
+      selectors?.description_text_css || 'div.jobs-box__html-content',
+      'div.jobs-search__job-details--wrapper'
+    ];
+    for (const selector of readinessSelectors) {
+      if (!selector) continue;
+      try {
+        await withTimeout(driver.wait(until.elementLocated(By.css(selector)), 3000), 5000, `Extract wait selector: ${selector}`);
+        detailsReady = true;
+        break;
+      } catch {
+        // try next selector
+      }
+    }
+    if (!detailsReady) {
+      printLog(`⚠️ Job details not ready for job ${jobId}, skipping`);
+      await ctx.overlay.addLogEvent(`Skipping job ${jobId}: details panel not available`);
+      (ctx as any).last_extract_success = false;
+      yield "job_details_extraction_failed";
+      return;
+    }
+
+    const synced = await waitForLinkedInPanelSync(driver, selectors, currentJob, 7000);
+    if (!synced) {
+      printLog(`⚠️ Details panel sync check failed for ${jobId}, skipping`);
+      await ctx.overlay.addLogEvent(`Skipping job ${jobId}: panel content mismatch`);
+      (ctx as any).last_extract_success = false;
+      yield "job_details_extraction_failed";
+      return;
+    }
+
     const jobDetails: any = {
       job_id: jobId,
+      jobId,
+      url: currentJob.url || `https://www.linkedin.com/jobs/view/${jobId}`,
       extracted_at: new Date().toISOString(),
     };
 
@@ -874,6 +1387,15 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
       jobDetails.company = (await companyElement.getText()).trim();
     } catch (error) {
       jobDetails.company = currentJob.company || '';
+    }
+
+    // If extracted panel doesn't resemble clicked card metadata, skip save path.
+    if (currentJob.title && jobDetails.title && !isLikelySameText(jobDetails.title, currentJob.title)) {
+      printLog(`⚠️ Title mismatch for ${jobId}. Expected card="${currentJob.title}" panel="${jobDetails.title}"`);
+      await ctx.overlay.addLogEvent(`Skipping ${jobId}: title mismatch between list and panel`);
+      (ctx as any).last_extract_success = false;
+      yield "job_details_extraction_failed";
+      return;
     }
 
     // Extract location
@@ -942,6 +1464,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
 
     yield "job_details_extracted";
   } catch (error) {
+    (ctx as any).last_extract_success = false;
     yield "job_details_extraction_failed";
   }
 }
@@ -1186,6 +1709,52 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
   }
 
   yield "step0_complete";
+}
+
+export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
+    if (!directApplyUrl) {
+      printLog("No directApplyUrl provided for LinkedIn apply flow");
+      yield "navigation_failed";
+      return;
+    }
+
+    if (!ctx.driver) {
+      const { driver, sessionExists, sessionsDir } = await setupChromeDriver('linkedin');
+      ctx.driver = driver;
+      ctx.sessionExists = sessionExists;
+      ctx.sessionsDir = sessionsDir;
+      ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
+      ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.linkedin);
+      ctx.overlay = new UniversalOverlay(driver, 'LinkedIn');
+
+      await StealthFeatures.hideWebDriver(driver);
+      await StealthFeatures.randomizeUserAgent(driver);
+    }
+
+    await ctx.driver.get(directApplyUrl);
+    await ctx.driver.sleep(3000);
+
+    const currentUrl = await ctx.driver.getCurrentUrl();
+    const jobId = parseLinkedInJobId(currentUrl) || parseLinkedInJobId(directApplyUrl) || `unknown_${Date.now()}`;
+    const pageTitle = await ctx.driver.getTitle().catch(() => 'LinkedIn Job');
+
+    ctx.current_job_index = 0;
+    ctx.current_job = {
+      job_id: jobId,
+      title: pageTitle || 'LinkedIn Job',
+      company: '',
+      work_location: ''
+    };
+
+    printLog(`Direct Apply URL opened: ${currentUrl}`);
+    printLog(`Prepared apply context with jobId: ${jobId}`);
+    yield "navigated";
+  } catch (error) {
+    printLog(`Direct Apply navigation failed: ${error}`);
+    yield "navigation_failed";
+  }
 }
 
 // Upload resume (Easy Apply modal – use selectors; optional AI resume, else config path; no file input → resume_not_required)
@@ -1856,12 +2425,16 @@ export async function* navigateToNextPage(ctx: WorkflowContext): AsyncGenerator<
     const currentPage = ctx.pagination_current_page || 1;
 
     try {
-      const nextPageButton = await driver.findElement(By.css(`button[aria - label= "Page ${currentPage + 1}"]`));
+      const nextPageButton = await driver.findElement(By.css(`button[aria-label="Page ${currentPage + 1}"]`));
       await nextPageButton.click();
       printLog(`Page ${currentPage + 1} `);
       await driver.sleep(3000);
 
       ctx.pagination_current_page = currentPage + 1;
+      ctx.current_job_index = 0;
+      ctx.current_job = null;
+      ctx.extracted_jobs = [];
+      await ctx.overlay.addLogEvent(`Navigated to LinkedIn page ${currentPage + 1}`);
       yield "extract_job_details";
     } catch (error) {
       yield "finish";
@@ -1898,6 +2471,7 @@ export async function* finish(ctx: WorkflowContext): AsyncGenerator<string, void
 // Export step functions
 export const linkedinStepFunctions = {
   step0,
+  navigateToDirectApplyUrl,
   openCheckLogin,
   credentialLogin,
   showManualLoginPrompt,
@@ -1908,6 +2482,9 @@ export const linkedinStepFunctions = {
   getPageInfo,
   extractJobDetails,
   processJobs,
+  openCurrentExtractJobCard,
+  saveLinkedInScrapedJob,
+  advanceExtractCursor,
   attemptEasyApply,
   extractJobDetailsFromPanel,
   uploadResume,
