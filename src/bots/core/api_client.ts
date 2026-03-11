@@ -18,6 +18,18 @@ interface JwtTokens {
   expiresAt: number;
 }
 
+function readCachedText(filePath: string): string | null {
+  if (!fs.existsSync(filePath)) return null;
+  const value = fs.readFileSync(filePath, 'utf8').trim();
+  return value || null;
+}
+
+function isLikelyJwt(token: string): boolean {
+  // JWT shape: header.payload.signature (all non-empty)
+  const parts = token.split('.');
+  return parts.length === 3 && parts.every((part) => part.length > 0);
+}
+
 function summarizeBody(body: any): Record<string, unknown> {
   if (!body || typeof body !== 'object') return {};
   const summary: Record<string, unknown> = {};
@@ -50,13 +62,18 @@ function getApiConfig(): ApiConfig {
  */
 async function getSessionToken(): Promise<string | null> {
   const tokenCachePath = path.join(process.cwd(), '.cache', 'api_token.txt');
+  const authAccessTokenPath = path.join(process.cwd(), '.cache', 'auth_access_token.txt');
 
-  if (fs.existsSync(tokenCachePath)) {
-    const cachedToken = fs.readFileSync(tokenCachePath, 'utf8').trim();
-    if (cachedToken) {
-      logger.auth('debug', 'auth.session_cache_hit', 'Using shared authentication token');
-      return cachedToken;
-    }
+  const tokenFromSharedCache = readCachedText(tokenCachePath);
+  if (tokenFromSharedCache) {
+    logger.auth('debug', 'auth.session_cache_hit', 'Using shared authentication token');
+    return tokenFromSharedCache;
+  }
+
+  const tokenFromAuthCache = readCachedText(authAccessTokenPath);
+  if (tokenFromAuthCache) {
+    logger.auth('debug', 'auth.access_cache_hit', 'Using auth access token from cache');
+    return tokenFromAuthCache;
   }
 
   logger.auth('warn', 'auth.session_cache_miss', 'No shared authentication token available');
@@ -113,6 +130,12 @@ async function getAccessToken(): Promise<string | null> {
     return null;
   }
 
+  // UI now writes access JWTs directly to shared cache; use as-is.
+  if (isLikelyJwt(sessionToken)) {
+    logger.auth('debug', 'auth.shared_jwt_used', 'Using cached shared JWT token directly');
+    return sessionToken;
+  }
+
   try {
     logger.auth('info', 'auth.session_to_jwt_start', 'Converting session token to JWT');
     const config = getApiConfig();
@@ -153,7 +176,9 @@ async function getAccessToken(): Promise<string | null> {
     logger.auth('error', 'auth.session_to_jwt_error', 'Error converting session token to JWT', {
       error: error instanceof Error ? error.message : String(error)
     });
-    return null;
+    // Some backends accept session token directly for bearer auth.
+    logger.auth('warn', 'auth.session_fallback', 'Falling back to shared session token');
+    return sessionToken;
   }
 }
 

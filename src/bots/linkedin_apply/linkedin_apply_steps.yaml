@@ -1,0 +1,149 @@
+workflow_meta:
+  title: "LinkedIn Easy Apply (Single Job URL)"
+  description: "Open a specific LinkedIn job URL and run Easy Apply flow"
+  start_step: "init_context"
+
+steps_config:
+  init_context:
+    step: 0
+    func: "step0"
+    transitions:
+      direct_apply_requested: "navigate_to_direct_apply_url"
+      step0_complete: "navigate_to_direct_apply_url"
+      ctx_failed: "finish"
+    timeout: 30
+    on_timeout_event: "ctx_failed"
+
+  navigate_to_direct_apply_url:
+    step: 0.5
+    func: "navigateToDirectApplyUrl"
+    transitions:
+      navigated: "attempt_easy_apply"
+      navigation_failed: "finish"
+    timeout: 30
+    on_timeout_event: "navigation_failed"
+
+  attempt_easy_apply:
+    step: 1
+    func: "attemptEasyApply"
+    transitions:
+      modal_opened_successfully: "extract_job_details_from_panel"
+      modal_failed_to_open: "application_failed"
+      attempting_external_apply: "external_apply"
+      no_jobs_page_found: "application_failed"
+      no_job_to_process: "application_failed"
+      job_card_not_found: "application_failed"
+      no_easy_apply_button_found: "external_apply"
+      failed_to_click_easy_apply: "external_apply"
+      easy_apply_process_error: "application_failed"
+    timeout: 30
+    on_timeout_event: "easy_apply_process_error"
+
+  extract_job_details_from_panel:
+    step: 2
+    func: "extractJobDetailsFromPanel"
+    transitions:
+      job_details_extracted: "upload_resume"
+      job_details_extraction_failed: "application_failed"
+    timeout: 30
+    on_timeout_event: "job_details_extraction_failed"
+
+  upload_resume:
+    step: 3
+    func: "uploadResume"
+    transitions:
+      resume_uploaded_successfully: "handle_cover_letter"
+      resume_not_required: "handle_cover_letter"
+      no_resume_path_configured: "handle_cover_letter"
+      resume_file_not_found: "handle_cover_letter"
+      proceeding_without_resume: "handle_cover_letter"
+      jobs_page_missing: "handle_cover_letter"
+    timeout: 45
+    on_timeout_event: "proceeding_without_resume"
+
+  handle_cover_letter:
+    step: 4
+    func: "handleCoverLetter"
+    transitions:
+      cover_letter_filled: "extract_employer_questions"
+      cover_letter_not_required: "extract_employer_questions"
+      cover_letter_error: "extract_employer_questions"
+    timeout: 60
+    on_timeout_event: "cover_letter_error"
+
+  extract_employer_questions:
+    step: 5
+    func: "extractEmployerQuestions"
+    transitions:
+      employer_questions_saved: "answer_questions"
+      no_employer_questions: "submit_application"
+      employer_questions_error: "submit_application"
+    timeout: 45
+    on_timeout_event: "employer_questions_error"
+
+  answer_questions:
+    step: 6
+    func: "answerQuestions"
+    transitions:
+      finished_answering_questions: "submit_application"
+      next_stage: "extract_employer_questions"
+      error_answering_questions: "submit_application"
+      jobs_page_missing: "submit_application"
+    timeout: 90
+    on_timeout_event: "error_answering_questions"
+
+  submit_application:
+    step: 7
+    func: "submitApplication"
+    transitions:
+      save_applied_job: "save_applied_job"
+      application_failed: "application_failed"
+      submit_application_error: "application_failed"
+      no_jobs_page_found: "application_failed"
+    timeout: 45
+    on_timeout_event: "submit_application_error"
+
+  save_applied_job:
+    step: 8
+    func: "saveAppliedJob"
+    transitions:
+      job_saved: "finish"
+      save_job_failed: "application_failed"
+    timeout: 30
+    on_timeout_event: "save_job_failed"
+
+  external_apply:
+    step: 9
+    func: "externalApply"
+    transitions:
+      save_external_job: "save_external_job"
+      application_failed: "application_failed"
+      jobs_page_missing: "application_failed"
+    timeout: 30
+    on_timeout_event: "application_failed"
+
+  save_external_job:
+    step: 10
+    func: "saveExternalJob"
+    transitions:
+      external_job_saved: "finish"
+      save_external_failed: "application_failed"
+    timeout: 20
+    on_timeout_event: "save_external_failed"
+
+  application_failed:
+    step: 11
+    func: "applicationFailed"
+    transitions:
+      application_marked_failed: "finish"
+      mark_failed_error: "finish"
+    timeout: 20
+    on_timeout_event: "mark_failed_error"
+
+  finish:
+    step: 12
+    func: "finish"
+    transitions:
+      done: "done"
+    timeout: 10
+    on_timeout_event: "done"

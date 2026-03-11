@@ -113,24 +113,17 @@ async function runQuickApplyFlowSteps(ctx: WorkflowContext): Promise<void> {
         break; // Take first result
       }
 
-      // PAUSE FOR COVER LETTER INSPECTION
-      printLog("\n--- PAUSING TO READ COVER LETTER ---");
-      printLog("📄 COVER LETTER FILLED - Take 5 minutes to read the generated content");
-      printLog("⏸️  Waiting 5 minutes for you to review the cover letter...");
+      // PAUSE BRIEFLY FOR COVER LETTER INSPECTION
+      printLog("\n--- SHORT PAUSE TO READ COVER LETTER ---");
+      printLog("📄 COVER LETTER FILLED - Quickly review the generated content");
+      printLog("⏸️  Brief pause for you to review the cover letter...");
       printLog("🔍 Check the cover letter quality and personalization");
 
-      // Wait 5 minutes for cover letter inspection
-      printLog("\n⏳ Starting 5-minute inspection period...");
-      await ctx.driver.sleep(300000); // 5 minutes = 300,000 ms
+      // Short pause for cover letter inspection
+      printLog("\n⏳ Starting short inspection period...");
+      await ctx.driver.sleep(2000); // 2 seconds
 
-      printLog("⏰ 5-minute inspection complete!");
-      printLog("🛑 Press Ctrl+C to exit or let it continue indefinitely...");
-
-      // Stay put indefinitely for further manual inspection
-      printLog("\n⏳ Now waiting indefinitely for manual inspection...");
-
-      // Keep the process alive but don't proceed
-      return;
+      printLog("⏰ Inspection pause complete!");
 
     } else if (result === "current_step_employer_questions") {
       printLog("Already on Employer Questions step");

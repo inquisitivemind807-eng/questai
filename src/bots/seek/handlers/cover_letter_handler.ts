@@ -1,10 +1,31 @@
 import type { WorkflowContext } from '../../core/workflow_engine';
 import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
 import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { callApiWithFallback } from './api_fallback';
+import { resolveUseAi } from './ai_provider';
 
 const printLog = (message: string) => {
   console.log(message);
 };
+
+function buildFallbackCoverLetter(ctx: WorkflowContext, jobData: any): string {
+  const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
+  const fullName = String(formData.fullName || 'Candidate').trim();
+  const role = String(jobData?.title || 'the advertised role').trim();
+  const company = String(jobData?.company || 'your company').trim();
+  const location = String(jobData?.location || '').trim();
+  const introLocation = location ? ` in ${location}` : '';
+  return `Dear Hiring Manager,
+
+I am writing to apply for the ${role} position at ${company}${introLocation}. My background aligns with the responsibilities of this role, and I am confident I can contribute effectively from day one.
+
+I bring hands-on experience delivering software solutions, collaborating with cross-functional teams, and maintaining high standards for quality and reliability. I am particularly interested in this opportunity because of the impact and growth potential at ${company}.
+
+I would welcome the opportunity to discuss how my experience can support your team goals.
+
+Kind regards,
+${fullName}`;
+}
 
 async function resolveResumeText(ctx: WorkflowContext): Promise<string> {
   const clientEmail =
@@ -39,6 +60,7 @@ async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
   printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
 
   const resumeText = await resolveResumeText(ctx);
+  const useAi = resolveUseAi(ctx);
   const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
   const contactProfile = {
     full_name: String(formData.fullName || '').trim(),
@@ -47,11 +69,10 @@ async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
     linkedin_url: String(formData.linkedinUrl || '').trim()
   };
 
-  const requestBody = {
+  const requestBody: Record<string, any> = {
     job_id: `seek_${jobId}`,
     job_details: jobData.details || `${jobData.title} at ${jobData.company}`,
     resume_text: resumeText,
-    useAi: "deepseek-chat",
     strictQuality: true,
     qualityThreshold: 92,
     strictQualityRetries: 1,
@@ -69,6 +90,7 @@ Highlight relevant experience and skills that match the job requirements.
 Keep it concise (300-400 words) and personalized to ${jobData.company || 'the company'}.
 Focus on demonstrating value and enthusiasm for the role.`
   };
+  requestBody.useAi = useAi;
 
   const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
 
@@ -90,10 +112,10 @@ Focus on demonstrating value and enthusiasm for the role.`
 
   let data;
   try {
-    data = await apiRequest('/api/cover_letter', 'POST', requestBody);
+    data = await callApiWithFallback('/api/cover_letter', 'POST', requestBody);
   } catch (apiError: any) {
-    printLog(`❌ API request failed: ${apiError.message}`);
-    throw new Error(`Cover letter API call failed: ${apiError.message}`);
+    printLog(`⚠️ Cover letter API unavailable, using fallback template. Error: ${apiError.message}`);
+    return buildFallbackCoverLetter(ctx, jobData);
   }
 
   fs.writeFileSync(

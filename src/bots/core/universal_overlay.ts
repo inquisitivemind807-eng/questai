@@ -41,6 +41,7 @@ export class UniversalOverlay {
   private overlayId: string;
   private botName: string;
   private initialized: boolean = false;
+  private overlayUnavailable: boolean = false;
 
   constructor(driver: WebDriver, botName: string = 'Bot', overlayId: string = 'universal-overlay') {
     this.driver = driver;
@@ -53,14 +54,18 @@ export class UniversalOverlay {
    * This sets up navigation detection and auto-reinjection
    */
   async initialize(): Promise<void> {
-    if (this.initialized) return;
+    if (this.initialized || this.overlayUnavailable) return;
 
     try {
       await this.injectPersistentOverlaySystem();
       this.initialized = true;
       console.log(`✅ Overlay system initialized for ${this.botName}`);
     } catch (error) {
-      console.error('Error initializing overlay system:', error);
+      if (this.isWindowClosedError(error)) {
+        this.overlayUnavailable = true;
+      } else {
+        console.error('Error initializing overlay system:', error);
+      }
     }
   }
 
@@ -70,20 +75,26 @@ export class UniversalOverlay {
   private async injectPersistentOverlaySystem(): Promise<void> {
     await this.driver.executeScript(`
       (function() {
-        // Prevent duplicate initialization
         if (window.__overlaySystemInitialized) {
           console.log('[Overlay] System already initialized');
           return;
         }
         window.__overlaySystemInitialized = true;
+        window.__overlayRenderInProgress = false;
+        window.__overlayUpdateFlushScheduled = false;
+        window.__overlayPendingState = null;
+        window.__overlayCurrentState = null;
+        window.__overlayLogAutoScroll = true;
+        window.__overlayLogScrollTop = 0;
+        window.__overlayRefs = null;
+        window.__overlayNavWatcherInitialized = false;
 
         const OVERLAY_ID = '${this.overlayId}';
         const BOT_NAME = '${this.botName}';
         const STORAGE_KEY = 'universal_overlay_state';
+        const LOG_LIST_ID = OVERLAY_ID + '-log-list';
+        const LOG_NEAR_BOTTOM_PX = 14;
 
-        console.log('[Overlay] Initializing persistent overlay system for', BOT_NAME);
-
-        // Load saved state from sessionStorage
         function loadState() {
           try {
             const saved = sessionStorage.getItem(STORAGE_KEY);
@@ -93,7 +104,6 @@ export class UniversalOverlay {
           }
         }
 
-        // Save state to sessionStorage
         function saveState(state) {
           try {
             sessionStorage.setItem(STORAGE_KEY, JSON.stringify(state));
@@ -102,51 +112,7 @@ export class UniversalOverlay {
           }
         }
 
-        // Create or update overlay
-        function createOverlay(state) {
-          if (!state) return;
-
-          // Remove existing overlay
-          const existing = document.getElementById(OVERLAY_ID);
-          if (existing) existing.remove();
-
-          const position = state.position || { x: 20, y: 20 };
-          const collapsed = state.collapsed || false;
-
-          // Create overlay container
-          const overlay = document.createElement('div');
-          overlay.id = OVERLAY_ID;
-          overlay.className = 'universal-dynamic-overlay';
-
-          // Base styles - pointer-events: none so overlay does not block page interaction
-          // (clicks pass through to search inputs, buttons, etc.); children use 'auto' for our UI
-          const baseStyles = {
-            position: 'fixed',
-            top: position.y + 'px',
-            left: position.x + 'px',
-            background: '#1a1a1add',
-            border: '2px solid #00ffff80',
-            borderRadius: collapsed ? '50%' : '16px',
-            boxShadow: '0 8px 32px rgba(0, 0, 0, 0.5)',
-            zIndex: '2147483647', // Maximum z-index
-            fontFamily: 'system-ui, -apple-system, sans-serif',
-            color: '#ffffff',
-            transition: 'all 0.3s ease',
-            backdropFilter: 'blur(10px)',
-            userSelect: 'none',
-            pointerEvents: 'none', // Allow clicks to pass through to page beneath
-            width: collapsed ? '60px' : '450px',
-            height: collapsed ? '60px' : 'auto',
-            maxHeight: collapsed ? '60px' : '90vh',
-            minHeight: collapsed ? '60px' : '100px',
-            display: 'flex',
-            flexDirection: 'column',
-            boxSizing: 'border-box'
-          };
-
-          Object.assign(overlay.style, baseStyles);
-
-          // Inject font
+        function ensureAssets() {
           if (!document.getElementById('overlay-font')) {
             const fontLink = document.createElement('link');
             fontLink.id = 'overlay-font';
@@ -154,405 +120,578 @@ export class UniversalOverlay {
             fontLink.rel = 'stylesheet';
             document.head.appendChild(fontLink);
           }
+          if (!document.getElementById('overlay-pulse-animation')) {
+            const style = document.createElement('style');
+            style.id = 'overlay-pulse-animation';
+            style.textContent = '@keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } }';
+            document.head.appendChild(style);
+          }
+        }
 
-          // Create header
+        function clampPosition(overlay, desiredX, desiredY) {
+          const viewportWidth = window.innerWidth;
+          const viewportHeight = window.innerHeight;
+          const rect = overlay.getBoundingClientRect();
+          const overlayWidth = Math.min(rect.width || 0, viewportWidth - 40);
+          const overlayHeight = Math.min(rect.height || 0, viewportHeight - 40);
+          return {
+            x: Math.max(0, Math.min(desiredX, viewportWidth - overlayWidth)),
+            y: Math.max(0, Math.min(desiredY, viewportHeight - overlayHeight))
+          };
+        }
+
+        function ensureOverlayShell(state) {
+          let refs = window.__overlayRefs;
+          const hasValidRefs = refs &&
+            refs.overlay &&
+            refs.header &&
+            refs.title &&
+            refs.controls &&
+            refs.collapseBtn &&
+            refs.content &&
+            refs.mainContent &&
+            refs.logsContainer &&
+            refs.logTitle &&
+            refs.logList &&
+            document.getElementById(OVERLAY_ID) === refs.overlay;
+
+          if (hasValidRefs) {
+            if (!document.body.contains(refs.overlay)) {
+              document.body.appendChild(refs.overlay);
+            }
+            return refs;
+          }
+
+          const existing = document.getElementById(OVERLAY_ID);
+          if (existing) existing.remove();
+
+          ensureAssets();
+
+          const overlay = document.createElement('div');
+          overlay.id = OVERLAY_ID;
+          overlay.className = 'universal-dynamic-overlay';
+          Object.assign(overlay.style, {
+            position: 'fixed',
+            top: '20px',
+            left: '20px',
+            background: '#1a1a1add',
+            border: '2px solid #00ffff80',
+            borderRadius: '16px',
+            boxShadow: '0 8px 32px rgba(0,0,0,0.5)',
+            zIndex: '2147483647',
+            fontFamily: 'system-ui, -apple-system, sans-serif',
+            color: '#ffffff',
+            transition: 'all 0.2s ease',
+            backdropFilter: 'blur(10px)',
+            userSelect: 'none',
+            pointerEvents: 'none',
+            width: '600px',
+            maxWidth: 'calc(100vw - 40px)',
+            maxHeight: '90vh',
+            minHeight: '120px',
+            display: 'flex',
+            flexDirection: 'column',
+            boxSizing: 'border-box',
+            overflow: 'hidden',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            transform: 'none',
+            zoom: '1'
+          });
+
           const header = document.createElement('div');
           header.className = 'overlay-header';
-
-          const headerStyles = {
-            padding: collapsed ? '0' : '12px 16px',
-            borderBottom: collapsed ? 'none' : '1px solid #00ffff40',
+          Object.assign(header.style, {
+            padding: '16px 20px',
+            borderBottom: '1px solid #00ffff40',
             display: 'flex',
-            justifyContent: collapsed ? 'center' : 'space-between',
+            justifyContent: 'space-between',
             alignItems: 'center',
             cursor: 'move',
             width: '100%',
-            height: collapsed ? '100%' : 'auto',
-            pointerEvents: 'auto', // Override parent so header/buttons remain clickable
-            boxSizing: 'border-box'
-          };
+            maxWidth: '100%',
+            minWidth: 0,
+            pointerEvents: 'auto',
+            boxSizing: 'border-box',
+            overflow: 'hidden',
+            flexShrink: 0,
+            gap: '12px'
+          });
 
-          Object.assign(header.style, headerStyles);
-
-          // Title
           const title = document.createElement('div');
-          title.style.display = collapsed ? 'none' : 'block';
-          title.style.fontWeight = 'bold';
-          title.style.fontSize = '16px';
-          title.style.color = '#00ffff';
-          title.textContent = \`🤖 \${BOT_NAME} Bot\`;
-
-          // Controls
-          const controls = document.createElement('div');
-          controls.style.display = 'flex';
-          controls.style.gap = '8px';
-          controls.style.alignItems = 'center';
-
-          // Collapse button
-          const collapseBtn = document.createElement('button');
-          collapseBtn.innerHTML = collapsed ? '+' : '−';
-          const collapseBtnStyles = {
-            background: 'none',
-            border: collapsed ? 'none' : '1px solid #00ffff80',
+          Object.assign(title.style, {
+            display: 'block',
+            fontWeight: 'bold',
+            fontSize: '18px',
             color: '#00ffff',
-            width: collapsed ? '100%' : '24px',
-            height: collapsed ? '100%' : '24px',
-            borderRadius: collapsed ? '50%' : '6px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+            flexShrink: 1,
+            minWidth: 0,
+            maxWidth: '100%',
+            letterSpacing: '0.3px'
+          });
+          title.textContent = '🤖 ' + BOT_NAME + ' Bot';
+
+          const controls = document.createElement('div');
+          Object.assign(controls.style, {
+            display: 'flex',
+            gap: '10px',
+            alignItems: 'center',
+            flexShrink: 0,
+            overflow: 'visible'
+          });
+
+          const collapseBtn = document.createElement('button');
+          Object.assign(collapseBtn.style, {
+            background: 'none',
+            border: '1px solid #00ffff80',
+            color: '#00ffff',
+            width: '24px',
+            height: '24px',
+            borderRadius: '6px',
             cursor: 'pointer',
-            fontSize: collapsed ? '24px' : '16px',
+            fontSize: '16px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             transition: 'all 0.2s ease'
-          };
-          Object.assign(collapseBtn.style, collapseBtnStyles);
-
+          });
           collapseBtn.onmouseover = () => {
-            if (!collapsed) collapseBtn.style.background = '#00ffff30';
+            collapseBtn.style.background = '#00ffff30';
             collapseBtn.style.transform = 'scale(1.1)';
           };
           collapseBtn.onmouseout = () => {
-            if (!collapsed) collapseBtn.style.background = 'none';
+            collapseBtn.style.background = 'none';
             collapseBtn.style.transform = 'scale(1)';
           };
-
-          controls.appendChild(collapseBtn);
           collapseBtn.onclick = (e) => {
             e.stopPropagation();
-            const currentState = loadState();
-            if (currentState) {
-              currentState.collapsed = !currentState.collapsed;
-              saveState(currentState);
-              createOverlay(currentState);
-            }
+            const current = loadState() || window.__overlayCurrentState || state;
+            if (!current) return;
+            current.collapsed = !current.collapsed;
+            queueOverlayRender(current);
           };
 
-          // Content area
           const content = document.createElement('div');
           content.className = 'overlay-content';
-          content.style.padding = '16px';
-          content.style.fontSize = '13px';
-          content.style.lineHeight = '1.4';
-          content.style.maxHeight = '60vh';
-          content.style.overflowY = 'auto';
-          content.style.display = collapsed ? 'none' : 'block';
-          content.style.pointerEvents = 'auto'; // Override parent so content buttons remain clickable
-          content.style.boxSizing = 'border-box';
+          Object.assign(content.style, {
+            padding: '20px 24px',
+            fontSize: '14px',
+            lineHeight: '1.6',
+            maxHeight: '60vh',
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            display: 'block',
+            pointerEvents: 'auto',
+            boxSizing: 'border-box',
+            width: '100%',
+            maxWidth: '100%',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            flexShrink: 1,
+            minWidth: 0
+          });
 
-          // Populate content based on type
-          if (state.type === 'job_progress') {
-            const { appliedJobs = 0, totalJobs = 0, internalJobs = 0, externalJobs = 0, currentStep = '' } = state.data;
-            const percentage = totalJobs > 0 ? (appliedJobs / totalJobs) * 100 : 0;
+          const mainContent = document.createElement('div');
+          Object.assign(mainContent.style, {
+            width: '100%',
+            maxWidth: '100%',
+            boxSizing: 'border-box'
+          });
 
-            // Inject keyframes animation if not already present
-            if (!document.getElementById('overlay-pulse-animation')) {
-              const style = document.createElement('style');
-              style.id = 'overlay-pulse-animation';
-              style.textContent = \`
-                @keyframes pulse {
-                  0%, 100% { opacity: 0.3; transform: scale(1); }
-                  50% { opacity: 1; transform: scale(1.2); }
-                }
-              \`;
-              document.head.appendChild(style);
-            }
+          const logsContainer = document.createElement('div');
+          Object.assign(logsContainer.style, {
+            marginTop: '14px',
+            background: '#0b0f14',
+            border: '1px solid #3a4754',
+            borderRadius: '8px',
+            height: '210px',
+            maxHeight: '210px',
+            minHeight: '210px',
+            overflow: 'hidden',
+            flexShrink: '0',
+            pointerEvents: 'auto',
+            overscrollBehavior: 'contain',
+            fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+            fontSize: '11px',
+            lineHeight: '1.45',
+            boxSizing: 'border-box',
+            display: 'flex',
+            flexDirection: 'column',
+            width: '100%',
+            maxWidth: '100%',
+            wordWrap: 'break-word',
+            overflowWrap: 'break-word',
+            boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.04), 0 8px 20px rgba(0,0,0,0.30)'
+          });
 
-            content.innerHTML = \`
-              <div style="display: flex; flex-direction: column; gap: 10px;">
-                <div style="display: flex; justify-content: space-between; align-items: center;">
-                  <span style="color: #00ffff;">Jobs Extracted:</span>
-                  <span style="font-weight: bold; font-size: 16px;">\${appliedJobs}/\${totalJobs}</span>
-                </div>
-                <div style="display: flex; gap: 8px; font-size: 11px;">
-                  <span style="background:#00bb6630; border:1px solid #00bb6666; border-radius:6px; padding:2px 8px; color:#00dd88;">📋 Internal: \${internalJobs}</span>
-                  <span style="background:#ff880030; border:1px solid #ff880066; border-radius:6px; padding:2px 8px; color:#ffaa44;">🌐 External: \${externalJobs}</span>
-                </div>
-                <div style="background: #333; border-radius: 6px; height: 8px; overflow: hidden;">
-                  <div style="background: linear-gradient(90deg, #00ffff, #00dd88); height: 100%; width: \${percentage}%; transition: width 0.3s ease;"></div>
-                </div>
-                <div style="font-size: 11px; opacity: 0.8; color: #00dd88;">\${currentStep}</div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <div style="width: 8px; height: 8px; border-radius: 50%; background: #00ffff; animation: pulse 1.5s ease-in-out infinite;"></div>
-                  <span style="font-size: 11px; opacity: 0.6;">Working...</span>
-                </div>
-              </div>
-            \`;
-          } else if (state.type === 'sign_in') {
-            content.innerHTML = \`
-              <div style="text-align: center;">
-                <p style="margin: 0 0 20px 0; font-size: 14px; line-height: 1.6; color: #ffdd00;">
-                  Please sign in to your account manually in this window.
-                </p>
-                <button id="signin-continue-btn" style="
-                  background: #00dd88;
-                  color: #1a1a1a;
-                  border: none;
-                  border-radius: 8px;
-                  padding: 12px 20px;
-                  font-size: 14px;
-                  font-weight: bold;
-                  cursor: pointer;
-                  width: 100%;
-                  transition: all 0.2s ease;
-                ">
-                  ✅ I have logged in - Continue
-                </button>
-              </div>
-            \`;
+          const logTitle = document.createElement('div');
+          Object.assign(logTitle.style, {
+            color: '#e7edf2',
+            padding: '9px 12px',
+            borderBottom: '1px solid #33414d',
+            background: '#111821',
+            fontWeight: '600',
+            fontSize: '10px',
+            textTransform: 'uppercase',
+            letterSpacing: '0.12em'
+          });
+          logTitle.textContent = 'Activity Log';
 
-            // Re-attach button listener after DOM creation
-            setTimeout(() => {
-              const button = document.getElementById('signin-continue-btn');
-              if (button) {
-                button.onmouseover = () => button.style.background = '#00bb66';
-                button.onmouseout = () => button.style.background = '#00dd88';
-                button.onclick = () => {
-                  window.__overlaySignInComplete = true;
-                  sessionStorage.setItem('overlay_signin_complete', 'true');
-                };
-              }
-            }, 100);
-          } else if (state.type === 'manual_review') {
-            content.innerHTML = \`
-              <div style="text-align: center;">
-                <p style="margin: 0 0 20px 0; font-size: 15px; line-height: 1.6; color: #00ffff;">
-                  <strong>Manual Review Required</strong><br/>
-                  Please review the application before submitting.
-                </p>
-                <button id="manual-review-btn" style="
-                  background: #00dd88;
-                  color: #1a1a1a;
-                  border: none;
-                  border-radius: 8px;
-                  padding: 12px 20px;
-                  font-size: 14px;
-                  font-weight: bold;
-                  cursor: pointer;
-                  width: 100%;
-                  transition: all 0.2s ease;
-                ">
-                  ✅ Looks Good - Submit Application
-                </button>
-              </div>
-            \`;
+          const logList = document.createElement('div');
+          logList.id = LOG_LIST_ID;
+          Object.assign(logList.style, {
+            padding: '8px 10px 10px',
+            overflowY: 'auto',
+            overflowX: 'hidden',
+            height: '100%',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '5px',
+            flex: '1',
+            minHeight: '0',
+            pointerEvents: 'auto',
+            overscrollBehavior: 'contain',
+            webkitOverflowScrolling: 'touch',
+            scrollbarWidth: 'thin',
+            scrollbarColor: '#708090 #131a22'
+          });
+          logList.addEventListener('scroll', () => {
+            const maxScroll = Math.max(0, logList.scrollHeight - logList.clientHeight);
+            const nearBottom = (maxScroll - logList.scrollTop) < LOG_NEAR_BOTTOM_PX;
+            window.__overlayLogAutoScroll = nearBottom;
+            window.__overlayLogScrollTop = logList.scrollTop;
+          });
 
-            // Re-attach button listener after DOM creation
-            setTimeout(() => {
-              const button = document.getElementById('manual-review-btn');
-              if (button) {
-                button.onmouseover = () => button.style.background = '#00bb66';
-                button.onmouseout = () => button.style.background = '#00dd88';
-                button.onclick = () => {
-                  window.__overlayManualReviewComplete = true;
-                  sessionStorage.setItem('overlay_manual_review_complete', 'true');
-                };
-              }
-            }, 100);
-          } else if (state.data.html) {
-            content.innerHTML = state.data.html;
-          } else if (state.data.message) {
-            content.textContent = state.data.message;
-          }
-
-          // Activity Log Section
-          if (!collapsed) {
-            const logsContainer = document.createElement('div');
-            logsContainer.style.marginTop = '16px';
-            logsContainer.style.padding = '12px';
-            logsContainer.style.background = '#0a0a0a';
-            logsContainer.style.border = '1px solid #00ffff40';
-            logsContainer.style.borderRadius = '8px';
-            logsContainer.style.maxHeight = '150px';
-            logsContainer.style.overflowY = 'auto';
-            logsContainer.style.fontFamily = 'monospace';
-            logsContainer.style.fontSize = '12px';
-            logsContainer.style.boxSizing = 'border-box';
-            logsContainer.style.display = 'flex';
-            logsContainer.style.flexDirection = 'column';
-            logsContainer.style.gap = '4px';
-
-            const logTitle = document.createElement('div');
-            logTitle.style.color = '#00ffff';
-            logTitle.style.marginBottom = '6px';
-            logTitle.style.fontWeight = 'bold';
-            logTitle.style.fontSize = '10px';
-            logTitle.style.textTransform = 'uppercase';
-            logTitle.style.letterSpacing = '1px';
-            logTitle.innerHTML = '⚡ Activity Log';
-            logsContainer.appendChild(logTitle);
-
-            const logs = state.data.logs || [];
-            if (logs.length === 0) {
-              const emptyLog = document.createElement('div');
-              emptyLog.style.color = '#ffffff40';
-              emptyLog.style.fontStyle = 'italic';
-              emptyLog.textContent = 'Waiting for events...';
-              logsContainer.appendChild(emptyLog);
-            } else {
-              logs.forEach(msg => {
-                const logEntry = document.createElement('div');
-                logEntry.style.color = '#00dd88';
-                logEntry.textContent = msg;
-                logsContainer.appendChild(logEntry);
-              });
-            }
-
-            // Auto-scroll to bottom of logs
-            setTimeout(() => {
-              logsContainer.scrollTop = logsContainer.scrollHeight;
-            }, 50);
-
-            content.appendChild(logsContainer);
-          }
-
-          // Assemble overlay
+          logsContainer.appendChild(logTitle);
+          logsContainer.appendChild(logList);
+          content.appendChild(mainContent);
+          content.appendChild(logsContainer);
           controls.appendChild(collapseBtn);
           header.appendChild(title);
           header.appendChild(controls);
           overlay.appendChild(header);
           overlay.appendChild(content);
 
-          // Drag functionality
           let isDragging = false;
-          let currentX, currentY, initialX, initialY;
-          let xOffset = position.x;
-          let yOffset = position.y;
-
+          let currentX = 20;
+          let currentY = 20;
+          let initialX = 0;
+          let initialY = 0;
+          let xOffset = 20;
+          let yOffset = 20;
           header.addEventListener('mousedown', (e) => {
-            if (e.target.tagName === 'BUTTON') return;
+            if (e.target && e.target.tagName === 'BUTTON') return;
             e.preventDefault();
             initialX = e.clientX - xOffset;
             initialY = e.clientY - yOffset;
             isDragging = true;
             overlay.style.opacity = '0.8';
           });
-
           document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
             e.preventDefault();
             currentX = e.clientX - initialX;
             currentY = e.clientY - initialY;
-
-            // Keep within viewport
-            const viewportWidth = window.innerWidth;
-            const viewportHeight = window.innerHeight;
-            const rect = overlay.getBoundingClientRect();
-
-            currentX = Math.max(0, Math.min(currentX, viewportWidth - rect.width));
-            currentY = Math.max(0, Math.min(currentY, viewportHeight - rect.height));
-
-            xOffset = currentX;
-            yOffset = currentY;
-
-            overlay.style.left = currentX + 'px';
-            overlay.style.top = currentY + 'px';
-
-            // Save position
-            const currentState = loadState();
-            if (currentState) {
-              currentState.position = { x: xOffset, y: yOffset };
-              saveState(currentState);
+            const clamped = clampPosition(overlay, currentX, currentY);
+            xOffset = clamped.x;
+            yOffset = clamped.y;
+            overlay.style.left = xOffset + 'px';
+            overlay.style.top = yOffset + 'px';
+            const current = loadState() || window.__overlayCurrentState;
+            if (current) {
+              current.position = { x: xOffset, y: yOffset };
+              saveState(current);
+              window.__overlayCurrentState = current;
             }
           });
-
           document.addEventListener('mouseup', () => {
-            if (isDragging) {
-              isDragging = false;
-              overlay.style.opacity = '1';
-            }
+            if (!isDragging) return;
+            isDragging = false;
+            overlay.style.opacity = '1';
           });
 
           document.body.appendChild(overlay);
-          console.log('[Overlay] Created overlay for', state.type);
+
+          refs = { overlay, header, title, controls, collapseBtn, content, mainContent, logsContainer, logTitle, logList };
+          window.__overlayRefs = refs;
+          return refs;
         }
 
-        // Watch for page navigation and reinject overlay
-        function setupNavigationWatcher() {
-          let lastUrl = location.href;
+        function applyShellStyles(refs, state) {
+          const collapsed = Boolean(state.collapsed);
+          const position = state.position || { x: 20, y: 20 };
+          refs.overlay.style.width = collapsed ? '60px' : '600px';
+          refs.overlay.style.height = collapsed ? '60px' : 'auto';
+          refs.overlay.style.maxHeight = collapsed ? '60px' : '90vh';
+          refs.overlay.style.minHeight = collapsed ? '60px' : '120px';
+          refs.overlay.style.borderRadius = collapsed ? '50%' : '16px';
+          refs.overlay.style.left = position.x + 'px';
+          refs.overlay.style.top = position.y + 'px';
 
-          // Use MutationObserver to detect DOM changes
+          refs.header.style.padding = collapsed ? '0' : '16px 20px';
+          refs.header.style.borderBottom = collapsed ? 'none' : '1px solid #00ffff40';
+          refs.header.style.justifyContent = collapsed ? 'center' : 'space-between';
+          refs.header.style.height = collapsed ? '100%' : 'auto';
+          refs.title.style.display = collapsed ? 'none' : 'block';
+          refs.content.style.display = collapsed ? 'none' : 'block';
+          refs.collapseBtn.textContent = collapsed ? '+' : '−';
+          refs.collapseBtn.style.width = collapsed ? '100%' : '24px';
+          refs.collapseBtn.style.height = collapsed ? '100%' : '24px';
+          refs.collapseBtn.style.borderRadius = collapsed ? '50%' : '6px';
+          refs.collapseBtn.style.border = collapsed ? 'none' : '1px solid #00ffff80';
+          refs.collapseBtn.style.fontSize = collapsed ? '24px' : '16px';
+        }
+
+        function renderMainContent(refs, state) {
+          const data = state.data || {};
+          refs.content.style.overflowY = state.type === 'job_progress' ? 'hidden' : 'auto';
+
+          if (state.type === 'job_progress') {
+            const appliedJobs = Number(data.appliedJobs || 0);
+            const totalJobs = Number(data.totalJobs || 0);
+            const internalJobs = Number(data.internalJobs || 0);
+            const externalJobs = Number(data.externalJobs || 0);
+            const currentStep = String(data.currentStep || '');
+            const percentage = totalJobs > 0 ? Math.max(0, Math.min(100, (appliedJobs / totalJobs) * 100)) : 0;
+            refs.mainContent.innerHTML =
+              '<div style="display:flex;flex-direction:column;gap:16px;width:100%;max-width:100%;box-sizing:border-box;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:0;padding-bottom:4px;">' +
+                  '<span style="color:#00ffff;flex-shrink:0;font-size:15px;font-weight:500;">Jobs Extracted:</span>' +
+                  '<span style="font-weight:bold;font-size:20px;flex-shrink:0;color:#ffffff;">' + appliedJobs + '/' + totalJobs + '</span>' +
+                '</div>' +
+                '<div style="display:flex;gap:10px;font-size:12px;flex-wrap:wrap;width:100%;">' +
+                  '<span style="background:#00bb6630;border:1px solid #00bb6666;border-radius:8px;padding:6px 12px;color:#00dd88;white-space:nowrap;flex-shrink:0;font-weight:500;">📋 Internal: ' + internalJobs + '</span>' +
+                  '<span style="background:#ff880030;border:1px solid #ff880066;border-radius:8px;padding:6px 12px;color:#ffaa44;white-space:nowrap;flex-shrink:0;font-weight:500;">🌐 External: ' + externalJobs + '</span>' +
+                '</div>' +
+                '<div style="background:#333;border-radius:8px;height:10px;overflow:hidden;width:100%;box-shadow:inset 0 2px 4px rgba(0,0,0,0.3);">' +
+                  '<div style="background:linear-gradient(90deg,#00ffff,#00dd88);height:100%;width:' + percentage + '%;transition:width 0.3s ease;box-shadow:0 0 8px rgba(0,255,255,0.4);"></div>' +
+                '</div>' +
+                '<div style="font-size:13px;opacity:0.9;color:#00dd88;word-wrap:break-word;overflow-wrap:break-word;width:100%;line-height:1.5;padding:8px 0;">' + currentStep + '</div>' +
+                '<div style="display:flex;align-items:center;gap:10px;width:100%;padding-top:4px;">' +
+                  '<div style="width:10px;height:10px;border-radius:50%;background:#00ffff;animation:pulse 1.5s ease-in-out infinite;flex-shrink:0;box-shadow:0 0 6px rgba(0,255,255,0.6);"></div>' +
+                  '<span style="font-size:12px;opacity:0.7;color:#ffffff;">Working...</span>' +
+                '</div>' +
+              '</div>';
+            return;
+          }
+
+          if (state.type === 'sign_in') {
+            refs.mainContent.innerHTML =
+              '<div style="text-align:center;padding:8px 0;">' +
+                '<p style="margin:0 0 24px 0;font-size:15px;line-height:1.7;color:#ffdd00;font-weight:500;">Please sign in to your account manually in this window.</p>' +
+                '<button id="signin-continue-btn" style="background:#00dd88;color:#1a1a1a;border:none;border-radius:10px;padding:14px 24px;font-size:15px;font-weight:bold;cursor:pointer;width:100%;max-width:100%;box-sizing:border-box;transition:all 0.2s ease;white-space:normal;box-shadow:0 4px 12px rgba(0,221,136,0.3);">✅ I have logged in - Continue</button>' +
+              '</div>';
+            setTimeout(() => {
+              const button = document.getElementById('signin-continue-btn');
+              if (!button) return;
+              button.onmouseover = () => {
+                button.style.background = '#00bb66';
+                button.style.transform = 'translateY(-2px)';
+                button.style.boxShadow = '0 6px 16px rgba(0,221,136,0.4)';
+              };
+              button.onmouseout = () => {
+                button.style.background = '#00dd88';
+                button.style.transform = 'translateY(0)';
+                button.style.boxShadow = '0 4px 12px rgba(0,221,136,0.3)';
+              };
+              button.onclick = () => {
+                window.__overlaySignInComplete = true;
+                sessionStorage.setItem('overlay_signin_complete', 'true');
+              };
+            }, 50);
+            return;
+          }
+
+          if (state.type === 'manual_review') {
+            refs.mainContent.innerHTML =
+              '<div style="text-align:center;padding:8px 0;">' +
+                '<p style="margin:0 0 24px 0;font-size:16px;line-height:1.7;color:#00ffff;font-weight:500;">' +
+                '<strong style="display:block;margin-bottom:8px;font-size:18px;">Manual Review Required</strong>' +
+                'Please review the application before submitting.</p>' +
+                '<button id="manual-review-btn" style="background:#00dd88;color:#1a1a1a;border:none;border-radius:10px;padding:14px 24px;font-size:15px;font-weight:bold;cursor:pointer;width:100%;max-width:100%;box-sizing:border-box;transition:all 0.2s ease;white-space:normal;box-shadow:0 4px 12px rgba(0,221,136,0.3);">✅ Looks Good - Submit Application</button>' +
+              '</div>';
+            setTimeout(() => {
+              const button = document.getElementById('manual-review-btn');
+              if (!button) return;
+              button.onmouseover = () => {
+                button.style.background = '#00bb66';
+                button.style.transform = 'translateY(-2px)';
+                button.style.boxShadow = '0 6px 16px rgba(0,221,136,0.4)';
+              };
+              button.onmouseout = () => {
+                button.style.background = '#00dd88';
+                button.style.transform = 'translateY(0)';
+                button.style.boxShadow = '0 4px 12px rgba(0,221,136,0.3)';
+              };
+              button.onclick = () => {
+                window.__overlayManualReviewComplete = true;
+                sessionStorage.setItem('overlay_manual_review_complete', 'true');
+              };
+            }, 50);
+            return;
+          }
+
+          if (data.html) {
+            refs.mainContent.innerHTML = data.html;
+            return;
+          }
+          refs.mainContent.textContent = data.message || '';
+        }
+
+        function renderLogs(refs, state) {
+          if (state.collapsed) return;
+          const logs = Array.isArray(state?.data?.logs) ? state.data.logs : [];
+          const logList = refs.logList;
+          const maxScroll = Math.max(0, logList.scrollHeight - logList.clientHeight);
+          const currentTop = logList.scrollTop;
+          const nearBottom = (maxScroll - currentTop) < LOG_NEAR_BOTTOM_PX;
+          const shouldAutoScroll = window.__overlayLogAutoScroll !== false && nearBottom;
+          if (!nearBottom) {
+            window.__overlayLogAutoScroll = false;
+            window.__overlayLogScrollTop = currentTop;
+          }
+
+          if (!logs.length) {
+            logList.innerHTML = '<div style="color:#93a4b3;font-style:italic;padding:4px;">Waiting for events...</div>';
+          } else {
+            const html = logs.map((msg) => {
+              const safe = String(msg)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+              return '<div style="color:#d7e3ec;word-wrap:break-word;overflow-wrap:break-word;width:100%;max-width:100%;overflow:hidden;padding:2px 4px;border-radius:4px;background:#141d26;border:1px solid #22303d;">' + safe + '</div>';
+            }).join('');
+            logList.innerHTML = html;
+          }
+
+          requestAnimationFrame(() => {
+            if (window.__overlayLogAutoScroll === false) {
+              const maxAfter = Math.max(0, logList.scrollHeight - logList.clientHeight);
+              const preserved = Number(window.__overlayLogScrollTop || 0);
+              logList.scrollTop = Math.min(preserved, maxAfter);
+            } else {
+              logList.scrollTop = logList.scrollHeight;
+              window.__overlayLogAutoScroll = true;
+            }
+            window.__overlayLogScrollTop = logList.scrollTop;
+          });
+        }
+
+        function renderOverlayState(state) {
+          if (!state) return;
+          const refs = ensureOverlayShell(state);
+          applyShellStyles(refs, state);
+          renderMainContent(refs, state);
+          renderLogs(refs, state);
+        }
+
+        function flushOverlayQueue() {
+          if (window.__overlayRenderInProgress) {
+            window.__overlayUpdateFlushScheduled = false;
+            scheduleFlush();
+            return;
+          }
+          const nextState = window.__overlayPendingState;
+          if (!nextState) {
+            window.__overlayUpdateFlushScheduled = false;
+            return;
+          }
+          window.__overlayPendingState = null;
+          window.__overlayRenderInProgress = true;
+          try {
+            renderOverlayState(nextState);
+            window.__overlayCurrentState = nextState;
+          } finally {
+            window.__overlayRenderInProgress = false;
+            window.__overlayUpdateFlushScheduled = false;
+          }
+          if (window.__overlayPendingState) {
+            scheduleFlush();
+          }
+        }
+
+        function scheduleFlush() {
+          if (window.__overlayUpdateFlushScheduled) return;
+          window.__overlayUpdateFlushScheduled = true;
+          requestAnimationFrame(flushOverlayQueue);
+        }
+
+        function queueOverlayRender(state) {
+          if (!state) return;
+          saveState(state);
+          window.__overlayPendingState = state;
+          scheduleFlush();
+        }
+
+        function ensureOverlayPresent() {
+          if (document.getElementById(OVERLAY_ID)) return;
+          const state = loadState() || window.__overlayCurrentState;
+          if (state) queueOverlayRender(state);
+        }
+
+        function setupNavigationWatcher() {
+          if (window.__overlayNavWatcherInitialized) return;
+          window.__overlayNavWatcherInitialized = true;
+
+          let lastUrl = location.href;
           const observer = new MutationObserver(() => {
             const currentUrl = location.href;
             if (currentUrl !== lastUrl) {
-              console.log('[Overlay] Navigation detected:', lastUrl, '->', currentUrl);
               lastUrl = currentUrl;
-
-              // Reinject overlay after a short delay
               setTimeout(() => {
-                const state = loadState();
-                if (state) {
-                  console.log('[Overlay] Reinjecting after navigation');
-                  createOverlay(state);
-                }
-              }, 500);
+                const state = loadState() || window.__overlayCurrentState;
+                if (state) queueOverlayRender(state);
+              }, 300);
             }
-
-            // Also check if overlay disappeared from DOM
-            if (!document.getElementById(OVERLAY_ID)) {
-              const state = loadState();
-              if (state) {
-                console.log('[Overlay] Overlay missing from DOM, reinjecting');
-                createOverlay(state);
-              }
-            }
+            ensureOverlayPresent();
           });
 
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true
-          });
+          if (document.body) {
+            observer.observe(document.body, { childList: true, subtree: true });
+          } else {
+            window.addEventListener('DOMContentLoaded', () => {
+              if (document.body) observer.observe(document.body, { childList: true, subtree: true });
+            });
+          }
 
-          // Also use history API hooks
           const originalPushState = history.pushState;
           const originalReplaceState = history.replaceState;
-
           history.pushState = function(...args) {
             originalPushState.apply(this, args);
             setTimeout(() => {
-              const state = loadState();
-              if (state) createOverlay(state);
-            }, 500);
+              const state = loadState() || window.__overlayCurrentState;
+              if (state) queueOverlayRender(state);
+            }, 300);
           };
-
           history.replaceState = function(...args) {
             originalReplaceState.apply(this, args);
             setTimeout(() => {
-              const state = loadState();
-              if (state) createOverlay(state);
-            }, 500);
+              const state = loadState() || window.__overlayCurrentState;
+              if (state) queueOverlayRender(state);
+            }, 300);
           };
-
-          // Listen for popstate (back/forward)
           window.addEventListener('popstate', () => {
             setTimeout(() => {
-              const state = loadState();
-              if (state) createOverlay(state);
-            }, 500);
+              const state = loadState() || window.__overlayCurrentState;
+              if (state) queueOverlayRender(state);
+            }, 300);
           });
-
-          console.log('[Overlay] Navigation watcher setup complete');
         }
 
-        // Expose update function globally
+        window.__queueOverlayRender = queueOverlayRender;
         window.__updateOverlay = function(state) {
-          saveState(state);
-          createOverlay(state);
+          queueOverlayRender(state);
         };
-
-        // Expose get state function
         window.__getOverlayState = function() {
           return loadState();
         };
 
-        // Setup navigation watcher
         setupNavigationWatcher();
-
-        // Load and display initial state if exists
         const initialState = loadState();
-        if (initialState) {
-          createOverlay(initialState);
-        }
-
+        if (initialState) queueOverlayRender(initialState);
         console.log('[Overlay] Persistent overlay system ready');
       })();
     `);
@@ -581,6 +720,7 @@ export class UniversalOverlay {
    * Update overlay state (will persist across navigations)
    */
   private async updateState(state: OverlayState): Promise<void> {
+    if (this.overlayUnavailable) return;
     try {
       // Ensure active mode is preserved or initialized
       const currentMode = await this.getActiveMode();
@@ -592,7 +732,11 @@ export class UniversalOverlay {
         }
       `);
     } catch (error) {
-      console.error('Error updating overlay state:', error);
+      if (this.isWindowClosedError(error)) {
+        this.overlayUnavailable = true;
+      } else {
+        console.error('Error updating overlay state:', error);
+      }
     }
   }
 
@@ -634,7 +778,7 @@ export class UniversalOverlay {
    * Add a real-time event log to the overlay UI
    */
   async addLogEvent(message: string): Promise<void> {
-    if (!this.initialized) return;
+    if (!this.initialized || this.overlayUnavailable) return;
 
     try {
       const stateStr = await this.driver.executeScript(`
@@ -652,14 +796,18 @@ export class UniversalOverlay {
       const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
       state.data.logs.push(`[${timeStr}] ${message}`);
 
-      // Keep only the most recent 20 logs to save UI memory
-      if (state.data.logs.length > 20) {
-        state.data.logs = state.data.logs.slice(-20);
+      // Keep a larger rolling window for debugging while avoiding unbounded growth
+      if (state.data.logs.length > 80) {
+        state.data.logs = state.data.logs.slice(-80);
       }
 
       await this.updateState(state);
     } catch (error) {
-      console.error('Error adding overlay log event:', error);
+      if (this.isWindowClosedError(error)) {
+        this.overlayUnavailable = true;
+      } else {
+        console.error('Error adding overlay log event:', error);
+      }
     }
   }
 
@@ -893,7 +1041,7 @@ export class UniversalOverlay {
     const name = error instanceof Error ? error.constructor?.name : '';
     return (
       name === 'NoSuchWindowError' ||
-      /no such window|target window already closed|web view not found/i.test(msg)
+      /no such window|target window already closed|web view not found|invalid session id|session deleted|disconnected|connection.*closed/i.test(msg)
     );
   }
 
@@ -901,6 +1049,7 @@ export class UniversalOverlay {
    * Update overlay content. Fails silently if the window was closed (e.g. user closed a tab).
    */
   async updateOverlay(updates: Partial<OverlayConfig>): Promise<void> {
+    if (this.overlayUnavailable) return;
     try {
       const currentState = await this.driver.executeScript<OverlayState>(`
         return window.__getOverlayState ? window.__getOverlayState() : null;
@@ -916,7 +1065,7 @@ export class UniversalOverlay {
       }
     } catch (error) {
       if (this.isWindowClosedError(error)) {
-        console.warn('Overlay: window closed, skipping update.');
+        this.overlayUnavailable = true;
       } else {
         console.warn('Overlay update failed:', error instanceof Error ? error.message : error);
       }
@@ -927,6 +1076,7 @@ export class UniversalOverlay {
    * Hide overlay. Fails silently if the window was closed.
    */
   async hideOverlay(): Promise<void> {
+    if (this.overlayUnavailable) return;
     try {
       await this.driver.executeScript(`
         const overlay = document.getElementById('${this.overlayId}');
@@ -935,7 +1085,7 @@ export class UniversalOverlay {
       `);
     } catch (error) {
       if (this.isWindowClosedError(error)) {
-        console.warn('Overlay: window closed, skip hide.');
+        this.overlayUnavailable = true;
       } else {
         console.warn('Overlay hide failed:', error instanceof Error ? error.message : error);
       }

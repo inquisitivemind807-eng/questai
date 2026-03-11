@@ -45,6 +45,24 @@ const printLog = (message: string) => {
   console.log(message);
 };
 
+/**
+ * Check if driver session is valid and ready for use
+ * Returns true if driver is ready, false if session is invalid
+ */
+export async function isDriverReady(driver: WebDriver): Promise<boolean> {
+  try {
+    await driver.getCurrentUrl();
+    return true;
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    if (errorMsg.includes('session') || errorMsg.includes('session ID') || errorMsg.includes('quit')) {
+      return false;
+    }
+    // Other errors might be transient, assume ready
+    return true;
+  }
+}
+
 // Kill all Chrome processes spawned by this bot
 export const killAllChromeProcesses = async (): Promise<void> => {
   printLog("🔥 Emergency: Killing all Chrome processes...");
@@ -83,12 +101,65 @@ export const killAllChromeProcesses = async (): Promise<void> => {
 
 // Monitor browser windows and detect manual closure
 export const monitorBrowserClose = (driver: WebDriver, onBrowserClosed?: () => void): (() => void) => {
-  const checkInterval = setInterval(async () => {
+  let consecutiveErrors = 0;
+  const MAX_CONSECUTIVE_ERRORS = 5; // Require 5 consecutive errors (10 seconds) before shutdown
+  let isWindowOperationInProgress = false; // Flag to ignore errors during window operations
+  const INITIALIZATION_GRACE_PERIOD_MS = 20000; // 20 seconds grace period after driver creation
+  const monitoringStartTime = Date.now(); // When monitoring function is created
+  let actualCheckStartTime: number | null = null; // When checks actually start
+  let recoveryAttempted = false; // Track if we've already attempted recovery
+
+  // Expose function to temporarily disable monitoring during window operations
+  // Store these functions on the driver so they're always available
+  const disableMonitoring = () => {
+    isWindowOperationInProgress = true;
+    printLog("🔇 Browser monitoring temporarily disabled for window operation");
+  };
+
+  const enableMonitoring = () => {
+    isWindowOperationInProgress = false;
+    consecutiveErrors = 0; // Reset error count after window operation
+    printLog("🔊 Browser monitoring re-enabled");
+  };
+
+  // Attach to driver object for external access
+  (driver as any).__disableBrowserMonitoring = disableMonitoring;
+  (driver as any).__enableBrowserMonitoring = enableMonitoring;
+
+  // Delay the start of monitoring checks to allow driver to fully initialize
+  // The interval will start after INITIALIZATION_GRACE_PERIOD_MS
+  let checkInterval: NodeJS.Timeout | null = null;
+  
+  // Define the check function
+  const performCheck = async () => {
+    // Skip check if window operation is in progress
+    if (isWindowOperationInProgress) {
+      return;
+    }
+    
+    // Skip check if workflow has completed (browser might be closing)
+    if ((driver as any).__workflowCompleted) {
+      return;
+    }
+
+    // Track when checks actually start (first check)
+    if (actualCheckStartTime === null) {
+      actualCheckStartTime = Date.now();
+      printLog(`🔍 Browser monitoring checks started (${Math.round((actualCheckStartTime - monitoringStartTime) / 1000)}s after driver creation)`);
+    }
+
+    // During initialization grace period, be more lenient with errors
+    // Use time since checks actually started, not since function was created
+    const timeSinceCheckStart = actualCheckStartTime ? Date.now() - actualCheckStartTime : Date.now() - monitoringStartTime;
+    const isInitializationPeriod = timeSinceCheckStart < INITIALIZATION_GRACE_PERIOD_MS;
+
     try {
       const handles = await driver.getAllWindowHandles();
+      consecutiveErrors = 0; // Reset on successful check
+      
       if (handles.length === 0) {
         printLog("Browser manually closed by user - shutting down bot");
-        clearInterval(checkInterval);
+        if (checkInterval) clearInterval(checkInterval);
         if (onBrowserClosed) {
           onBrowserClosed();
         } else {
@@ -96,20 +167,111 @@ export const monitorBrowserClose = (driver: WebDriver, onBrowserClosed?: () => v
         }
       }
     } catch (error) {
-      // Browser is no longer accessible
-      printLog("Browser connection lost - shutting down bot");
-      clearInterval(checkInterval);
-      if (onBrowserClosed) {
-        onBrowserClosed();
+      consecutiveErrors++;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const isSessionError = errorMsg.includes('session') || errorMsg.includes('session ID') || errorMsg.includes('quit');
+      
+      // During initialization, session errors are expected and should be ignored
+      if (isInitializationPeriod && isSessionError) {
+        // Don't count initialization errors - driver might still be setting up
+        printLog(`⏳ Ignoring session error during initialization (${Math.round(timeSinceCheckStart/1000)}s since checks started): ${errorMsg.substring(0, 100)}`);
+        consecutiveErrors = 0; // Reset counter for initialization errors
+        return;
+      }
+      
+      // Only shutdown if we have multiple consecutive errors (not just a transient error)
+      if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        // Double-check if session is actually invalid or just transient
+        try {
+          // Try a simple operation to verify session is really dead
+          await driver.getCurrentUrl();
+          // If we get here, session is actually valid - reset error count
+          printLog("✅ Session is actually valid - resetting error count");
+          consecutiveErrors = 0;
+          return;
+        } catch (verifyError) {
+          // Session is really dead - try recovery first
+          if (!recoveryAttempted) {
+            recoveryAttempted = true;
+            printLog(`🔄 Browser connection lost (${consecutiveErrors} consecutive errors) - attempting driver recovery...`);
+            printLog(`Last error: ${errorMsg}`);
+            
+            // Check if recovery callback is available
+            const recoveryCallback = (driver as any).__recoverDriver;
+            if (typeof recoveryCallback === 'function') {
+              printLog("🔧 Recovery callback found - attempting to recreate driver...");
+              try {
+                const recovered = await recoveryCallback();
+                if (recovered) {
+                  printLog("✅ Driver recovery successful - resetting error count");
+                  consecutiveErrors = 0;
+                  recoveryAttempted = false; // Allow future recovery attempts
+                  return;
+                } else {
+                  printLog("❌ Driver recovery failed");
+                }
+              } catch (recoveryError) {
+                printLog(`❌ Driver recovery error: ${recoveryError}`);
+              }
+            } else {
+              printLog("⚠️ No recovery callback available - workflow will handle recovery");
+              // Don't shutdown - let workflow steps handle it
+              consecutiveErrors = 0; // Reset to allow workflow to try recovery
+              recoveryAttempted = false;
+              return;
+            }
+          }
+          
+          // Recovery failed or not available - check if browser was manually closed
+          try {
+            const remainingHandles = await driver.getAllWindowHandles();
+            if (remainingHandles.length === 0) {
+              printLog("Browser manually closed by user - shutting down bot");
+              if (checkInterval) clearInterval(checkInterval);
+              if (onBrowserClosed) {
+                onBrowserClosed();
+              } else {
+                process.exit(0);
+              }
+            } else {
+              // Session invalid but windows exist - let workflow handle it
+              printLog("⚠️ Session invalid but windows exist - workflow will handle recovery");
+              consecutiveErrors = 0; // Reset to allow workflow to try recovery
+              recoveryAttempted = false;
+            }
+          } catch (finalCheckError) {
+            // Can't check handles - assume workflow will handle recovery
+            printLog("⚠️ Cannot verify window state - workflow will handle recovery");
+            consecutiveErrors = 0;
+            recoveryAttempted = false;
+          }
+        }
       } else {
-        process.exit(0);
+        // Log but don't shutdown on first/second error (might be transient)
+        if (isInitializationPeriod) {
+          printLog(`⏳ Browser check error during initialization (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errorMsg.substring(0, 100)}`);
+        } else {
+          printLog(`⚠️ Browser check error (${consecutiveErrors}/${MAX_CONSECUTIVE_ERRORS}): ${errorMsg.substring(0, 100)}`);
+        }
       }
     }
-  }, 2000); // Check every 2 seconds
+  };
+  
+  // Start monitoring after grace period
+  // This delay ensures driver is fully initialized before we start checking
+  setTimeout(() => {
+    if (checkInterval) return; // Already started
+    
+    const timeElapsed = Math.round((Date.now() - monitoringStartTime) / 1000);
+    printLog(`🔍 Starting browser monitoring checks (${timeElapsed}s after driver creation)`);
+    checkInterval = setInterval(performCheck, 2000); // Check every 2 seconds
+  }, INITIALIZATION_GRACE_PERIOD_MS);
 
   // Return function to stop monitoring
   return () => {
-    clearInterval(checkInterval);
+    if (checkInterval) {
+      clearInterval(checkInterval);
+    }
   };
 };
 
@@ -339,8 +501,25 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
 
     const actions = driver.actions();
 
+    // CRITICAL: Wait for driver to be fully ready before starting monitoring
+    // Give driver time to complete window maximize and initial setup
+    printLog("⏳ Waiting for driver to fully initialize...");
+    await new Promise(resolve => setTimeout(resolve, 3000)); // 3 second initial wait
+    
+    // Verify driver is ready
+    try {
+      await driver.getCurrentUrl();
+      printLog("✅ Driver session is ready");
+    } catch (sessionError) {
+      const errorMsg = sessionError instanceof Error ? sessionError.message : String(sessionError);
+      printLog(`⚠️ Driver session check warning: ${errorMsg.substring(0, 100)}`);
+      // Continue anyway - might be transient
+    }
+
     // Start monitoring for manual browser closure
+    // Monitoring will start after a grace period to allow driver to fully initialize
     const stopMonitoring = monitorBrowserClose(driver);
+    printLog("⏳ Browser monitoring will start after initialization period (20 seconds)");
 
     return { driver, actions, sessionExists, sessionsDir, stopMonitoring };
 
