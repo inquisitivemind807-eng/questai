@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.wagle.heyguiye",
   "build": {
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:5173",
     "beforeDevCommand": "bun run dev"
   },
   "app": {
