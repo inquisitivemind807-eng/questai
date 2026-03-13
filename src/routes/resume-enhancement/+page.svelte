@@ -3,7 +3,6 @@
   import { goto } from '$app/navigation';
   import { authService } from '$lib/authService.js';
   import { invoke } from '@tauri-apps/api/core';
-  import { env } from '$env/dynamic/public';
   import '$styles/shared.css';
   import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx';
   import jsPDF from 'jspdf';
@@ -57,7 +56,10 @@
   let finalAtsLoading: boolean = false;
   let finalAtsError: string = '';
 
-  const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+  const CORPUS_RAG_API =
+    import.meta.env.VITE_PUBLIC_API_BASE ||
+    import.meta.env.VITE_API_BASE ||
+    'http://localhost:3000';
   const ALLOWED_RESUME_EXTENSIONS = ['.doc', '.docx', '.pdf'];
 
   type ManagedResumeEntry = {

@@ -2,4 +2,7 @@
   import JobTrackerBase from "$lib/components/JobTrackerBase.svelte";
 </script>
 
-<JobTrackerBase />
+<JobTrackerBase 
+  platform="seek" 
+  bots={["seek_extract_bot", "seek_apply_bot"]} 
+/>

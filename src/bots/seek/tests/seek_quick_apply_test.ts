@@ -6,7 +6,7 @@ import type { WorkflowContext } from '../../core/workflow_engine';
 import { getCurrentStep } from '../seek_impl';
 import { handleResumeSelection } from '../handlers/resume_handler';
 import { handleCoverLetter } from '../handlers/cover_letter_handler';
-import { handleEmployerQuestions } from '../handlers/answer_employer_questions';
+import { answerEmployerQuestions } from '../handlers/answer_employer_questions';
 
 const printLog = (message: string) => {
   console.log(`[QUICK APPLY TEST] ${message}`);
@@ -127,7 +127,7 @@ async function runQuickApplyFlowSteps(ctx: WorkflowContext): Promise<void> {
 
     } else if (result === "current_step_employer_questions") {
       printLog("Already on Employer Questions step");
-      for await (const questionsResult of handleEmployerQuestions(ctx)) {
+      for await (const questionsResult of answerEmployerQuestions(ctx)) {
         printLog(`Employer questions result: ${questionsResult}`);
         break; // Take first result
       }

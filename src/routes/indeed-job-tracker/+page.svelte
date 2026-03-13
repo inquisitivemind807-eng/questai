@@ -2,4 +2,7 @@
   import JobTrackerBase from "$lib/components/JobTrackerBase.svelte";
 </script>
 
-<JobTrackerBase />
+<JobTrackerBase 
+  platform="indeed" 
+  bots={["indeed_bot"]} 
+/>

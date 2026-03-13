@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { authService } from '$lib/authService.js';
-  import { env } from '$env/dynamic/public';
   import '$styles/shared.css';
   import { invoke } from '@tauri-apps/api/core';
   import { Document, Paragraph, TextRun, Packer } from 'docx';
@@ -51,7 +50,10 @@
   let isEditingJob = false;
   let editedJobData = null;
 
-  const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+  const CORPUS_RAG_API =
+    import.meta.env.VITE_PUBLIC_API_BASE ||
+    import.meta.env.VITE_API_BASE ||
+    'http://localhost:3000';
 
   onMount(() => {
     // Check authentication

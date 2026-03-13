@@ -45,7 +45,15 @@
 
 <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 border border-base-200 group flex flex-col h-full overflow-hidden">
     <!-- Visual Preview (Builder style but for static DOCX reference) -->
-    <figure class="relative px-6 pt-6 flex items-center justify-center bg-base-200 rounded-t-lg overflow-hidden flex-shrink-0 cursor-pointer" on:click={useTemplate} on:keydown={(e) => e.key === 'Enter' && useTemplate()} role="button" tabindex="0">
+    <div
+        class="relative px-6 pt-6 flex items-center justify-center bg-base-200 rounded-t-lg overflow-hidden flex-shrink-0"
+    >
+        <button
+            type="button"
+            class="absolute inset-0 cursor-pointer"
+            aria-label="Use template"
+            on:click={useTemplate}
+        ></button>
         <div class="w-full flex justify-center translate-y-8 group-hover:translate-y-4 transition-transform duration-500" style="height: 380px; overflow: hidden; pointer-events: none;">
             <div style="transform: scale(0.65); transform-origin: top center; width: 800px;">
                 <TemplatePreview template={template.visualTemplate} />
@@ -69,7 +77,7 @@
                 {/if}
             </button>
         </div>
-    </figure>
+    </div>
 
     <div class="card-body p-6 bg-base-100 flex-grow border-t border-base-200">
         <div class="flex justify-between items-start gap-4 mb-2">

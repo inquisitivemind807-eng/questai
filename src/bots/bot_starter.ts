@@ -432,7 +432,7 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
 }
 
 // CLI usage when run directly
-if (import.meta.main) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = process.argv.slice(2);
 
   if (args.length === 0) {

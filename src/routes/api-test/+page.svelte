@@ -1,11 +1,13 @@
 <script>
 	import { onMount } from 'svelte';
-	import { env } from '$env/dynamic/public';
 	import { authService } from '$lib/authService.js';
 
 	// Use local proxy to avoid CORS
 	const API_BASE = '/api-test/proxy';
-	const CORPUS_RAG_API = env.PUBLIC_API_BASE || import.meta.env.VITE_API_BASE || 'http://localhost:3000';
+	const CORPUS_RAG_API =
+		import.meta.env.VITE_PUBLIC_API_BASE ||
+		import.meta.env.VITE_API_BASE ||
+		'http://localhost:3000';
 
 	// State
 	let selectedJob = '';

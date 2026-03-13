@@ -203,12 +203,36 @@
             </a>
           </li>
           <li>
-            <a href="/job-analytics" class="{$page.url.pathname.startsWith('/job-analytics') ? 'active' : ''}">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-              </svg>
-              Job Analytics
-            </a>
+            <details class="group" open={$page.url.pathname.startsWith('/job-analytics') || $page.url.pathname.endsWith('-job-tracker') || $page.url.pathname.startsWith('/choose-bot')}>
+              <summary class="flex items-center gap-2 cursor-pointer">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                </svg>
+                <span>Job Analytics</span>
+              </summary>
+              <ul class="menu menu-compact pl-6 mt-2 space-y-1">
+                <li>
+                  <a href="/job-analytics" class="{$page.url.pathname === '/job-analytics' ? 'active' : ''}">
+                    Overview
+                  </a>
+                </li>
+                <li>
+                  <a href="/linkedin-job-tracker" class="{$page.url.pathname === '/linkedin-job-tracker' ? 'active' : ''}">
+                    LinkedIn Job Tracker
+                  </a>
+                </li>
+                <li>
+                  <a href="/seek-job-tracker" class="{$page.url.pathname === '/seek-job-tracker' ? 'active' : ''}">
+                    Seek Job Tracker
+                  </a>
+                </li>
+                <li>
+                  <a href="/indeed-job-tracker" class="{$page.url.pathname === '/indeed-job-tracker' ? 'active' : ''}">
+                    Indeed Job Tracker
+                  </a>
+                </li>
+              </ul>
+            </details>
           </li>
           <li>
             <a href="/testfunctions" class="{$page.url.pathname === '/testfunctions' ? 'active' : ''}">
