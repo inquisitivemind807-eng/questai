@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { authService } from '$lib/authService.js';
 
-  let mode = 'login'; // 'login' or 'signup'
+  let mode = 'login'; // 'login', 'signup', or 'forgot'
   let email = '';
   let password = '';
   let name = '';
@@ -27,8 +27,8 @@
     }
   });
 
-  function switchMode() {
-    mode = mode === 'login' ? 'signup' : 'login';
+  function switchMode(newMode) {
+    mode = newMode || (mode === 'login' ? 'signup' : 'login');
     error = '';
     success = '';
     password = '';
@@ -38,7 +38,31 @@
     showPassword = !showPassword;
   }
 
+  async function handleForgotPassword(e) {
+    e.preventDefault();
+    if (!email || !email.includes('@')) {
+      error = 'Please enter a valid email address';
+      return;
+    }
+
+    loading = true;
+    error = '';
+    success = '';
+
+    const result = await authService.requestPasswordReset(email);
+    loading = false;
+
+    if (result.success) {
+      success = result.message || 'Password reset link sent! Check your email.';
+    } else {
+      error = result.error || 'Failed to send reset link';
+    }
+  }
+
   async function handleSubmit(e) {
+    if (mode === 'forgot') {
+      return handleForgotPassword(e);
+    }
     e.preventDefault();
     error = '';
     success = '';
@@ -210,8 +234,8 @@
           </div>
 
           {#if mode === 'login'}
-            <div class="form-control">
-              <label class="label cursor-pointer justify-start gap-2">
+            <div class="flex justify-between items-center mb-6">
+              <label class="label cursor-pointer justify-start gap-2 p-0">
                 <input
                   type="checkbox"
                   class="checkbox checkbox-primary checkbox-sm"
@@ -220,40 +244,70 @@
                 />
                 <span class="label-text">Remember me</span>
               </label>
-              <div class="label">
-                <span class="label-text-alt text-base-content/60">
-                  {rememberMe ? 'Stay logged in until you log out' : 'Session will end when you close the app'}
-                </span>
-              </div>
+              <button
+                type="button"
+                class="text-sm link link-primary no-underline hover:underline"
+                on:click={() => switchMode('forgot')}
+                disabled={loading}
+              >
+                Forgot Password?
+              </button>
             </div>
           {/if}
 
-          <button
-            type="submit"
-            class="btn btn-primary w-full"
-            disabled={loading}
-          >
-            {#if loading}
-              <span class="loading loading-spinner loading-sm"></span>
-              {mode === 'signup' ? 'Creating account...' : 'Signing in...'}
-            {:else}
-              {mode === 'signup' ? 'Create Account' : 'Sign In'}
-            {/if}
-          </button>
+          {#if mode === 'forgot'}
+            <button
+              type="submit"
+              class="btn btn-primary w-full"
+              disabled={loading}
+            >
+              {#if loading}
+                <span class="loading loading-spinner loading-sm"></span>
+                Sending...
+              {:else}
+                Send Reset Link
+              {/if}
+            </button>
+          {:else}
+            <button
+              type="submit"
+              class="btn btn-primary w-full"
+              disabled={loading}
+            >
+              {#if loading}
+                <span class="loading loading-spinner loading-sm"></span>
+                {mode === 'signup' ? 'Creating account...' : 'Signing in...'}
+              {:else}
+                {mode === 'signup' ? 'Create Account' : 'Sign In'}
+              {/if}
+            </button>
+          {/if}
         </form>
 
         <!-- Switch mode link -->
         <div class="text-center mt-4">
           <p class="text-sm text-base-content/70">
-            {mode === 'login' ? "Don't have an account?" : "Already have an account?"}
-            <button
-              type="button"
-              class="link link-primary"
-              on:click={switchMode}
-              disabled={loading}
-            >
-              {mode === 'login' ? 'Sign up' : 'Login'}
-            </button>
+            {#if mode === 'forgot'}
+              Remembered your password?
+              <button
+                type="button"
+                class="link link-primary"
+                on:click={() => switchMode('login')}
+                disabled={loading}
+              >
+                Login
+              </button>
+            {:else}
+              {mode === 'login' ? "Don't have an account?" : "Already have an account?"}
+              <button
+                type="button"
+                class="link link-primary"
+                on:click={() => switchMode()}
+                disabled={loading}
+              >
+                {mode === 'login' ? 'Sign up' : 'Login'}
+              </button>
+            {/if}
           </p>
         </div>
 

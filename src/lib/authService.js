@@ -326,6 +326,46 @@ function createAuthStore() {
     }
   }
 
+  async function requestPasswordReset(email) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/forgot-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        return { success: true, message: data.message };
+      } else {
+        throw new Error(data.error || 'Failed to request password reset');
+      }
+    } catch (error) {
+      console.error('Password reset request error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async function resetPassword(token, newPassword) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/reset-password`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, newPassword }),
+      });
+
+      const data = await response.json();
+      if (response.ok) {
+        return { success: true, message: data.message };
+      } else {
+        throw new Error(data.error || 'Failed to reset password');
+      }
+    } catch (error) {
+      console.error('Password reset error:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   return {
     subscribe,
     signup,
@@ -333,6 +373,8 @@ function createAuthStore() {
     logout,
     getAccessToken,
     initialize,
+    requestPasswordReset,
+    resetPassword,
   };
 }
 
