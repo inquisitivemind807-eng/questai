@@ -11,6 +11,7 @@
 
   let sessionValidationMessage = '';
   let showSessionNotification = false;
+  let isMenuCollapsed = false;
 
   onMount(async () => {
     await authService.initialize();
@@ -78,11 +79,11 @@
   {/if}
 
   <!-- Authenticated Layout with DaisyUI Drawer -->
-  <div class="drawer lg:drawer-open">
+  <div class={`drawer h-screen w-full overflow-hidden ${isMenuCollapsed ? '' : 'lg:drawer-open'}`}>
     <input id="drawer-toggle" type="checkbox" class="drawer-toggle" />
 
     <!-- Drawer Content (Main) -->
-    <div class="drawer-content flex flex-col">
+    <div class="drawer-content flex flex-col h-full overflow-hidden">
       <!-- Mobile Navbar -->
       <div class="navbar bg-base-100 lg:hidden">
         <div class="flex-none">
@@ -111,8 +112,31 @@
       </div>
 
       <!-- Main Content -->
-      <main class="flex-1 p-6">
-        <slot></slot>
+      <main class="drawer-content flex flex-col min-h-screen max-h-screen">
+        <!-- Desktop Header with Toggle (Fixed at top) -->
+        <div class="hidden lg:flex justify-between items-center bg-base-100/90 backdrop-blur-sm p-2 border-b border-base-200/50 z-40 shrink-0">
+          <div class="flex items-center gap-4">
+            <button
+              class="btn btn-circle btn-sm btn-ghost bg-base-200/50 hover:bg-base-300 text-base-content transition-all duration-300 transform hover:scale-105"
+              on:click={() => isMenuCollapsed = !isMenuCollapsed}
+              title={isMenuCollapsed ? "Show Menu" : "Hide Menu"}
+            >
+              {#if isMenuCollapsed}
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-right"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
+              {:else}
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-left"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+              {/if}
+            </button>
+            {#if isMenuCollapsed}
+               <a class="text-xl font-extrabold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" href="/app">Quest Bot</a>
+            {/if}
+          </div>
+        </div>
+        
+        <!-- Scrollable Content Area -->
+        <div class="flex-1 overflow-y-auto w-full">
+          <slot></slot>
+        </div>
       </main>
     </div>
 
@@ -121,7 +145,7 @@
       <label for="drawer-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
       <aside class="min-h-full w-80 bg-base-200">
         <!-- Sidebar Header -->
-        <div class="p-4 border-b border-base-300">
+        <div class="p-2 border-b border-base-300">
           <a href="/app" class="text-2xl font-bold text-primary">
             Quest Bot
           </a>
