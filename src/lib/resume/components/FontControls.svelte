@@ -57,6 +57,9 @@
         bodyFontSize: 11,
         contactFontSize: 10,
         nameFontSize: 16,
+        letterSpacing: 'normal',
+        lineSpacing: 1.15,
+        sectionSpacing: 'normal',
         useTemplateFonts: true,
       };
       // Force reactivity
@@ -76,6 +79,9 @@
         bodyFontSize: 11,
         contactFontSize: 10,
         nameFontSize: 16,
+        letterSpacing: 'normal',
+        lineSpacing: 1.15,
+        sectionSpacing: 'normal',
         useTemplateFonts: true,
       };
     }

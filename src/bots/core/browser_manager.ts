@@ -1,5 +1,10 @@
 import { Builder, WebDriver } from 'selenium-webdriver';
-import { Options } from 'selenium-webdriver/chrome';
+import { Options, ServiceBuilder } from 'selenium-webdriver/chrome';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+// Use chromedriver package so the driver version matches the installed Chrome (avoids "only supports Chrome version X" errors)
+const chromedriverPath: string = require('chromedriver').path;
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -359,10 +364,11 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
 
     const options = new Options();
 
-    // CRITICAL: Enable CDP explicitly (Chrome 144+ requirement)
-    // Without this, Runtime.evaluate and all executeScript() calls fail
-    options.addArguments('--remote-debugging-port=9222');
-    printLog('🔍 Enabled Chrome DevTools Protocol on port 9222');
+    // CRITICAL: Enable CDP explicitly (Chrome 144+ requirement).
+    // Use a dynamic port/pipe to avoid collisions with an existing Chrome instance.
+    options.addArguments('--remote-debugging-port=0');
+    options.addArguments('--remote-debugging-pipe');
+    printLog('🔍 Enabled Chrome DevTools Protocol (dynamic port)');
 
     // Wayland support for Linux (Sway/GNOME Wayland/etc.)
     if (process.platform === 'linux') {
@@ -476,11 +482,13 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
     // STEALTH: Add arguments to look like a normal user
     options.addArguments('--disable-blink-features=AutomationControlled');
 
-    // Selenium Manager will automatically download the correct ChromeDriver version
-    // for the user's Chrome browser - no manual chromedriver package needed!
+    // Use chromedriver from the chromedriver package so the driver version matches
+    // the installed Chrome (avoids "SessionNotCreatedError: only supports Chrome version X").
+    const chromeService = new ServiceBuilder(chromedriverPath);
     const driver = await new Builder()
       .forBrowser('chrome')
       .setChromeOptions(options)
+      .setChromeService(chromeService)
       .build();
 
     // Try to maximize window (may fail on Wayland)
@@ -488,13 +496,17 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
       await driver.manage().window().maximize();
       printLog("✅ Window maximized");
     } catch (maximizeError) {
-      printLog(`⚠️ Maximize failed (${maximizeError.message}), using fallback`);
+      const msg =
+        maximizeError instanceof Error ? maximizeError.message : String(maximizeError);
+      printLog(`⚠️ Maximize failed (${msg}), using fallback`);
       // Fallback: Set window size manually
       try {
         await driver.manage().window().setRect({ width: 1920, height: 1080, x: 0, y: 0 });
         printLog("✅ Window resized to 1920x1080");
       } catch (resizeError) {
-        printLog(`⚠️ Resize also failed (continuing anyway): ${resizeError.message}`);
+        const msg =
+          resizeError instanceof Error ? resizeError.message : String(resizeError);
+        printLog(`⚠️ Resize also failed (continuing anyway): ${msg}`);
         // Continue anyway - window size is not critical
       }
     }

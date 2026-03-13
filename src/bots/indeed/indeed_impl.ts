@@ -33,7 +33,7 @@ function buildSearchUrl(base_url: string, keywords: string, location: string): s
  *
  * REQUIRED: Load selectors, config, and initialize context variables
  */
-export async function* step0(ctx: PlaywrightWorkflowContext): AsyncGenerator<string, void, unknown> {
+export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const selectors = JSON.parse(
       fs.readFileSync(path.join(__dirname, 'config/indeed_selectors.json'), 'utf8')

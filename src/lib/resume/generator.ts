@@ -151,7 +151,9 @@ function getDefaultStyle(): TemplateStyle {
 /**
  * Convert alignment string to AlignmentType
  */
-function getAlignment(alignment: string): AlignmentType {
+function getAlignment(
+  alignment: string,
+): (typeof AlignmentType)[keyof typeof AlignmentType] {
   switch (alignment) {
     case 'left': return AlignmentType.LEFT;
     case 'center': return AlignmentType.CENTER;

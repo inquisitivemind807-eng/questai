@@ -21,7 +21,7 @@ const printLog = (message: string) => {
 export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.com.au/job/87457750') {
   console.log('🤖 Testing Seek Quick Apply with Main Flow Functions...\n');
 
-  const { driver } = await setupChromeDriver('seek', false);
+  const { driver } = await setupChromeDriver('seek');
   const ctx = { driver } as WorkflowContext;
 
   try {
@@ -202,7 +202,7 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
     await driver.sleep(2000); // Wait for form to process answers
 
     // Check current progress step before clicking continue
-    const currentStepBefore = await driver.executeScript(`
+    const currentStepBefore = (await driver.executeScript(`
       // Look for progress indicators or current step
       const progressSteps = document.querySelectorAll('[data-automation*="step"], .progress-step, .step-indicator');
       const currentStepElement = document.querySelector('.active, .current, [aria-current="step"]');
@@ -213,7 +213,7 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
         pageTitle: document.title,
         hasQuestions: document.querySelectorAll('select, textarea, input[type="radio"]').length
       };
-    `);
+    `)) as any;
 
     console.log(`📊 BEFORE Continue: Step="${currentStepBefore.currentStep}", Questions=${currentStepBefore.hasQuestions}, Title="${currentStepBefore.pageTitle}"`);
 
@@ -234,7 +234,7 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
     await driver.sleep(3000); // Wait for page transition
 
     // Check progress step after clicking continue
-    const currentStepAfter = await driver.executeScript(`
+    const currentStepAfter = (await driver.executeScript(`
       const progressSteps = document.querySelectorAll('[data-automation*="step"], .progress-step, .step-indicator');
       const currentStepElement = document.querySelector('.active, .current, [aria-current="step"]');
 
@@ -244,7 +244,7 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
         pageTitle: document.title,
         hasQuestions: document.querySelectorAll('select, textarea, input[type="radio"]').length
       };
-    `);
+    `)) as any;
 
     console.log(`📊 AFTER Continue: Step="${currentStepAfter.currentStep}", Questions=${currentStepAfter.hasQuestions}, Title="${currentStepAfter.pageTitle}"`);
 
@@ -256,7 +256,7 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
       console.log('⚠️ May still be on same step - investigating form issues...');
 
       // Check for validation errors
-      const validationErrors = await driver.executeScript(`
+      const validationErrors = (await driver.executeScript(`
         const errorElements = document.querySelectorAll('[role="alert"], .error, .invalid, [aria-invalid="true"]');
         const errors = Array.from(errorElements).map(el => ({
           text: el.textContent.trim(),
@@ -268,7 +268,7 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
           errorCount: errors.length,
           errors: errors
         };
-      `);
+      `)) as any;
 
       if (validationErrors.errorCount > 0) {
         console.log(`🔥 VALIDATION ERRORS FOUND (${validationErrors.errorCount}):`);
@@ -290,7 +290,8 @@ export async function runQuickApplyE2ETest(jobUrl: string = 'https://www.seek.co
       const prettyJson = JSON.stringify(sessionData, null, 2);
       console.log(prettyJson);
     } catch (error) {
-      console.log(`❌ Failed to fetch session: ${error.message}`);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.log(`❌ Failed to fetch session: ${msg}`);
     }
 
     console.log('\n✅ Test completed. Browser remains open for inspection.');
