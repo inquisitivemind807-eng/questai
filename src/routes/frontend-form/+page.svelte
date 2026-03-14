@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { env } from "$env/dynamic/public";
   import {
     getManagedFiles,
     registerManagedFile,
@@ -44,7 +43,7 @@
   let availableResumeFiles: string[] = $state([]);
   let uploadValidationMessage = $state("");
   const CORPUS_RAG_API =
-    env?.PUBLIC_API_BASE ||
+    import.meta.env.VITE_PUBLIC_API_BASE ||
     import.meta.env.VITE_API_BASE ||
     "http://localhost:3000";
   const ALLOWED_RESUME_EXTENSIONS = [".doc", ".docx", ".pdf"];

@@ -1,4 +1,4 @@
-import { firefox, Browser, BrowserContext, Page } from 'playwright';
+import { firefox, type Browser, type BrowserContext, type Page } from 'playwright';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';

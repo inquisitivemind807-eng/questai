@@ -108,6 +108,23 @@ async function waitForLinkedInPanelSync(
         return true;
       }
 
+      const panelJobId = await driver.executeScript(`
+        const hrefCandidates = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'))
+          .map((a) => a.getAttribute('href') || '');
+        for (const href of hrefCandidates) {
+          const m = String(href).match(/\\/jobs\\/view\\/(\\d+)/);
+          if (m && m[1]) return m[1];
+        }
+        const selected = document.querySelector('li[data-occludable-job-id][aria-current="true"], li[data-job-id][aria-current="true"], li.jobs-search-results__list-item--active');
+        if (selected) {
+          return selected.getAttribute('data-occludable-job-id') || selected.getAttribute('data-job-id') || '';
+        }
+        return '';
+      `).catch(() => '') as string;
+      if (expected.job_id && panelJobId && String(panelJobId) === String(expected.job_id)) {
+        return true;
+      }
+
       let panelTitle = '';
       let panelCompany = '';
       try {
@@ -706,6 +723,9 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     const driver = ctx.driver;
     const extractLimit = getLinkedInExtractLimit(ctx);
     const alreadyExtracted = Number((ctx as any).jobs_extracted || 0);
+    if (alreadyExtracted === 0) {
+      (ctx as any)._saved_platform_job_ids = new Set<string>();
+    }
     if (extractLimit > 0) {
       printLog(`LinkedIn extract limit: ${extractLimit} (already processed: ${alreadyExtracted})`);
     }
@@ -754,8 +774,53 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     printLog(`Found ${jobCards.length} jobs on current page`);
     const remaining = extractLimit > 0 ? Math.max(0, extractLimit - alreadyExtracted) : jobCards.length;
     const pageJobCount = Math.min(jobCards.length, remaining);
+    const pageJobs: Array<{ job_id: string; title: string; company: string; location: string; url: string }> = [];
+    for (let i = 0; i < pageJobCount; i++) {
+      const card = jobCards[i];
+      let jobId = '';
+      let title = '';
+      let company = '';
+      let location = '';
+      try {
+        jobId = (await card.getAttribute('data-occludable-job-id')) || (await card.getAttribute('data-job-id')) || '';
+      } catch {
+        jobId = '';
+      }
+      try {
+        const titleEl = await card.findElement(By.css('a.job-card-list__title--link, a[href*="/jobs/view/"]'));
+        title = (await titleEl.getText()).trim();
+        if (!jobId) {
+          const href = await titleEl.getAttribute('href');
+          jobId = parseLinkedInJobId(href || '') || jobId;
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        const companyEl = await card.findElement(By.css('.artdeco-entity-lockup__subtitle span'));
+        company = (await companyEl.getText()).trim();
+      } catch {
+        // ignore
+      }
+      try {
+        const locationEl = await card.findElement(By.css('.job-card-container__metadata-wrapper li span'));
+        location = (await locationEl.getText()).trim();
+      } catch {
+        // ignore
+      }
+      if (jobId) {
+        pageJobs.push({
+          job_id: String(jobId),
+          title,
+          company,
+          location,
+          url: `https://www.linkedin.com/jobs/view/${jobId}`
+        });
+      }
+    }
 
     ctx.extracted_jobs = [];
+    (ctx as any).page_jobs = pageJobs;
     (ctx as any).page_job_count = pageJobCount;
     ctx.total_jobs = extractLimit > 0 ? extractLimit : Math.max(Number(ctx.total_jobs || 0), alreadyExtracted + pageJobCount);
     ctx.applied_jobs = ctx.applied_jobs || 0;
@@ -854,6 +919,7 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
   try {
     const driver = ctx.driver;
     const panelSelectors = ctx.selectors?.jobs?.job_details_panel;
+    const preparedPageJobs = (((ctx as any).page_jobs || []) as Array<{ job_id: string; title: string; company: string; location: string; url: string }>);
     const totalJobs = Number(ctx.total_jobs || 0);
     const currentIndex = Number(ctx.current_job_index || 0);
     const pageJobCount = Number((ctx as any).page_job_count || 0);
@@ -882,12 +948,23 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
       }
       jobCards = listItems;
     }
-    if (jobCards.length === 0 || currentIndex >= jobCards.length) {
+    const targetPrepared = preparedPageJobs[currentIndex];
+    if (!targetPrepared && (jobCards.length === 0 || currentIndex >= jobCards.length)) {
       yield "no_jobs_to_process";
       return;
     }
 
-    const card = jobCards[currentIndex];
+    let card = targetPrepared?.job_id
+      ? await driver.findElement(By.css(`li[data-occludable-job-id="${targetPrepared.job_id}"], li[data-job-id="${targetPrepared.job_id}"]`)).catch(() => null as any)
+      : null as any;
+    if (!card) {
+      card = jobCards[currentIndex];
+    }
+    if (!card) {
+      (ctx as any).last_extract_success = false;
+      yield "job_open_failed";
+      return;
+    }
     await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card);
     await driver.sleep(200);
 
@@ -908,9 +985,9 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
       yield "job_open_failed";
       return;
     }
-    let title = '';
-    let company = '';
-    let location = '';
+    let title = targetPrepared?.title || '';
+    let company = targetPrepared?.company || '';
+    let location = targetPrepared?.location || '';
     try {
       const titleEl = await card.findElement(By.css('a.job-card-list__title--link, a[href*="/jobs/view/"]'));
       title = (await titleEl.getText()).trim();
@@ -935,7 +1012,7 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
       company,
       work_location: location,
       location,
-      url: `https://www.linkedin.com/jobs/view/${jobId}`
+      url: targetPrepared?.url || `https://www.linkedin.com/jobs/view/${jobId}`
     };
     ctx.current_job = currentJob;
     // Reset parsed artifacts to avoid stale file reuse between cards.
@@ -1073,6 +1150,21 @@ export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenera
       ctx.current_job?.job_id ||
       Date.now()
     );
+    if (ctx.current_job?.job_id && String(ctx.current_job.job_id) !== platformJobId) {
+      printLog(`⚠️ Save guard: current card job_id (${ctx.current_job.job_id}) != parsed file job_id (${platformJobId}), skipping save`);
+      await ctx.overlay.addLogEvent(`Skipped mismatched save context: card ${ctx.current_job.job_id} vs file ${platformJobId}`);
+      (ctx as any).last_extract_success = false;
+      yield "save_failed";
+      return;
+    }
+    const savedIds: Set<string> = ((ctx as any)._saved_platform_job_ids ||= new Set<string>());
+    if (savedIds.has(platformJobId)) {
+      printLog(`⚠️ Duplicate save suppressed for LinkedIn job ${platformJobId}`);
+      await ctx.overlay.addLogEvent(`Duplicate suppressed: ${platformJobId}`);
+      (ctx as any).last_extract_success = false;
+      yield "save_failed";
+      return;
+    }
     const payload = {
       platform: 'linkedin',
       platformJobId,
@@ -1150,6 +1242,9 @@ export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenera
     await ctx.overlay.addLogEvent(
       `${saved ? 'Saved' : 'Failed'} ${Math.min(extractedCount + 1, totalJobs)}/${totalJobs}: ${payload.title} @ ${payload.company}`
     );
+    if (saved) {
+      savedIds.add(platformJobId);
+    }
     (ctx as any).last_extract_success = saved;
 
     yield saved ? "job_saved" : "save_failed";

@@ -1,0 +1,35 @@
+{
+  "extends": "./.svelte-kit/tsconfig.json",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": false,
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "skipLibCheck": true
+  },
+  "include": [
+    "src/**/*.svelte",
+    "src/**/*.ts",
+    "src/**/*.js",
+    "src/app.d.ts",
+    "vite.config.ts",
+    "vite.config.js"
+  ],
+  "exclude": [
+    "node_modules/**",
+    "src/service-worker.js",
+    "src/service-worker/**/*.js",
+    "src/service-worker.ts",
+    "src/service-worker/**/*.ts",
+    "src/service-worker.d.ts",
+    "src/service-worker/**/*.d.ts",
+
+    "src/tests/**",
+    "src/deprecated/**",
+    "src/bots/**/tests/**",
+    "src/bots/indeed/old/**",
+    "src/bots/indeed_bot/**"
+  ]
+}
+

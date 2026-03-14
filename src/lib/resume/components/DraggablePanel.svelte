@@ -3,7 +3,7 @@
     id: string;
     title: string;
     defaultPosition?: { x: number; y: number };
-    defaultSize?: { width: number; height: number };
+    defaultSize?: { width: number | string; height: number | string };
     children: any;
   }
   
