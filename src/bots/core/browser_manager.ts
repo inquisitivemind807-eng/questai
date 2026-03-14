@@ -3,7 +3,6 @@ import { Options, ServiceBuilder } from 'selenium-webdriver/chrome';
 import { createRequire } from 'module';
 
 const require = createRequire(import.meta.url);
-// Use chromedriver package so the driver version matches the installed Chrome (avoids "only supports Chrome version X" errors)
 const chromedriverPath: string = require('chromedriver').path;
 import * as fs from 'fs';
 import * as path from 'path';
@@ -482,13 +481,11 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
     // STEALTH: Add arguments to look like a normal user
     options.addArguments('--disable-blink-features=AutomationControlled');
 
-    // Use chromedriver from the chromedriver package so the driver version matches
-    // the installed Chrome (avoids "SessionNotCreatedError: only supports Chrome version X").
-    const chromeService = new ServiceBuilder(chromedriverPath);
+    // Use project-local chromedriver binary to avoid runtime PATH drift.
     const driver = await new Builder()
       .forBrowser('chrome')
       .setChromeOptions(options)
-      .setChromeService(chromeService)
+      .setChromeService(new ServiceBuilder(chromedriverPath))
       .build();
 
     // Try to maximize window (may fail on Wayland)
