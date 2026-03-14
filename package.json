@@ -15,7 +15,7 @@
     "test:watch": "vitest --config vite.config.test.ts --watch",
     "logs:bundle": "node scripts/bundle-logs.mjs",
     "logs:tail": "node scripts/tail-logs.mjs",
-    "tauri": "bun x @tauri-apps/cli",
+    "tauri": "tauri",
     "tauri:dev": "bun --env-file=.env run tauri dev",
     "indeed:install": "cd src/bots/indeed_bot && npm install",
     "indeed:build": "cd src/bots/indeed_bot && npm run build",
