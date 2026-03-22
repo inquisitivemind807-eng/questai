@@ -224,6 +224,12 @@ export class BotStarter {
       workflow_engine.setContext('bot_name', bot_name);
       workflow_engine.setContext('sessionId', sessionId);
 
+      const extractLimit = Number(process.env.BOT_EXTRACT_LIMIT || config?.extractLimit || config?.extract_limit || config?.formData?.maxJobsToProcess || 0);
+      if (extractLimit > 0) {
+        workflow_engine.setContext('extract_limit', extractLimit);
+      }
+      print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot initialized: ${bot_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, extractLimit: extractLimit || null } })}`);
+
       await workflow_engine.run();
 
       // 8. Handle post-execution
@@ -231,10 +237,13 @@ export class BotStarter {
       context = final_context;  // Store for cleanup handler
       await this.handle_post_execution(final_context, keep_open);
 
+      const jobsExtracted = Number(final_context.jobs_extracted || final_context.applied_jobs || 0);
+      print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot completed: ${bot_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, jobsProcessed: jobsExtracted, totalJobs: final_context.total_jobs || extractLimit || 0 } })}`);
       print_log(`✅ Bot '${bot_name}' execution completed successfully`);
       logger.info('bot.completed', 'Bot execution completed successfully');
 
     } catch (error) {
+      print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'error', timestamp: Date.now(), message: String(error), data: { botName: bot_name } })}`);
       print_log(`❌ Bot '${bot_name}' execution failed: ${error}`);
       logger.error('bot.failed', 'Bot execution failed', {
         error: error instanceof Error ? error.message : String(error),

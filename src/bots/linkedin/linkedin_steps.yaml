@@ -13,6 +13,8 @@ steps_config:
       ctx_failed: "start"
     timeout: 30
     on_timeout_event: "ctx_failed"
+    max_retries: 3
+    on_max_retries: "finish"
 
   navigate_to_direct_apply_url:
     step: 0.5
@@ -70,6 +72,8 @@ steps_config:
       failed_opening_jobs_page: "open_jobs_page"
     timeout: 30
     on_timeout_event: "failed_opening_jobs_page"
+    max_retries: 3
+    on_max_retries: "finish"
 
   set_search_keywords:
     step: 6
@@ -82,6 +86,8 @@ steps_config:
       jobs_page_missing: "set_search_keywords"
     timeout: 30
     on_timeout_event: "failed_setting_search_keywords"
+    max_retries: 3
+    on_max_retries: "finish"
 
   set_search_location:
     step: 7
@@ -94,6 +100,8 @@ steps_config:
       jobs_page_missing: "set_search_location"
     timeout: 30
     on_timeout_event: "failed_setting_search_location"
+    max_retries: 3
+    on_max_retries: "finish"
 
   apply_filters:
     step: 8
@@ -105,6 +113,8 @@ steps_config:
       jobs_page_missing: "apply_filters"
     timeout: 40
     on_timeout_event: "filters_application_failed"
+    max_retries: 3
+    on_max_retries: "finish"
 
   get_page_info:
     step: 9
@@ -116,6 +126,8 @@ steps_config:
       jobs_page_missing: "get_page_info"
     timeout: 20
     on_timeout_event: "failed_extracting_page_info"
+    max_retries: 3
+    on_max_retries: "finish"
 
   extract_job_details:
     step: 10
@@ -127,6 +139,8 @@ steps_config:
       failed_extracting_jobs: "extract_job_details"
     timeout: 60
     on_timeout_event: "failed_extracting_jobs"
+    max_retries: 3
+    on_max_retries: "finish"
 
   process_jobs:
     step: 11
@@ -175,6 +189,8 @@ steps_config:
       jobs_page_missing: "upload_resume"
     timeout: 30
     on_timeout_event: "proceeding_without_resume"
+    max_retries: 3
+    on_max_retries: "application_failed"
 
   handle_cover_letter:
     step: 15.5
@@ -206,6 +222,8 @@ steps_config:
       jobs_page_missing: "answer_questions"
     timeout: 60
     on_timeout_event: "error_answering_questions"
+    max_retries: 3
+    on_max_retries: "application_failed"
 
   submit_application:
     step: 17
@@ -217,6 +235,8 @@ steps_config:
       no_jobs_page_found: "submit_application"
     timeout: 30
     on_timeout_event: "submit_application_error"
+    max_retries: 3
+    on_max_retries: "application_failed"
 
   save_applied_job:
     step: 18
@@ -226,6 +246,8 @@ steps_config:
       save_job_failed: "save_applied_job"
     timeout: 20
     on_timeout_event: "save_job_failed"
+    max_retries: 3
+    on_max_retries: "continue_processing"
 
   external_apply:
     step: 19
@@ -236,6 +258,8 @@ steps_config:
       jobs_page_missing: "external_apply"
     timeout: 30
     on_timeout_event: "application_failed"
+    max_retries: 3
+    on_max_retries: "application_failed"
 
   save_external_job:
     step: 20
@@ -245,6 +269,8 @@ steps_config:
       save_external_failed: "save_external_job"
     timeout: 20
     on_timeout_event: "save_external_failed"
+    max_retries: 3
+    on_max_retries: "continue_processing"
 
   application_failed:
     step: 21
@@ -254,6 +280,8 @@ steps_config:
       mark_failed_error: "application_failed"
     timeout: 20
     on_timeout_event: "mark_failed_error"
+    max_retries: 3
+    on_max_retries: "continue_processing"
 
   continue_processing:
     step: 22

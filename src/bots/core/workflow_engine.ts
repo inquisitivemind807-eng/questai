@@ -10,6 +10,8 @@ export interface WorkflowStep {
   transitions: Record<string, string>;
   timeout: number;
   on_timeout_event: string;
+  max_retries?: number;
+  on_max_retries?: string;
 }
 
 export interface WorkflowConfig {
@@ -46,6 +48,7 @@ export class WorkflowEngine {
   private overlay: UniversalOverlay | null = null;
   private botId: string;
   private eventsFilePath: string;
+  private stepRetryCount: Map<string, number> = new Map();
 
   constructor(configPath: string) {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -66,7 +69,10 @@ export class WorkflowEngine {
   }
 
   private emitProgress(event: BotProgressEvent): void {
-    // Disabled - too verbose
+    try {
+      const payload = { ...event, botId: this.botId };
+      console.log(`[BOT_EVENT] ${JSON.stringify(payload)}`);
+    } catch { /* never break workflow for logging */ }
   }
 
   getBotId(): string {
@@ -116,6 +122,21 @@ export class WorkflowEngine {
         botName: this.context.bot_name
       });
 
+      this.emitProgress({
+        type: 'transition',
+        timestamp: Date.now(),
+        step: stepName,
+        stepNumber: stepConfig.step,
+        funcName: stepConfig.func,
+        transition: `${stepConfig.func} → ${result}`,
+        data: {
+          totalJobs: this.context.total_jobs || 0,
+          jobsProcessed: (this.context as any).jobs_extracted || this.context.applied_jobs || 0,
+          appliedJobs: this.context.applied_jobs || 0,
+          skippedJobs: this.context.skipped_jobs || 0,
+        }
+      });
+
       // Use bot's overlay if available, otherwise create fallback
       const activeOverlay = this.context.overlay || this.overlay;
 
@@ -142,26 +163,19 @@ export class WorkflowEngine {
         }
       }
 
-      // Update overlay if available (prefer bot's overlay)
+      // Update overlay if available (prefer bot's overlay).
+      // Fire-and-forget — never block workflow execution on overlay updates.
       const overlayToUpdate = this.context.overlay || this.overlay;
       if (overlayToUpdate) {
-        try {
-          await overlayToUpdate.updateOverlay({
-            title: '🤖 Bot Status: Running',
-            html: `
-              <div style="line-height: 1.6;">
-                <p style="font-size: 20px; margin: 10px 0;"><strong>Step ${stepConfig.step}: ${stepConfig.func}</strong></p>
-                <p style="color: #00ff00; font-size: 16px;">→ ${result}</p>
-              </div>
-            `
-          });
-
-          // Small delay to keep overlay visible for each step
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (error) {
-          // Ignore overlay errors (e.g. window closed) so workflow continues
-          console.warn('Overlay update skipped (window may be closed).');
-        }
+        overlayToUpdate.updateOverlay({
+          title: '🤖 Bot Status: Running',
+          html: `
+            <div style="line-height: 1.6;">
+              <p style="font-size: 20px; margin: 10px 0;"><strong>Step ${stepConfig.step}: ${stepConfig.func}</strong></p>
+              <p style="color: #00ff00; font-size: 16px;">→ ${result}</p>
+            </div>
+          `
+        }).catch(() => {});
       }
 
       return result;
@@ -237,7 +251,24 @@ export class WorkflowEngine {
       const stepConfig = this.config.steps_config[currentStepName];
 
       if (stepConfig.transitions[event]) {
-        const nextStepName = stepConfig.transitions[event];
+        let nextStepName = stepConfig.transitions[event];
+
+        if (nextStepName === currentStepName) {
+          const retries = (this.stepRetryCount.get(currentStepName) || 0) + 1;
+          this.stepRetryCount.set(currentStepName, retries);
+          const maxRetries = stepConfig.max_retries ?? 5;
+          if (retries >= maxRetries) {
+            const fallback = stepConfig.on_max_retries || 'finish';
+            logger.warn('workflow.max_retries', `Step '${currentStepName}' exceeded max retries (${maxRetries}), transitioning to '${fallback}'`, {
+              step: currentStepName, retries, maxRetries, fallback
+            }, { sessionId: this.context.sessionId, botName: this.context.bot_name });
+            this.stepRetryCount.delete(currentStepName);
+            nextStepName = fallback;
+          }
+        } else {
+          this.stepRetryCount.delete(currentStepName);
+        }
+
         const nextStepConfig = this.config.steps_config[nextStepName];
         logger.info(
           'workflow.transition',

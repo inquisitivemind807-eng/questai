@@ -1,64 +1,29 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
-  import { onMount, onDestroy } from "svelte";
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
-  import BotStats from "$lib/components/BotStats.svelte";
+  import { botProgressStore } from "$lib/stores/botProgressStore";
 
-  // Canonical bot list
   let bots = [
-    {
-      name: "seek_extract_bot",
-      description:
-        "Extract jobs from Seek.com.au using keywords, location, and filters (no apply)",
-      image: "/seek-logo.png",
-    },
-    {
-      name: "seek_apply_bot",
-      description:
-        "Apply to a single Seek job URL with Quick Apply flow",
-      image: "/seek-logo.png",
-    },
-    {
-      name: "linkedin_extract_bot",
-      description:
-        "Extract jobs from LinkedIn using keywords, location, and filters (no apply)",
-      image: "/linkedin-logo.png",
-    },
-    {
-      name: "linkedin_apply_bot",
-      description:
-        "Apply to a single LinkedIn job URL with Easy Apply flow",
-      image: "/linkedin-logo.png",
-    },
-    {
-      name: "indeed_bot",
-      description:
-        "Automate job searching on Indeed with Camoufox stealth browser and smart application features",
-      image: "/indeed-logo.png",
-    },
+    { name: "seek_extract_bot", description: "Extract jobs from Seek.com.au using keywords, location, and filters (no apply)", image: "/seek-logo.png" },
+    { name: "seek_apply_bot", description: "Apply to a single Seek job URL with Quick Apply flow", image: "/seek-logo.png" },
+    { name: "linkedin_extract_bot", description: "Extract jobs from LinkedIn using keywords, location, and filters (no apply)", image: "/linkedin-logo.png" },
+    { name: "linkedin_apply_bot", description: "Apply to a single LinkedIn job URL with Easy Apply flow", image: "/linkedin-logo.png" },
+    { name: "indeed_bot", description: "Automate job searching on Indeed with Camoufox stealth browser and smart application features", image: "/indeed-logo.png" },
   ];
 
-  // Optional platform filter from query: linkedin | seek | indeed
   $: platformFilter = $page.url.searchParams.get("platform") || "";
 
-  // Restrict which bots are shown per platform (for Bot Access entries)
   $: filteredBots =
     platformFilter === "linkedin"
-      ? bots.filter(
-          (b) =>
-            b.name === "linkedin_extract_bot" || b.name === "linkedin_apply_bot",
-        )
+      ? bots.filter((b) => b.name === "linkedin_extract_bot" || b.name === "linkedin_apply_bot")
       : platformFilter === "seek"
-        ? bots.filter(
-            (b) => b.name === "seek_extract_bot" || b.name === "seek_apply_bot",
-          )
+        ? bots.filter((b) => b.name === "seek_extract_bot" || b.name === "seek_apply_bot")
         : platformFilter === "indeed"
           ? bots.filter((b) => b.name === "indeed_bot")
           : bots;
 
-  // Platform folder selection state: "" | "linkedin" | "seek" | "indeed"
   let selectedPlatformFolder = "";
 
   const PLATFORM_FOLDER_LABELS = {
@@ -74,20 +39,17 @@
     return "";
   }
 
-  // Apply folder-based platform scoping on top of existing filteredBots logic
   $: platformScopedBots =
     selectedPlatformFolder === ""
       ? filteredBots
-      : filteredBots.filter(
-          (b) => getPlatformForBotName(b.name) === selectedPlatformFolder,
-        );
+      : filteredBots.filter((b) => getPlatformForBotName(b.name) === selectedPlatformFolder);
 
-  let unlistenProgress = null;
+  let showConfigError = false;
+  let extractCount = 10;
+  let showConfigForBot = null;
 
-  // Load available bots on mount
   onMount(async () => {
     try {
-      // Try to get bots dynamically - if this fails, keep the static list
       const availableBots = await invoke("get_available_bots");
       if (availableBots && availableBots.length > 0) {
         bots = availableBots.map((botName) => ({
@@ -96,222 +58,57 @@
           image: `/${botName}-logo.png`,
         }));
       }
-    } catch (error) {
-      console.log("Using static bot list (dynamic discovery not available)");
-      // Keep the static bot list as fallback
-    }
-
-    // Listen for bot progress events from Rust
-    unlistenProgress = await listen("bot-progress", (event) => {
-      handleBotProgressEvent(event.payload);
-    });
-  });
-
-  onDestroy(() => {
-    if (unlistenProgress) {
-      unlistenProgress();
+    } catch {
+      // Keep static bot list as fallback
     }
   });
-
-  // Running bots tracking - supports multiple concurrent bots
-  let runningBots = [];
-
-  // Config validation state
-  let showConfigError = false;
-
-  // Extraction Limit configuration
-  let extractCount = 10;
-  let showConfigForBot = null;
-
-  function handleBotProgressEvent(event) {
-    console.log("Bot progress event:", event);
-
-    // Find bot by botId (from data) or use the first running bot if only one
-    let bot = runningBots.find((b) => b.botId === event.data?.botId);
-
-    // If no bot found by ID, and we have exactly one bot running, assume it's for that bot
-    if (!bot && runningBots.length === 1) {
-      bot = runningBots[0];
-    }
-
-    // Create new bot on initialization event
-    if (
-      !bot &&
-      event.type === "info" &&
-      event.message?.includes("initialized")
-    ) {
-      bot = {
-        name: `${event.data?.botName || "seek_extract"}_bot`,
-        botId: event.data?.botId || `bot_${Date.now()}`, // Fallback ID
-        currentStep: "Initializing...",
-        totalJobs: 0,
-        jobsProcessed: 0,
-        appliedJobs: 0,
-        skippedJobs: 0,
-        isExpanded: true,
-        consoleMessages: [], // Track all console messages
-      };
-      runningBots = [...runningBots, bot];
-    }
-
-    if (!bot) {
-      console.warn("Could not find bot for event:", event);
-      return;
-    }
-
-    // Initialize consoleMessages if not present (for existing bots)
-    if (!bot.consoleMessages) {
-      bot.consoleMessages = [];
-    }
-
-    // Update bot stats based on event type
-    switch (event.type) {
-      case "step_start":
-        // Format: "Step 5: performBasicSearch"
-        const stepName = event.funcName?.replace(/([A-Z])/g, " $1").trim(); // camelCase to Title Case
-        bot.currentStep = `Step ${event.stepNumber}: ${stepName || event.funcName}`;
-        bot.consoleMessages.push({
-          type: "step",
-          text: bot.currentStep,
-          timestamp: new Date(),
-        });
-        break;
-
-      case "transition":
-        // Format: "openHomepage → homepage_opened"
-        const transitionMsg = event.transition?.replace(/_/g, " "); // snake_case to readable
-        bot.currentStep = `✓ ${transitionMsg || event.transition}`;
-        bot.consoleMessages.push({
-          type: "transition",
-          text: bot.currentStep,
-          timestamp: new Date(),
-        });
-        break;
-
-      case "info":
-        if (event.message?.includes("completed")) {
-          bot.currentStep = "✅ Workflow completed successfully!";
-          bot.consoleMessages.push({
-            type: "success",
-            text: bot.currentStep,
-            timestamp: new Date(),
-          });
-          // Remove from running list after delay
-          setTimeout(() => {
-            runningBots = runningBots.filter((b) => b.botId !== bot.botId);
-          }, 5000);
-        } else if (event.message) {
-          bot.currentStep = event.message;
-          bot.consoleMessages.push({
-            type: "info",
-            text: event.message,
-            timestamp: new Date(),
-          });
-        }
-        break;
-
-      case "job_stat":
-        if (event.data) {
-          bot.totalJobs = event.data.totalJobs || bot.totalJobs;
-          bot.jobsProcessed = event.data.jobsProcessed || bot.jobsProcessed;
-          bot.appliedJobs = event.data.appliedJobs || bot.appliedJobs;
-          bot.skippedJobs = event.data.skippedJobs || bot.skippedJobs;
-        }
-        break;
-
-      case "error":
-        bot.currentStep = `❌ Error: ${event.message}`;
-        bot.consoleMessages.push({
-          type: "error",
-          text: bot.currentStep,
-          timestamp: new Date(),
-        });
-        break;
-
-      default:
-        console.log("Unhandled event type:", event.type);
-    }
-
-    runningBots = [...runningBots]; // Trigger reactivity
-  }
 
   function handleBotClick(botName) {
-    // Check if this bot is already running
-    const alreadyRunning = runningBots.some((bot) => bot.name === botName);
-    if (alreadyRunning) return; // Prevent multiple instances of same bot
-
     if (
-      botName === "seek_extract_bot" ||
-      botName === "seek_bot" ||
-      botName === "linkedin_extract_bot" ||
-      botName === "linkedin_bot"
+      botName === "seek_extract_bot" || botName === "seek_bot" ||
+      botName === "linkedin_extract_bot" || botName === "linkedin_bot"
     ) {
-      // Toggle configuration field visibility for seek bot
       showConfigForBot = showConfigForBot === botName ? null : botName;
     } else {
-      // Directly run the bot - no browser selection needed
       runBot(botName);
     }
   }
 
-  function isBotRunning(botName) {
-    return runningBots.some((bot) => bot.name === botName);
-  }
-
-  function stopBot(botId) {
-    console.log(`Stopping bot ${botId}...`);
-    // TODO: Implement actual bot stop functionality via Rust
-    // For now, just remove from running list
-    runningBots = runningBots.filter((bot) => bot.botId !== botId);
-  }
-
   async function runBot(botName) {
     try {
-      // CHECK: Does config file exist by trying to read it
       try {
-        await invoke("read_file_async", {
-          filename: "src/bots/user-bots-config.json",
-        });
-      } catch (readError) {
-        // File doesn't exist or can't be read
+        await invoke("read_file_async", { filename: "src/bots/user-bots-config.json" });
+      } catch {
         showConfigError = true;
         return;
       }
 
-      console.log(`Starting ${botName} with streaming...`);
-
-      // Convert card names to bot names and preserve backward compatibility.
       const cleanBotName = botName.replace("_bot", "");
       const resolvedBotName = cleanBotName === "seek" ? "seek_extract" : cleanBotName;
 
-      // Start bot with streaming support
       const params = /** @type {any} */ ({ botName: resolvedBotName });
-      if (
-        resolvedBotName === "seek_extract" ||
-        resolvedBotName === "linkedin_extract"
-      ) {
-        const limit = Number(extractCount) || 10;
-        // Pass both naming variants so Rust command mapping is never missed.
+      let limit = 0;
+      if (resolvedBotName === "seek_extract" || resolvedBotName === "linkedin_extract") {
+        limit = Number(extractCount) || 10;
         params.extractLimit = limit;
         params.extract_limit = limit;
-        showConfigForBot = null; // Hide config after starting
+        showConfigForBot = null;
       }
 
-      const result = await invoke("run_bot_streaming", params);
+      const activeBotId = `bot_${Date.now()}`;
+      botProgressStore.startBot(activeBotId, resolvedBotName, limit);
 
-      console.log(`Bot started:`, result);
+      invoke("run_bot_streaming", params).catch(err => {
+        console.error("run_bot_streaming error:", err);
+      });
 
-      // Progress updates will come via 'bot-progress' events
-      // which are handled by handleBotProgressEvent
+      goto("/bot-logs");
     } catch (error) {
       console.error(`Error starting ${botName}:`, error);
-
-      // Show error in UI
       alert(`Failed to start bot: ${error}`);
     }
   }
 
-  // Function to navigate to config page
   function goToConfig() {
     showConfigError = false;
     goto("/frontend-form");
@@ -335,16 +132,12 @@
         >
           <div class="card-body items-center text-center">
             <div class="avatar mb-3">
-              <div
-                class="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2"
-              >
+              <div class="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
                 <img src="/linkedin-logo.png" alt="LinkedIn Bot" />
               </div>
             </div>
             <h3 class="card-title text-primary text-lg">LinkedIn Bot</h3>
-            <p class="text-sm text-base-content/70">
-              Open LinkedIn extract and apply bots.
-            </p>
+            <p class="text-sm text-base-content/70">Open LinkedIn extract and apply bots.</p>
           </div>
         </button>
 
@@ -355,16 +148,12 @@
         >
           <div class="card-body items-center text-center">
             <div class="avatar mb-3">
-              <div
-                class="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2"
-              >
+              <div class="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
                 <img src="/seek-logo.png" alt="Seek Bot" />
               </div>
             </div>
             <h3 class="card-title text-primary text-lg">Seek Bot</h3>
-            <p class="text-sm text-base-content/70">
-              Open Seek extract and apply bots.
-            </p>
+            <p class="text-sm text-base-content/70">Open Seek extract and apply bots.</p>
           </div>
         </button>
 
@@ -375,48 +164,34 @@
         >
           <div class="card-body items-center text-center">
             <div class="avatar mb-3">
-              <div
-                class="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2"
-              >
+              <div class="w-16 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
                 <img src="/indeed-logo.png" alt="Indeed Bot" />
               </div>
             </div>
             <h3 class="card-title text-primary text-lg">Indeed Bot</h3>
-            <p class="text-sm text-base-content/70">
-              Open the Indeed automation bot.
-            </p>
+            <p class="text-sm text-base-content/70">Open the Indeed automation bot.</p>
           </div>
         </button>
       </div>
     </div>
   {/if}
 
-  <!-- Bot Selection Cards (shown after picking a platform folder) -->
+  <!-- Bot Selection Cards -->
   {#if selectedPlatformFolder}
     <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
       <div class="breadcrumbs text-sm">
         <ul>
           <li>
-            <button
-              type="button"
-              class="link link-hover"
-              on:click={() => (selectedPlatformFolder = "")}
-            >
+            <button type="button" class="link link-hover" on:click={() => (selectedPlatformFolder = "")}>
               All Platforms
             </button>
           </li>
           <li>
-            <span class="font-semibold">
-              {PLATFORM_FOLDER_LABELS[selectedPlatformFolder] || "Bots"}
-            </span>
+            <span class="font-semibold">{PLATFORM_FOLDER_LABELS[selectedPlatformFolder] || "Bots"}</span>
           </li>
         </ul>
       </div>
-      <button
-        type="button"
-        class="btn btn-ghost btn-sm"
-        on:click={() => (selectedPlatformFolder = "")}
-      >
+      <button type="button" class="btn btn-ghost btn-sm" on:click={() => (selectedPlatformFolder = "")}>
         Change platform
       </button>
     </div>
@@ -424,16 +199,11 @@
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
       {#each platformScopedBots as bot}
         <div
-          class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300"
-          class:opacity-50={isBotRunning(bot.name)}
-          class:cursor-not-allowed={isBotRunning(bot.name)}
-          class:cursor-pointer={!isBotRunning(bot.name)}
+          class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
         >
           <figure class="px-10 pt-10">
             <div class="avatar">
-              <div
-                class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2"
-              >
+              <div class="w-24 rounded-full ring ring-primary ring-offset-base-100 ring-offset-2">
                 <img src={bot.image} alt={bot.name} />
               </div>
             </div>
@@ -444,9 +214,7 @@
 
             <div class="card-actions w-full mt-4 flex-col">
               {#if showConfigForBot === bot.name}
-                <div
-                  class="w-full mb-4 form-control opacity-100 transition-opacity"
-                >
+                <div class="w-full mb-4 form-control opacity-100 transition-opacity">
                   <label class="label p-1" for={`extract-count-${bot.name}`}>
                     <span class="label-text text-xs">Jobs to Extract:</span>
                   </label>
@@ -458,69 +226,21 @@
                     class="input input-bordered input-sm w-full"
                     bind:value={extractCount}
                   />
-                  <button
-                    class="btn btn-success btn-sm w-full mt-2"
-                    on:click={() => runBot(bot.name)}
-                  >
+                  <button class="btn btn-success btn-sm w-full mt-2" on:click={() => runBot(bot.name)}>
                     Go
                   </button>
-                  <button
-                    class="btn btn-ghost btn-xs w-full mt-1"
-                    on:click={() => (showConfigForBot = null)}
-                  >
+                  <button class="btn btn-ghost btn-xs w-full mt-1" on:click={() => (showConfigForBot = null)}>
                     Cancel
                   </button>
                 </div>
-              {:else if isBotRunning(bot.name)}
-                <button
-                  class="btn btn-error btn-sm w-full"
-                  on:click={() => stopBot(bot.name)}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M6 18L18 6M6 6l12 12"
-                    />
-                  </svg>
-                  Stop Bot
-                </button>
               {:else}
-                <button
-                  class="btn btn-primary btn-sm w-full"
-                  on:click={() => handleBotClick(bot.name)}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    class="h-4 w-4"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"
-                    />
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
+                <button class="btn btn-primary btn-sm w-full" on:click={() => handleBotClick(bot.name)}>
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  {bot.name === "seek_extract_bot" ||
-                  bot.name === "seek_bot" ||
-                  bot.name === "linkedin_extract_bot" ||
-                  bot.name === "linkedin_bot"
+                  {bot.name === "seek_extract_bot" || bot.name === "seek_bot" ||
+                   bot.name === "linkedin_extract_bot" || bot.name === "linkedin_bot"
                     ? "Configure & Start"
                     : "Start Bot"}
                 </button>
@@ -537,62 +257,25 @@
       {/if}
     </div>
   {/if}
-
-  <!-- Running Bots Stats Section -->
-  {#if runningBots.length > 0}
-    <div class="divider text-lg font-semibold">Running Bots</div>
-
-    <div class="space-y-4">
-      {#each runningBots as botStat}
-        <BotStats
-          botName={botStat.name}
-          currentStep={botStat.currentStep}
-          totalJobs={botStat.totalJobs}
-          jobsProcessed={botStat.jobsProcessed}
-          appliedJobs={botStat.appliedJobs}
-          skippedJobs={botStat.skippedJobs}
-          isExpanded={botStat.isExpanded}
-          consoleMessages={botStat.consoleMessages || []}
-          onStop={() => stopBot(botStat.botId)}
-        />
-      {/each}
-    </div>
-  {/if}
 </div>
 
 <!-- Config Missing Error Modal -->
 {#if showConfigError}
   <div class="modal modal-open">
     <div class="modal-box bg-error text-error-content">
-      <h3 class="font-bold text-lg mb-4">⚠️ Configuration Required</h3>
-      <p class="mb-4">
-        You need to create your bot configuration before running any bots.
-      </p>
-      <p class="mb-6">
-        Please go to the <strong>Configuration</strong> page and set up your:
-      </p>
+      <h3 class="font-bold text-lg mb-4">Configuration Required</h3>
+      <p class="mb-4">You need to create your bot configuration before running any bots.</p>
+      <p class="mb-6">Please go to the <strong>Configuration</strong> page and set up your:</p>
       <ul class="list-disc list-inside mb-6 space-y-1">
         <li>Job search keywords (e.g., "Java developer", "Data Analyst")</li>
         <li>Preferred location (e.g., "Sydney", "Remote")</li>
         <li>Other preferences (optional)</li>
       </ul>
       <div class="modal-action">
-        <button class="btn btn-primary" on:click={goToConfig}>
-          Go to Configuration Page
-        </button>
-        <button
-          class="btn btn-ghost"
-          on:click={() => (showConfigError = false)}
-        >
-          Cancel
-        </button>
+        <button class="btn btn-primary" on:click={goToConfig}>Go to Configuration Page</button>
+        <button class="btn btn-ghost" on:click={() => (showConfigError = false)}>Cancel</button>
       </div>
     </div>
-    <button
-      type="button"
-      class="modal-backdrop"
-      aria-label="Close"
-      on:click={() => (showConfigError = false)}
-    ></button>
+    <button type="button" class="modal-backdrop" aria-label="Close" on:click={() => (showConfigError = false)}></button>
   </div>
 {/if}

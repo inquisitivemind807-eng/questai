@@ -814,15 +814,16 @@ async fn run_bot_streaming(
     // Spawn task to stream stdout lines as Tauri events
     tokio::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
-            // Filter for structured events with [BOT_EVENT] prefix
+            // Forward ALL lines as bot-log so the UI can display raw console output
+            let _ = app_clone.emit("bot-log", &line);
+
+            // Additionally parse structured events with [BOT_EVENT] prefix
             if line.starts_with("[BOT_EVENT]") {
                 let json_str = &line[11..]; // Remove prefix
                 if let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) {
-                    // Emit to UI (using cloned app handle)
                     let _ = app_clone.emit("bot-progress", event);
                 }
             }
-            // All other lines are debug logs - ignored by UI
         }
     });
 

@@ -307,9 +307,9 @@ export class UniversalOverlay {
             background: '#0b0f14',
             border: '1px solid #3a4754',
             borderRadius: '8px',
-            height: '210px',
-            maxHeight: '210px',
-            minHeight: '210px',
+            height: '320px',
+            maxHeight: '320px',
+            minHeight: '200px',
             overflow: 'hidden',
             flexShrink: '0',
             pointerEvents: 'auto',
@@ -338,7 +338,7 @@ export class UniversalOverlay {
             textTransform: 'uppercase',
             letterSpacing: '0.12em'
           });
-          logTitle.textContent = 'Activity Log';
+          logTitle.textContent = 'Logs';
 
           const logList = document.createElement('div');
           logList.id = LOG_LIST_ID;
@@ -452,27 +452,26 @@ export class UniversalOverlay {
           if (state.type === 'job_progress') {
             const appliedJobs = Number(data.appliedJobs || 0);
             const totalJobs = Number(data.totalJobs || 0);
-            const internalJobs = Number(data.internalJobs || 0);
-            const externalJobs = Number(data.externalJobs || 0);
             const currentStep = String(data.currentStep || '');
             const percentage = totalJobs > 0 ? Math.max(0, Math.min(100, (appliedJobs / totalJobs) * 100)) : 0;
             refs.mainContent.innerHTML =
-              '<div style="display:flex;flex-direction:column;gap:16px;width:100%;max-width:100%;box-sizing:border-box;">' +
-                '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;min-width:0;padding-bottom:4px;">' +
-                  '<span style="color:#00ffff;flex-shrink:0;font-size:15px;font-weight:500;">Jobs Extracted:</span>' +
-                  '<span style="font-weight:bold;font-size:20px;flex-shrink:0;color:#ffffff;">' + appliedJobs + '/' + totalJobs + '</span>' +
-                '</div>' +
-                '<div style="display:flex;gap:10px;font-size:12px;flex-wrap:wrap;width:100%;">' +
-                  '<span style="background:#00bb6630;border:1px solid #00bb6666;border-radius:8px;padding:6px 12px;color:#00dd88;white-space:nowrap;flex-shrink:0;font-weight:500;">📋 Internal: ' + internalJobs + '</span>' +
-                  '<span style="background:#ff880030;border:1px solid #ff880066;border-radius:8px;padding:6px 12px;color:#ffaa44;white-space:nowrap;flex-shrink:0;font-weight:500;">🌐 External: ' + externalJobs + '</span>' +
+              '<div style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:100%;box-sizing:border-box;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;">' +
+                  '<span style="color:#8899aa;font-size:13px;font-weight:500;">Extracted</span>' +
+                  '<span style="font-weight:bold;font-size:28px;color:#ffffff;font-variant-numeric:tabular-nums;">' +
+                    appliedJobs + '<span style="color:#ffffff40;font-size:18px;">/' + totalJobs + '</span>' +
+                  '</span>' +
                 '</div>' +
                 '<div style="background:#333;border-radius:8px;height:10px;overflow:hidden;width:100%;box-shadow:inset 0 2px 4px rgba(0,0,0,0.3);">' +
                   '<div style="background:linear-gradient(90deg,#00ffff,#00dd88);height:100%;width:' + percentage + '%;transition:width 0.3s ease;box-shadow:0 0 8px rgba(0,255,255,0.4);"></div>' +
                 '</div>' +
-                '<div style="font-size:13px;opacity:0.9;color:#00dd88;word-wrap:break-word;overflow-wrap:break-word;width:100%;line-height:1.5;padding:8px 0;">' + currentStep + '</div>' +
-                '<div style="display:flex;align-items:center;gap:10px;width:100%;padding-top:4px;">' +
-                  '<div style="width:10px;height:10px;border-radius:50%;background:#00ffff;animation:pulse 1.5s ease-in-out infinite;flex-shrink:0;box-shadow:0 0 6px rgba(0,255,255,0.6);"></div>' +
-                  '<span style="font-size:12px;opacity:0.7;color:#ffffff;">Working...</span>' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;">' +
+                  '<span style="font-size:12px;color:#8899aa;">' + percentage + '%</span>' +
+                  '<span style="font-size:12px;color:#00dd88;max-width:75%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + currentStep + '</span>' +
+                '</div>' +
+                '<div style="display:flex;align-items:center;gap:8px;padding-top:2px;">' +
+                  '<div style="width:8px;height:8px;border-radius:50%;background:#00ffff;animation:pulse 1.5s ease-in-out infinite;flex-shrink:0;"></div>' +
+                  '<span style="font-size:11px;opacity:0.5;">Working...</span>' +
                 '</div>' +
               '</div>';
             return;
@@ -721,33 +720,37 @@ export class UniversalOverlay {
    */
   private async updateState(state: OverlayState): Promise<void> {
     if (this.overlayUnavailable) return;
-    try {
-      // Ensure active mode is preserved or initialized
-      const currentMode = await this.getActiveMode();
-      state.activeMode = state.activeMode || currentMode;
 
+    const currentMode = await this.safeExecute(
+      () => this.getActiveMode(),
+      'getActiveMode'
+    );
+    state.activeMode = state.activeMode || currentMode || 'superbot';
+
+    await this.safeExecute(async () => {
+      // Re-inject overlay system if it was lost (e.g. after a full page navigation)
+      if (!this.initialized) {
+        await this.injectPersistentOverlaySystem();
+        this.initialized = true;
+      }
       await this.driver.executeScript(`
         if (typeof window.__updateOverlay === 'function') {
           window.__updateOverlay(${JSON.stringify(state)});
         }
       `);
-    } catch (error) {
-      if (this.isWindowClosedError(error)) {
-        this.overlayUnavailable = true;
-      } else {
-        console.error('Error updating overlay state:', error);
-      }
-    }
+    }, 'updateState');
   }
 
   /**
    * Show job progress overlay
    */
   async showJobProgress(appliedJobs: number, totalJobs: number, currentStep: string, stepIndex: number): Promise<void> {
-    await this.initialize();
+    if (this.overlayUnavailable) return;
 
-    let existingLogs: string[] = [];
-    try {
+    await this.safeExecute(async () => {
+      await this.initialize();
+
+      let existingLogs: string[] = [];
       const stateStr = await this.driver.executeScript(`
         return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
       `) as string | null;
@@ -755,32 +758,36 @@ export class UniversalOverlay {
         const currentState = JSON.parse(stateStr);
         existingLogs = currentState?.data?.logs || [];
       }
-    } catch (e) {
-      // ignore
-    }
 
-    const state: OverlayState = {
-      botName: this.botName,
-      type: 'job_progress',
-      data: {
-        appliedJobs,
-        totalJobs,
-        currentStep,
-        stepIndex,
-        logs: existingLogs
-      }
-    };
+      const state: OverlayState = {
+        botName: this.botName,
+        type: 'job_progress',
+        data: {
+          appliedJobs,
+          totalJobs,
+          currentStep,
+          stepIndex,
+          logs: existingLogs
+        }
+      };
 
-    await this.updateState(state);
+      await this.updateState(state);
+    }, 'showJobProgress');
   }
 
   /**
-   * Add a real-time event log to the overlay UI
+   * Add a real-time event log to the overlay UI.
+   * Fire-and-forget safe — never throws, never blocks the bot on transient failures.
    */
   async addLogEvent(message: string): Promise<void> {
-    if (!this.initialized || this.overlayUnavailable) return;
+    if (this.overlayUnavailable) return;
 
-    try {
+    await this.safeExecute(async () => {
+      if (!this.initialized) {
+        await this.injectPersistentOverlaySystem();
+        this.initialized = true;
+      }
+
       const stateStr = await this.driver.executeScript(`
         return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
       `) as string | null;
@@ -796,43 +803,34 @@ export class UniversalOverlay {
       const timeStr = now.toLocaleTimeString('en-US', { hour12: false });
       state.data.logs.push(`[${timeStr}] ${message}`);
 
-      // Keep a larger rolling window for debugging while avoiding unbounded growth
       if (state.data.logs.length > 80) {
         state.data.logs = state.data.logs.slice(-80);
       }
 
       await this.updateState(state);
-    } catch (error) {
-      if (this.isWindowClosedError(error)) {
-        this.overlayUnavailable = true;
-      } else {
-        console.error('Error adding overlay log event:', error);
-      }
-    }
+    }, 'addLogEvent');
   }
 
   /**
    * Update job progress
    */
   async updateJobProgress(appliedJobs: number, totalJobs: number, currentStep: string, stepIndex: number, internalJobs?: number, externalJobs?: number): Promise<void> {
-    try {
+    if (this.overlayUnavailable) return;
+
+    await this.safeExecute(async () => {
       await this.initialize();
 
       let existingLogs: string[] = [];
       let existingInternal = 0;
       let existingExternal = 0;
-      try {
-        const stateStr = await this.driver.executeScript(`
-          return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
-        `) as string | null;
-        if (stateStr) {
-          const currentState = JSON.parse(stateStr);
-          existingLogs = currentState?.data?.logs || [];
-          existingInternal = currentState?.data?.internalJobs || 0;
-          existingExternal = currentState?.data?.externalJobs || 0;
-        }
-      } catch (e) {
-        // ignore
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+      if (stateStr) {
+        const currentState = JSON.parse(stateStr);
+        existingLogs = currentState?.data?.logs || [];
+        existingInternal = currentState?.data?.internalJobs || 0;
+        existingExternal = currentState?.data?.externalJobs || 0;
       }
 
       const state: OverlayState = {
@@ -850,13 +848,7 @@ export class UniversalOverlay {
       };
 
       await this.updateState(state);
-    } catch (error) {
-      if (this.isWindowClosedError(error)) {
-        console.warn('Overlay: window closed, skip job progress update.');
-      } else {
-        console.warn('Overlay job progress failed:', error instanceof Error ? error.message : error);
-      }
-    }
+    }, 'updateJobProgress');
   }
 
   /**
@@ -1003,10 +995,12 @@ export class UniversalOverlay {
    * Show custom overlay
    */
   async showOverlay(config: OverlayConfig): Promise<void> {
-    await this.initialize();
+    if (this.overlayUnavailable) return;
 
-    let existingLogs: string[] = [];
-    try {
+    await this.safeExecute(async () => {
+      await this.initialize();
+
+      let existingLogs: string[] = [];
       const stateStr = await this.driver.executeScript(`
         return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
       `) as string | null;
@@ -1014,43 +1008,97 @@ export class UniversalOverlay {
         const currentState = JSON.parse(stateStr);
         existingLogs = currentState?.data?.logs || [];
       }
-    } catch (e) {
-      // ignore
-    }
 
-    const state: OverlayState = {
-      botName: this.botName,
-      type: 'custom',
-      data: {
-        title: config.title,
-        message: config.content,
-        html: config.html,
-        logs: existingLogs
-      },
-      position: config.position
-    };
+      const state: OverlayState = {
+        botName: this.botName,
+        type: 'custom',
+        data: {
+          title: config.title,
+          message: config.content,
+          html: config.html,
+          logs: existingLogs
+        },
+        position: config.position
+      };
 
-    await this.updateState(state);
+      await this.updateState(state);
+    }, 'showOverlay');
   }
 
   /**
-   * True when the browser window/tab was closed (overlay updates are no longer possible).
+   * True when the browser window/tab was closed permanently (overlay updates are no longer possible).
    */
   private isWindowClosedError(error: unknown): boolean {
     const msg = error instanceof Error ? error.message : String(error);
     const name = error instanceof Error ? error.constructor?.name : '';
     return (
       name === 'NoSuchWindowError' ||
-      /no such window|target window already closed|web view not found|invalid session id|session deleted|disconnected|connection.*closed/i.test(msg)
+      /no such window|target window already closed|web view not found|invalid session id|session deleted/i.test(msg)
     );
   }
 
   /**
-   * Update overlay content. Fails silently if the window was closed (e.g. user closed a tab).
+   * True when the error is a transient connection issue (page navigating, driver busy).
+   * These are retryable — the overlay system may recover after the page settles.
+   */
+  private isTransientError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    return /ECONNREFUSED|ECONNRESET|ETIMEDOUT|socket hang up|disconnected|connection.*closed|chrome not reachable|cannot determine loading status/i.test(msg);
+  }
+
+  private consecutiveFailures = 0;
+  private static readonly MAX_CONSECUTIVE_FAILURES = 8;
+
+  /**
+   * Execute a driver script with transient-error resilience.
+   * On ECONNREFUSED-style failures, waits briefly and retries once.
+   * After too many consecutive failures, marks overlay unavailable.
+   */
+  private async safeExecute<T>(fn: () => Promise<T>, label: string): Promise<T | null> {
+    if (this.overlayUnavailable) return null;
+
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const result = await fn();
+        this.consecutiveFailures = 0;
+        return result;
+      } catch (error) {
+        if (this.isWindowClosedError(error)) {
+          this.overlayUnavailable = true;
+          return null;
+        }
+        if (this.isTransientError(error)) {
+          this.consecutiveFailures++;
+          if (this.consecutiveFailures >= UniversalOverlay.MAX_CONSECUTIVE_FAILURES) {
+            console.warn(`Overlay: ${this.consecutiveFailures} consecutive failures, marking unavailable.`);
+            this.overlayUnavailable = true;
+            return null;
+          }
+          if (attempt === 0) {
+            await new Promise(r => setTimeout(r, 800));
+            this.initialized = false;
+            continue;
+          }
+        }
+        if (attempt === 1 || !this.isTransientError(error)) {
+          // Only log non-transient errors or final retry failure
+          if (!this.isTransientError(error)) {
+            console.warn(`Overlay ${label}:`, error instanceof Error ? error.message : error);
+          }
+          return null;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Update overlay content. Fails silently on any connection issue.
    */
   async updateOverlay(updates: Partial<OverlayConfig>): Promise<void> {
     if (this.overlayUnavailable) return;
-    try {
+
+    await this.safeExecute(async () => {
       const currentState = await this.driver.executeScript<OverlayState>(`
         return window.__getOverlayState ? window.__getOverlayState() : null;
       `);
@@ -1063,33 +1111,22 @@ export class UniversalOverlay {
 
         await this.updateState(currentState);
       }
-    } catch (error) {
-      if (this.isWindowClosedError(error)) {
-        this.overlayUnavailable = true;
-      } else {
-        console.warn('Overlay update failed:', error instanceof Error ? error.message : error);
-      }
-    }
+    }, 'updateOverlay');
   }
 
   /**
-   * Hide overlay. Fails silently if the window was closed.
+   * Hide overlay. Fails silently on any connection issue.
    */
   async hideOverlay(): Promise<void> {
     if (this.overlayUnavailable) return;
-    try {
+
+    await this.safeExecute(async () => {
       await this.driver.executeScript(`
         const overlay = document.getElementById('${this.overlayId}');
         if (overlay) overlay.remove();
         sessionStorage.removeItem('universal_overlay_state');
       `);
-    } catch (error) {
-      if (this.isWindowClosedError(error)) {
-        this.overlayUnavailable = true;
-      } else {
-        console.warn('Overlay hide failed:', error instanceof Error ? error.message : error);
-      }
-    }
+    }, 'hideOverlay');
   }
 
   /**
@@ -1103,26 +1140,30 @@ export class UniversalOverlay {
    * Show notification
    */
   async showNotification(message: string, type: 'info' | 'success' | 'warning' | 'error' = 'info'): Promise<void> {
-    await this.initialize();
+    if (this.overlayUnavailable) return;
 
-    const icons: Record<string, string> = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
-    const colors: Record<string, string> = {
-      info: '#00ffff',
-      success: '#00ff88',
-      warning: '#ffaa00',
-      error: '#ff4444'
-    };
+    await this.safeExecute(async () => {
+      await this.initialize();
 
-    const state: OverlayState = {
-      botName: this.botName,
-      type: 'custom',
-      data: {
-        title: `${icons[type]} ${type.charAt(0).toUpperCase() + type.slice(1)}`,
-        html: `<div style="color: ${colors[type]}; font-size: 14px;">${message}</div>`
-      },
-      position: { x: 20, y: 100 }
-    };
+      const icons: Record<string, string> = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
+      const colors: Record<string, string> = {
+        info: '#00ffff',
+        success: '#00ff88',
+        warning: '#ffaa00',
+        error: '#ff4444'
+      };
 
-    await this.updateState(state);
+      const state: OverlayState = {
+        botName: this.botName,
+        type: 'custom',
+        data: {
+          title: `${icons[type]} ${type.charAt(0).toUpperCase() + type.slice(1)}`,
+          html: `<div style="color: ${colors[type]}; font-size: 14px;">${message}</div>`
+        },
+        position: { x: 20, y: 100 }
+      };
+
+      await this.updateState(state);
+    }, 'showNotification');
   }
 }

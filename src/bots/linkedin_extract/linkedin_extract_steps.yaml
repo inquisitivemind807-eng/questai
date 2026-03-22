@@ -13,6 +13,8 @@ steps_config:
       ctx_failed: "start"
     timeout: 30
     on_timeout_event: "ctx_failed"
+    max_retries: 3
+    on_max_retries: "finish"
 
   open_check_login:
     step: 1
@@ -61,6 +63,8 @@ steps_config:
       failed_opening_jobs_page: "open_jobs_page"
     timeout: 30
     on_timeout_event: "failed_opening_jobs_page"
+    max_retries: 3
+    on_max_retries: "finish"
 
   set_search_keywords:
     step: 6
@@ -73,6 +77,8 @@ steps_config:
       jobs_page_missing: "set_search_keywords"
     timeout: 30
     on_timeout_event: "failed_setting_search_keywords"
+    max_retries: 3
+    on_max_retries: "finish"
 
   set_search_location:
     step: 7
@@ -85,6 +91,8 @@ steps_config:
       jobs_page_missing: "set_search_location"
     timeout: 30
     on_timeout_event: "failed_setting_search_location"
+    max_retries: 3
+    on_max_retries: "finish"
 
   apply_filters:
     step: 8
@@ -95,6 +103,8 @@ steps_config:
       jobs_page_missing: "apply_filters"
     timeout: 40
     on_timeout_event: "filters_application_failed"
+    max_retries: 3
+    on_max_retries: "finish"
 
   get_page_info:
     step: 9
@@ -106,6 +116,8 @@ steps_config:
       jobs_page_missing: "get_page_info"
     timeout: 20
     on_timeout_event: "failed_extracting_page_info"
+    max_retries: 3
+    on_max_retries: "finish"
 
   extract_job_details:
     step: 10
@@ -118,6 +130,8 @@ steps_config:
       failed_extracting_jobs: "extract_job_details"
     timeout: 60
     on_timeout_event: "failed_extracting_jobs"
+    max_retries: 3
+    on_max_retries: "finish"
 
   open_current_job_card:
     step: 11

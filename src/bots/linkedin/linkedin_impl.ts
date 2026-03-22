@@ -87,7 +87,30 @@ function isLikelySameText(a: string, b: string): boolean {
   const left = normalizeComparableText(a);
   const right = normalizeComparableText(b);
   if (!left || !right) return false;
-  return left.includes(right) || right.includes(left);
+  if (left === right) return true;
+  if (left.includes(right) || right.includes(left)) return true;
+
+  const leftTokens = left.split(' ').filter(Boolean);
+  const rightTokens = right.split(' ').filter(Boolean);
+  if (!leftTokens.length || !rightTokens.length) return false;
+
+  const leftSet = new Set(leftTokens);
+  const rightSet = new Set(rightTokens);
+  let shared = 0;
+  for (const token of leftSet) {
+    if (rightSet.has(token)) shared += 1;
+  }
+
+  const minSize = Math.min(leftSet.size, rightSet.size);
+  // For short titles (1-3 tokens), require all tokens from the shorter side to be present.
+  // For longer titles, use the 60% overlap threshold.
+  const threshold = minSize <= 3 ? (shared >= minSize ? 1 : 0) : 0.6;
+  const overlapRatio = shared / minSize;
+  if (threshold === 1 ? shared >= minSize : overlapRatio >= threshold) return true;
+
+  const leftPrefix = left.slice(0, 28);
+  const rightPrefix = right.slice(0, 28);
+  return Boolean(leftPrefix) && leftPrefix === rightPrefix;
 }
 
 async function waitForLinkedInPanelSync(
@@ -95,34 +118,68 @@ async function waitForLinkedInPanelSync(
   selectors: any,
   expected: { job_id?: string; title?: string; company?: string },
   timeoutMs: number = 9000
-): Promise<boolean> {
+): Promise<{ synced: boolean; lastSnapshot: { urlJobId: string; panelJobId: string; panelTitle: string; panelCompany: string; ariaCurrent: string } }> {
   const started = Date.now();
   const titleSelector = selectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1';
   const companySelector = selectors?.company_name_css || 'div.job-details-jobs-unified-top-card__company-name a';
+  const panelContainers = [
+    selectors?.container_css || 'div.jobs-details__main-content',
+    'div.jobs-search__job-details',
+    'div.jobs-search__job-details--wrapper',
+    'div.job-details-jobs-unified-top-card__container--two-pane'
+  ];
+
+  let lastSnapshot = { urlJobId: '', panelJobId: '', panelTitle: '', panelCompany: '', ariaCurrent: '' };
+  let iterations = 0;
 
   while (Date.now() - started < timeoutMs) {
+    iterations++;
     try {
       const currentUrl = await driver.getCurrentUrl().catch(() => '');
       const urlJobId = parseLinkedInJobId(currentUrl);
+      lastSnapshot.urlJobId = urlJobId;
       if (expected.job_id && urlJobId && String(urlJobId) === String(expected.job_id)) {
-        return true;
+        return { synced: true, lastSnapshot };
       }
 
+      // Extract job ID scoped to the details panel container, not the entire page.
       const panelJobId = await driver.executeScript(`
-        const hrefCandidates = Array.from(document.querySelectorAll('a[href*="/jobs/view/"]'))
-          .map((a) => a.getAttribute('href') || '');
-        for (const href of hrefCandidates) {
-          const m = String(href).match(/\\/jobs\\/view\\/(\\d+)/);
-          if (m && m[1]) return m[1];
+        var panelContainers = ${JSON.stringify(panelContainers)};
+        var panel = null;
+        for (var i = 0; i < panelContainers.length; i++) {
+          panel = document.querySelector(panelContainers[i]);
+          if (panel) break;
         }
-        const selected = document.querySelector('li[data-occludable-job-id][aria-current="true"], li[data-job-id][aria-current="true"], li.jobs-search-results__list-item--active');
+        if (panel) {
+          var links = panel.querySelectorAll('a[href*="/jobs/view/"]');
+          for (var j = 0; j < links.length; j++) {
+            var m = String(links[j].getAttribute('href') || '').match(/\\/jobs\\/view\\/(\\d+)/);
+            if (m && m[1]) return m[1];
+          }
+          // Check data attributes on the panel or its children
+          var dataEl = panel.querySelector('[data-job-id]') || panel.closest('[data-job-id]');
+          if (dataEl) return dataEl.getAttribute('data-job-id') || '';
+        }
+        // Fallback: aria-current card in the list (LinkedIn's own "selected" signal)
+        var selected = document.querySelector('li[data-occludable-job-id][aria-current="true"], li[data-job-id][aria-current="true"], li.jobs-search-results__list-item--active');
         if (selected) {
           return selected.getAttribute('data-occludable-job-id') || selected.getAttribute('data-job-id') || '';
         }
         return '';
       `).catch(() => '') as string;
+      lastSnapshot.panelJobId = panelJobId;
       if (expected.job_id && panelJobId && String(panelJobId) === String(expected.job_id)) {
-        return true;
+        return { synced: true, lastSnapshot };
+      }
+
+      // Also check aria-current independently for the expected card
+      const ariaCurrent = await driver.executeScript(`
+        var el = document.querySelector('li[data-occludable-job-id="${expected.job_id}"], li[data-job-id="${expected.job_id}"]');
+        return el ? (el.getAttribute('aria-current') || '') : '';
+      `).catch(() => '') as string;
+      lastSnapshot.ariaCurrent = ariaCurrent;
+      if (expected.job_id && ariaCurrent === 'true') {
+        return { synced: true, lastSnapshot };
       }
 
       let panelTitle = '';
@@ -137,11 +194,13 @@ async function waitForLinkedInPanelSync(
       } catch {
         panelCompany = '';
       }
+      lastSnapshot.panelTitle = panelTitle;
+      lastSnapshot.panelCompany = panelCompany;
 
       const titleMatches = expected.title ? isLikelySameText(panelTitle, expected.title) : Boolean(panelTitle);
       const companyMatches = expected.company ? isLikelySameText(panelCompany, expected.company) : true;
       if (titleMatches && companyMatches) {
-        return true;
+        return { synced: true, lastSnapshot };
       }
     } catch {
       // continue polling
@@ -149,7 +208,9 @@ async function waitForLinkedInPanelSync(
     await driver.sleep(300);
   }
 
-  return false;
+  printLog(`⚠️ Panel sync failed after ${iterations} iterations (${Date.now() - started}ms). Expected: job_id=${expected.job_id}, title="${expected.title}", company="${expected.company}". Got: urlJobId=${lastSnapshot.urlJobId}, panelJobId=${lastSnapshot.panelJobId}, panelTitle="${lastSnapshot.panelTitle}", panelCompany="${lastSnapshot.panelCompany}", ariaCurrent=${lastSnapshot.ariaCurrent}`);
+
+  return { synced: false, lastSnapshot };
 }
 
 // #region agent log
@@ -359,6 +420,7 @@ export async function* openJobsPage(ctx: WorkflowContext): AsyncGenerator<string
 
     yield "jobs_page_loaded";
   } catch (error) {
+    printLog(`Error opening jobs page: ${error instanceof Error ? error.message : String(error)}`);
     yield "failed_opening_jobs_page";
   }
 }
@@ -1021,96 +1083,135 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
     ctx.current_job_details = null;
 
     const originalWindow = await driver.getWindowHandle().catch(() => '');
-    let opened = false;
-    try {
-      await withTimeout(
-        driver.executeScript(`
-          const card = arguments[0];
-          const link = card?.querySelector?.('a[href*="/jobs/view/"]');
-          if (link) {
-            link.setAttribute('target', '_self');
-            link.removeAttribute('rel');
+    const closeExtraTabs = async () => {
+      try {
+        const handles = await driver.getAllWindowHandles();
+        if (handles.length > 1) {
+          const original = originalWindow || handles[0];
+          for (const handle of handles) {
+            if (handle !== original) {
+              await driver.switchTo().window(handle);
+              await driver.close();
+            }
           }
-          card?.click?.();
-        `, card),
-        6000,
-        'Open LinkedIn job card click'
-      );
-      opened = true;
-    } catch {
-      // fallback handled below
-    }
+          await driver.switchTo().window(original);
+        }
+      } catch { /* keep flow running */ }
+    };
 
-    // Guardrail: if LinkedIn still opens a new tab, close it and stay in the original tab.
-    try {
-      const handles = await driver.getAllWindowHandles();
-      if (handles.length > 1) {
-        const original = originalWindow || handles[0];
-        for (const handle of handles) {
-          if (handle !== original) {
-            await driver.switchTo().window(handle);
-            await driver.close();
+    const waitForPanelReadiness = async (): Promise<boolean> => {
+      const readyCandidates = [
+        panelSelectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1',
+        panelSelectors?.description_text_css || 'div.jobs-box__html-content',
+        'div.jobs-search__job-details--wrapper'
+      ];
+      for (const selector of readyCandidates) {
+        if (!selector) continue;
+        try {
+          await withTimeout(driver.wait(until.elementLocated(By.css(selector)), 3000), 5000, `Wait job details selector: ${selector}`);
+          return true;
+        } catch { /* try next */ }
+      }
+      return false;
+    };
+
+    // Click strategies in escalating order of invasiveness.
+    const clickStrategies: Array<{ name: string; execute: () => Promise<void> }> = [
+      {
+        name: 'link-click',
+        async execute() {
+          await withTimeout(driver.executeScript(`
+            var card = arguments[0];
+            var link = card?.querySelector?.('a[href*="/jobs/view/"]');
+            if (link) {
+              link.setAttribute('target', '_self');
+              link.removeAttribute('rel');
+              link.click();
+            } else {
+              card?.click?.();
+            }
+          `, card), 6000, 'Click job card link');
+        }
+      },
+      {
+        name: 'selenium-click',
+        async execute() {
+          try {
+            const link = await card.findElement(By.css('a[href*="/jobs/view/"]'));
+            await link.click();
+          } catch {
+            await card.click();
           }
         }
-        await driver.switchTo().window(original);
+      },
+      {
+        name: 'direct-nav',
+        async execute() {
+          const directUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
+          await withTimeout(driver.get(directUrl), 12000, 'Direct nav to job URL');
+          await driver.sleep(2000);
+        }
       }
-    } catch {
-      // keep flow running even if window-handle operations fail
-    }
-
-    if (!opened) {
-      // If we are already on that job details URL, continue.
-      const currentUrl = await driver.getCurrentUrl().catch(() => '');
-      opened = currentUrl.includes(`/jobs/view/${jobId}`);
-    }
-    if (!opened) {
-      try {
-        const directUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
-        await withTimeout(driver.get(directUrl), 12000, 'Open LinkedIn direct job URL');
-        await driver.sleep(2000);
-        opened = true;
-      } catch {
-        // keep failure path below
-      }
-    }
-    if (!opened) {
-      printLog(`⚠️ Could not open LinkedIn card ${currentIndex + 1}/${pageJobCount} (jobId=${jobId})`);
-      await ctx.overlay.addLogEvent(`Failed to open card ${currentIndex + 1}/${pageJobCount} (${jobId})`);
-      (ctx as any).last_extract_success = false;
-      yield "job_open_failed";
-      return;
-    }
-
-    // Ensure details panel actually became readable; otherwise skip this card.
-    let panelReady = false;
-    const readyCandidates = [
-      panelSelectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1',
-      panelSelectors?.description_text_css || 'div.jobs-box__html-content',
-      'div.jobs-search__job-details--wrapper'
     ];
-    for (const selector of readyCandidates) {
-      if (!selector) continue;
+
+    let synced = false;
+    let syncResult: Awaited<ReturnType<typeof waitForLinkedInPanelSync>> | null = null;
+    const maxAttempts = clickStrategies.length;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const strategy = clickStrategies[attempt];
+      let clickOk = false;
       try {
-        await withTimeout(driver.wait(until.elementLocated(By.css(selector)), 3000), 5000, `Wait job details selector: ${selector}`);
-        panelReady = true;
-        break;
+        if (attempt > 0) {
+          await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card).catch(() => {});
+          await driver.sleep(300);
+        }
+        await strategy.execute();
+        clickOk = true;
       } catch {
-        // try next candidate
+        printLog(`⚠️ Click strategy "${strategy.name}" failed for ${jobId} (attempt ${attempt + 1}/${maxAttempts})`);
       }
-    }
-    if (!panelReady) {
-      printLog(`⚠️ Job details panel not readable for jobId=${jobId}; skipping`);
-      await ctx.overlay.addLogEvent(`Skipping unreadable job ${currentIndex + 1}/${pageJobCount} (${jobId})`);
-      (ctx as any).last_extract_success = false;
-      yield "job_open_failed";
-      return;
+
+      await closeExtraTabs();
+
+      if (!clickOk) {
+        const currentUrl = await driver.getCurrentUrl().catch(() => '');
+        clickOk = currentUrl.includes(`/jobs/view/${jobId}`);
+      }
+      if (!clickOk && attempt < maxAttempts - 1) continue;
+      if (!clickOk) break;
+
+      // Wait for aria-current on the target card (LinkedIn's own selection signal).
+      try {
+        await withTimeout(driver.wait(async () => {
+          const ariaCur = await driver.executeScript(`
+            var el = document.querySelector('li[data-occludable-job-id="${jobId}"], li[data-job-id="${jobId}"]');
+            return el ? el.getAttribute('aria-current') : null;
+          `).catch(() => null) as string | null;
+          return ariaCur === 'true';
+        }, 3000), 4000, 'Wait aria-current');
+      } catch { /* not fatal — continue to panel check */ }
+
+      const panelReady = await waitForPanelReadiness();
+      if (!panelReady) {
+        printLog(`⚠️ Panel not readable after "${strategy.name}" for ${jobId} (attempt ${attempt + 1}/${maxAttempts})`);
+        if (attempt < maxAttempts - 1) continue;
+        break;
+      }
+
+      const syncTimeoutMs = attempt === 0 ? 9000 : 6000;
+      syncResult = await waitForLinkedInPanelSync(driver, panelSelectors, currentJob, syncTimeoutMs);
+      if (syncResult.synced) {
+        synced = true;
+        break;
+      }
+      printLog(`⚠️ Sync check failed after "${strategy.name}" for ${jobId} (attempt ${attempt + 1}/${maxAttempts}). Panel state: urlJobId=${syncResult.lastSnapshot.urlJobId}, panelJobId=${syncResult.lastSnapshot.panelJobId}, panelTitle="${syncResult.lastSnapshot.panelTitle}"`);
     }
 
-    // Critical guard: ensure the details panel switched to the clicked card context.
-    const synced = await waitForLinkedInPanelSync(driver, panelSelectors, currentJob, 9000);
     if (!synced) {
-      printLog(`⚠️ Panel did not sync to clicked job ${jobId}; skipping to avoid duplicate save`);
-      await ctx.overlay.addLogEvent(`Skipping unsynced panel for ${jobId}`);
+      const snap = syncResult?.lastSnapshot;
+      printLog(`⚠️ Panel did not sync to clicked job ${jobId} after ${maxAttempts} attempts; skipping to avoid duplicate save`);
+      await ctx.overlay.addLogEvent(`Skipping unsynced panel for ${jobId} (got panelId=${snap?.panelJobId || '?'}, title="${snap?.panelTitle || '?'}")`);
       (ctx as any).last_extract_success = false;
       yield "job_open_failed";
       return;
@@ -1452,10 +1553,12 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
       return;
     }
 
-    const synced = await waitForLinkedInPanelSync(driver, selectors, currentJob, 7000);
-    if (!synced) {
-      printLog(`⚠️ Details panel sync check failed for ${jobId}, skipping`);
-      await ctx.overlay.addLogEvent(`Skipping job ${jobId}: panel content mismatch`);
+    // Lightweight sync sanity-check (openCurrentExtractJobCard already retried thoroughly).
+    // Only spend 3s here to catch edge cases where the panel drifted between steps.
+    const { synced: panelStillSynced } = await waitForLinkedInPanelSync(driver, selectors, currentJob, 3000);
+    if (!panelStillSynced) {
+      printLog(`⚠️ Details panel drifted for ${jobId} between open and extract, skipping`);
+      await ctx.overlay.addLogEvent(`Skipping job ${jobId}: panel drifted after open`);
       (ctx as any).last_extract_success = false;
       yield "job_details_extraction_failed";
       return;
