@@ -350,7 +350,6 @@ export class UniversalOverlay {
             padding: '8px 10px 10px',
             overflowY: 'auto',
             overflowX: 'hidden',
-            height: '100%',
             display: 'flex',
             flexDirection: 'column',
             gap: '5px',
@@ -565,7 +564,7 @@ export class UniversalOverlay {
                 .replace(/&/g, '&amp;')
                 .replace(/</g, '&lt;')
                 .replace(/>/g, '&gt;');
-              return '<div style="color:#d7e3ec;word-wrap:break-word;overflow-wrap:break-word;width:100%;max-width:100%;overflow:hidden;padding:2px 4px;border-radius:4px;background:#141d26;border:1px solid #22303d;">' + safe + '</div>';
+              return '<div style="color:#d7e3ec;word-wrap:break-word;overflow-wrap:break-word;width:100%;max-width:100%;padding:2px 4px;border-radius:4px;background:#141d26;border:1px solid #22303d;flex-shrink:0;">' + safe + '</div>';
             }).join('');
             logList.innerHTML = html;
           }
