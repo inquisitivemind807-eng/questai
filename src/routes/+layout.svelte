@@ -168,18 +168,24 @@
           </li>
 
           {#if $activeBots.length > 0}
+            {@const attentionNeeded = $activeBots.some(b => b.attentionNeeded)}
             <li>
-              <a href="/bot-logs" class="bg-primary/20 text-primary border border-primary/50 font-bold animate-pulse hover:animate-none {$page.url.pathname === '/bot-logs' ? 'active' : ''}">
+              <a 
+                href="/bot-logs" 
+                class="border font-bold animate-pulse hover:animate-none 
+                  {$page.url.pathname === '/bot-logs' ? 'active ' : ''}
+                  {attentionNeeded ? 'bg-error/20 text-error border-error/50' : 'bg-primary/20 text-primary border-primary/50'}"
+              >
                 <div class="relative">
                   <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                   </svg>
                   <span class="absolute -top-1 -right-1 flex h-3 w-3">
-                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                    <span class="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full {attentionNeeded ? 'bg-error' : 'bg-primary'} opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 {attentionNeeded ? 'bg-error' : 'bg-primary'}"></span>
                   </span>
                 </div>
-                <span>Bot Active ({$activeBots.length})</span>
+                <span>{attentionNeeded ? 'ACTION REQUIRED' : `Bot Active (${$activeBots.length})`}</span>
               </a>
             </li>
           {/if}
