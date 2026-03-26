@@ -1,9 +1,5 @@
 import { Builder, WebDriver } from 'selenium-webdriver';
 import { Options, ServiceBuilder } from 'selenium-webdriver/chrome';
-import { createRequire } from 'module';
-
-const require = createRequire(import.meta.url);
-const chromedriverPath: string = require('chromedriver').path;
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -485,7 +481,6 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
     const driver = await new Builder()
       .forBrowser('chrome')
       .setChromeOptions(options)
-      .setChromeService(new ServiceBuilder(chromedriverPath))
       .build();
 
     // Try to maximize window (may fail on Wayland)

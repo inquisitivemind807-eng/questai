@@ -102,7 +102,7 @@
         console.error("run_bot_streaming error:", err);
       });
 
-      goto("/bot-logs");
+      await goto("/bot-logs");
     } catch (error) {
       console.error(`Error starting ${botName}:`, error);
       alert(`Failed to start bot: ${error}`);

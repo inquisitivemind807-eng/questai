@@ -120,10 +120,14 @@ export class UniversalOverlay {
             fontLink.rel = 'stylesheet';
             document.head.appendChild(fontLink);
           }
-          if (!document.getElementById('overlay-pulse-animation')) {
+          if (!document.getElementById('overlay-styles')) {
             const style = document.createElement('style');
-            style.id = 'overlay-pulse-animation';
-            style.textContent = '@keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } }';
+            style.id = 'overlay-styles';
+            style.textContent = '@keyframes pulse { 0%,100% { opacity: 0.3; transform: scale(1); } 50% { opacity: 1; transform: scale(1.2); } } ' +
+              '.universal-dynamic-overlay *::-webkit-scrollbar { width: 6px !important; height: 6px !important; } ' +
+              '.universal-dynamic-overlay *::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.2) !important; border-radius: 10px !important; } ' +
+              '.universal-dynamic-overlay *::-webkit-scrollbar-thumb { background: rgba(0, 255, 255, 0.4) !important; border-radius: 10px !important; } ' +
+              '.universal-dynamic-overlay *::-webkit-scrollbar-thumb:hover { background: rgba(0, 255, 255, 0.7) !important; }';
             document.head.appendChild(style);
           }
         }

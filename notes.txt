@@ -1,0 +1,8 @@
+1. Investigate weather to include a chome in the build to avoid the driver and chrome version mismatch issues that may arrise. 
+2. investigate the session issues for finalboss. 
+3. Investigate the linkedin bot first time running session login in issue. 
+   Investigate if there is any feedback for signin and and after signing in. 
+4. The linkedin ui needs to be updated to show warning for not logged in. 
+5. Investigate the issues of the stupid linkedin bot not showing what is going on. 
+6. The stop button dont work. 
+7. Ughh the overlay in the linkedin needs to be scrollable.

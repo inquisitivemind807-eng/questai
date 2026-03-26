@@ -5,8 +5,8 @@
 
   $: storeBots = $allBots;
 
-  function stopBot(botId) {
-    botProgressStore.stopBot(botId);
+  async function stopBot(botId) {
+    await botProgressStore.stopBot(botId);
   }
 </script>
 

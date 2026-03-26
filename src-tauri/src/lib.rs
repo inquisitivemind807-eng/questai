@@ -7,6 +7,9 @@ use std::io::Write;
 use std::path::Component;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Mutex, LazyLock};
+
+static RUNNING_BOTS: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const APP_NAME: &str = "FinalBoss";
 const MANAGED_FILES_INDEX_VERSION: u32 = 1;
@@ -804,6 +807,12 @@ async fn run_bot_streaming(
         .spawn()
         .map_err(|e| format!("Failed to spawn bot process: {}", e))?;
 
+    let pid = child.id().unwrap_or(0);
+    if pid > 0 {
+        let mut bots = RUNNING_BOTS.lock().unwrap();
+        bots.insert(bot_name.clone(), pid);
+    }
+
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
@@ -828,8 +837,19 @@ async fn run_bot_streaming(
     });
 
     // Wait for bot process to complete
+    let app_exit = app.clone();
+    let bot_name_exit = bot_name.clone();
     tokio::spawn(async move {
-        let _ = child.wait().await;
+        let status = child.wait().await;
+        {
+            let mut bots = RUNNING_BOTS.lock().unwrap();
+            bots.remove(&bot_name_exit);
+        }
+        let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+        let _ = app_exit.emit("bot-stopped", serde_json::json!({
+            "botName": bot_name_exit,
+            "exitCode": exit_code
+        }));
     });
 
     Ok(format!("Bot '{}' started successfully", bot_name))
@@ -869,6 +889,12 @@ async fn run_bot_for_job(
         .spawn()
         .map_err(|e| format!("Failed to spawn bot process: {}", e))?;
 
+    let pid = child.id().unwrap_or(0);
+    if pid > 0 {
+        let mut bots = RUNNING_BOTS.lock().unwrap();
+        bots.insert(bot_name.clone(), pid);
+    }
+
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
@@ -892,8 +918,19 @@ async fn run_bot_for_job(
     });
 
     // Wait for bot process to complete
+    let app_exit = app.clone();
+    let bot_name_exit = bot_name.clone();
     tokio::spawn(async move {
-        let _ = child.wait().await;
+        let status = child.wait().await;
+        {
+            let mut bots = RUNNING_BOTS.lock().unwrap();
+            bots.remove(&bot_name_exit);
+        }
+        let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+        let _ = app_exit.emit("bot-stopped", serde_json::json!({
+            "botName": bot_name_exit,
+            "exitCode": exit_code
+        }));
     });
 
     Ok(format!("Bot {} started for job {}", bot_name, job_url))
@@ -937,6 +974,13 @@ async fn run_bot_bulk(
         .spawn()
         .map_err(|e| format!("Failed to spawn bot process: {}", e))?;
 
+    let bot_name = "bulk".to_string();
+    let pid = child.id().unwrap_or(0);
+    if pid > 0 {
+        let mut bots = RUNNING_BOTS.lock().unwrap();
+        bots.insert(bot_name.clone(), pid);
+    }
+
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
@@ -949,7 +993,20 @@ async fn run_bot_bulk(
         }
     });
 
-    tokio::spawn(async move { let _ = child.wait().await; });
+    let app_exit = app.clone();
+    let bot_name_exit = bot_name.clone();
+    tokio::spawn(async move {
+        let status = child.wait().await;
+        {
+            let mut bots = RUNNING_BOTS.lock().unwrap();
+            bots.remove(&bot_name_exit);
+        }
+        let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
+        let _ = app_exit.emit("bot-stopped", serde_json::json!({
+            "botName": bot_name_exit,
+            "exitCode": exit_code
+        }));
+    });
     Ok(format!("Bulk bot started for {} jobs", job_ids.len()))
 }
 
@@ -1494,6 +1551,31 @@ async fn import_managed_files_backup(input: ManagedFilesImportInput) -> Result<u
     })
 }
 
+#[tauri::command]
+async fn stop_bot(bot_id: String) -> Result<String, String> {
+    let pid = {
+        let bots = RUNNING_BOTS.lock().unwrap();
+        bots.get(&bot_id).copied()
+    };
+    match pid {
+        Some(pid) => {
+            #[cfg(unix)]
+            unsafe {
+                libc::kill(pid as i32, libc::SIGTERM);
+            }
+            #[cfg(windows)]
+            {
+                std::process::Command::new("taskkill")
+                    .args(&["/PID", &pid.to_string(), "/T", "/F"])
+                    .spawn()
+                    .ok();
+            }
+            Ok(format!("Sent stop signal to bot '{}' (PID {})", bot_id, pid))
+        }
+        None => Err(format!("Bot '{}' is not running", bot_id)),
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1514,6 +1596,7 @@ pub fn run() {
             run_python_script,
             run_javascript_script,
             run_bot_streaming,
+            stop_bot,
             run_bot_for_job,
             run_bot_bulk,
             register_managed_file,

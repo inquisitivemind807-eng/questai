@@ -49,6 +49,7 @@ export class WorkflowEngine {
   private botId: string;
   private eventsFilePath: string;
   private stepRetryCount: Map<string, number> = new Map();
+  private aborted: boolean = false;
 
   constructor(configPath: string) {
     const configContent = fs.readFileSync(configPath, 'utf8');
@@ -77,6 +78,14 @@ export class WorkflowEngine {
 
   getBotId(): string {
     return this.botId;
+  }
+
+  abort(): void {
+    this.aborted = true;
+    logger.info('workflow.abort', 'Abort requested by user', {}, {
+      sessionId: this.context.sessionId,
+      botName: this.context.bot_name
+    });
   }
 
   registerStepFunction(stepName: string, func: StepFunction): void {
@@ -244,7 +253,7 @@ export class WorkflowEngine {
     const maxSteps = 1200; // Prevent infinite loops - limit workflow steps
     let stepCount = 0;
 
-    while (currentStepName !== 'done' && stepCount < maxSteps) {
+    while (currentStepName !== 'done' && stepCount < maxSteps && !this.aborted) {
       stepCount++;
 
       const event = await this.executeStep(currentStepName);
@@ -339,6 +348,15 @@ export class WorkflowEngine {
     }
 
     console.log('✅ Workflow completed');
+    if (this.aborted) {
+      this.emitProgress({
+        type: 'info',
+        timestamp: Date.now(),
+        message: 'Workflow stopped by user',
+        data: { aborted: true }
+      });
+    }
+
     logger.info('workflow.completed', 'Workflow completed', {
       totalSteps: stepCount
     }, {

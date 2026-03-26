@@ -3,14 +3,16 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
 
-  onMount(() => {
-    // Redirect based on authentication status
-    if ($page.data?.session?.user) {
+  import { authService } from '$lib/authService.js';
+
+  $: if (!$authService.loading) {
+    // Redirect based on authentication status from authService (client-side)
+    if ($authService.isLoggedIn) {
       goto('/app');
     } else {
       goto('/login');
     }
-  });
+  }
 </script>
 
 <main class="hero min-h-screen bg-base-200">

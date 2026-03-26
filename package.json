@@ -37,7 +37,6 @@
     "better-sqlite3": "^12.4.1",
     "camoufox-js": "^0.7.0",
     "chart.js": "^4.5.1",
-    "chromedriver": "140.0.4",
     "daisyui": "^5.1.23",
     "docx": "^9.5.1",
     "google-auth-library": "^10.3.0",

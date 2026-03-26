@@ -3,13 +3,15 @@ import { writable, derived, get } from 'svelte/store';
 export interface BotState {
   botId: string;
   name: string;
-  status: 'running' | 'completed' | 'failed';
+  status: 'running' | 'stopping' | 'completed' | 'failed';
   totalJobs: number;
   extractLimit: number;
   jobsProcessed: number;
   appliedJobs: number;
   skippedJobs: number;
   currentStep: string;
+  attentionNeeded?: boolean;
+  attentionMessage?: string;
   logs: Array<{ timestamp: number; text: string; type: 'info' | 'step' | 'transition' | 'error' | 'success' }>;
   startedAt: number;
 }
@@ -33,6 +35,8 @@ function createBotProgressStore() {
       appliedJobs: 0,
       skippedJobs: 0,
       currentStep: 'Initializing...',
+      attentionNeeded: false,
+      attentionMessage: '',
       logs: [],
       startedAt: Date.now(),
     };
@@ -72,8 +76,15 @@ function createBotProgressStore() {
         if (msg.includes('completed') || msg.includes('Bot completed')) {
           bot.status = 'completed';
           bot.currentStep = 'Completed';
-          if (event.data?.jobsProcessed !== undefined) bot.jobsProcessed = event.data.jobsProcessed;
           if (event.data?.totalJobs) bot.totalJobs = event.data.totalJobs;
+        }
+        
+        if (msg.toLowerCase().includes('user_needs_to_login') || msg.toLowerCase().includes('please sign in')) {
+          bot.attentionNeeded = true;
+          bot.attentionMessage = msg;
+        } else if (msg.toLowerCase().includes('logged in') || msg.toLowerCase().includes('login_success') || msg.toLowerCase().includes('login_not_needed')) {
+          bot.attentionNeeded = false;
+          bot.attentionMessage = '';
         }
         break;
       }
@@ -107,11 +118,24 @@ function createBotProgressStore() {
       });
     },
 
-    stopBot(botId: string) {
+    async stopBot(botId: string) {
+      // Set status to "stopping" immediately for UI feedback
       update(state => {
-        delete state.bots[botId];
+        const bot = state.bots[botId];
+        if (bot) bot.status = 'stopping';
         return { ...state };
       });
+
+      // Tell Rust to kill the child process
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        const state = get(botProgressStore);
+        const bot = state.bots[botId];
+        const botName = bot?.name || botId;
+        await invoke('stop_bot', { botId: botName });
+      } catch (err) {
+        console.error('Failed to stop bot:', err);
+      }
     },
 
     addLogLine(botId: string, line: string) {
@@ -158,6 +182,18 @@ function createBotProgressStore() {
 
     reset() {
       set({ bots: {} });
+    },
+
+    handleBotStopped(botName: string, exitCode: number) {
+      update(state => {
+        for (const bot of Object.values(state.bots)) {
+          if (bot.name === botName || bot.botId === botName) {
+            bot.status = exitCode === 0 ? 'completed' : 'failed';
+            bot.currentStep = exitCode === 0 ? 'Completed' : (exitCode === 130 || exitCode === 143 ? 'Stopped by user' : `Failed (Exit code: ${exitCode})`);
+          }
+        }
+        return { ...state };
+      });
     }
   };
 }
@@ -195,6 +231,13 @@ export async function initBotListeners() {
       const line = typeof event.payload === 'string' ? event.payload : String(event.payload);
       const botId = _resolveActiveBotId();
       botProgressStore.addLogLine(botId, line);
+    });
+
+    await listen('bot-stopped', (event: any) => {
+      const payload = event.payload;
+      const botName = payload?.botName || '';
+      const exitCode = payload?.exitCode ?? -1;
+      botProgressStore.handleBotStopped(botName, exitCode);
     });
 
     console.log('[botProgressStore] Global Tauri event listeners initialized');

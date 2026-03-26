@@ -41,6 +41,7 @@
   $: statusBadgeClass =
     displayStatus === 'completed' ? 'badge-success'
     : displayStatus === 'failed' ? 'badge-error'
+    : displayStatus === 'stopping' ? 'badge-warning'
     : 'badge-info';
 
   function formatTime(ts) {
@@ -90,14 +91,16 @@
           <p class="text-sm text-base-content/60 truncate">{displayCurrentStep}</p>
         </div>
       </div>
-      {#if displayStatus === 'running'}
+      {#if displayStatus === 'running' || displayStatus === 'stopping'}
         <button
           type="button"
-          class="btn btn-error btn-sm btn-circle flex-shrink-0"
+          class="btn btn-error btn-sm gap-1 flex-shrink-0"
           on:click={onStop}
+          disabled={displayStatus === 'stopping'}
           title="Stop bot"
           aria-label="Stop bot"
         >
+          {displayStatus === 'stopping' ? 'STOPPING...' : 'STOP'}
           <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
           </svg>

@@ -4,7 +4,7 @@
   import { CorpusRagAuth } from '$lib/corpus-rag-auth.js';
   import { page } from '$app/stores';
   import TokenBalance from '$lib/components/TokenBalance.svelte';
-  import { initBotListeners } from '$lib/stores/botProgressStore';
+  import { initBotListeners, activeBots } from '$lib/stores/botProgressStore';
   import '../app.css';
 
   // Always show clean login page, regardless of auth state
@@ -24,12 +24,17 @@
         const validation = await CorpusRagAuth.validateSession();
 
         if (!validation.valid) {
-          // Session expired or invalid - log out silently
-          console.log('Session validation failed:', validation.error);
-          // Automatically log out to clear expired session
+          // If it's a network error, don't log out (server might be starting)
+          if (validation.isNetworkError) {
+            console.warn('Session validation network error - skipping auto-logout:', validation.error);
+            return;
+          }
+
+          // Session explicitly invalid - log out silently
+          console.log('Session invalid, logging out:', validation.error);
           await authService.logout();
 
-          // Show a brief, friendly notification if on a protected page
+          // Show a friendly notification if on a protected page
           if (!$page.url.pathname.startsWith('/login')) {
             sessionValidationMessage = '⚠️ Your session has expired. Please log in again.';
             showSessionNotification = true;
@@ -41,9 +46,7 @@
           }
         }
       } catch (error) {
-        console.error('Session validation network error:', error);
-        // Don't show error to user or log out if it's just a network issue
-        // (corpus-rag server might be temporarily unavailable)
+        console.error('Unexpected session validation error:', error);
       }
     }
   });
@@ -163,6 +166,24 @@
               Dashboard
             </a>
           </li>
+
+          {#if $activeBots.length > 0}
+            <li>
+              <a href="/bot-logs" class="bg-primary/20 text-primary border border-primary/50 font-bold animate-pulse hover:animate-none {$page.url.pathname === '/bot-logs' ? 'active' : ''}">
+                <div class="relative">
+                  <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                  </svg>
+                  <span class="absolute -top-1 -right-1 flex h-3 w-3">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-3 w-3 bg-primary"></span>
+                  </span>
+                </div>
+                <span>Bot Active ({$activeBots.length})</span>
+              </a>
+            </li>
+          {/if}
+
           <li>
             <a href="/choose-bot" class="{$page.url.pathname === '/choose-bot' ? 'active' : ''}">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">

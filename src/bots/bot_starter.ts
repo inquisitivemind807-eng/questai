@@ -62,6 +62,8 @@ export interface BotRunOptions {
   keep_open?: boolean;
 }
 
+let activeWorkflowEngine: WorkflowEngine | null = null;
+
 export class BotStarter {
   private registry: BotRegistry;
 
@@ -97,6 +99,10 @@ export class BotStarter {
 
     // Setup emergency cleanup handler
     const emergencyCleanup = async (signal: string) => {
+      if (activeWorkflowEngine) {
+        print_log(`🛑 Aborting workflow via ${signal}...`);
+        activeWorkflowEngine.abort();
+      }
       print_log(`\n⚠️ Received ${signal} - performing graceful shutdown...`);
       logger.error('bot.emergency_cleanup', 'Emergency cleanup triggered', { signal });
 
@@ -210,6 +216,7 @@ export class BotStarter {
 
       // 4. Create workflow engine with bot's YAML
       const workflow_engine = new WorkflowEngine(bot_info.yaml_path);
+      activeWorkflowEngine = workflow_engine;
 
       // 5. Register bot's step functions
       this.register_bot_functions(workflow_engine, bot_impl);

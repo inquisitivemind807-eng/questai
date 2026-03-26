@@ -99,11 +99,21 @@ export class CorpusRagAuth {
         return { valid: true, user: data.user };
       } else {
         const error = await response.json();
-        return { valid: false, error: error.message || error.error || 'Session validation failed' };
+        // Server explicitly rejected the token
+        return { 
+          valid: false, 
+          error: error.message || error.error || 'Session invalid',
+          isNetworkError: false 
+        };
       }
     } catch (error) {
-      console.error('Session validation error:', error);
-      return { valid: false, error: error.message };
+      console.error('Session validation network error:', error);
+      // This is a network/connectivity error, not necessarily an invalid session
+      return { 
+        valid: false, 
+        error: error.message,
+        isNetworkError: true 
+      };
     }
   }
 
