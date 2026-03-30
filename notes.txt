@@ -1,21 +1,26 @@
+COMPLETED:
+- Item 2: Sidebar active tab styling. Added .active-tab class with border and background tint in src/app.css.
+- Item 3 & 4: Choose Bot page overhaul. 
+    * Fixed broken image paths (/finallinkedin.png, etc).
+    * Removed circles and verbose text (descriptions, mode indicators).
+    * Simplified to a clean 3-bot grid (LinkedIn, Seek, Indeed).
+    * Implemented one-click "Launch" (defaults to 10 jobs).
+    * Moved Configuration help box to the bottom.
+
+REMAINING:
 1. in the login page. 
 we need password or email not found err msg. 
 investigate why the stupid loading screen shows up everytime. i feel like there might be 
 a problem. like it maybe compulsoryly showing every time we run the app. no matter what. even if 
 the pc is fast enough u know what i mean? investigate. 
 
+**Finding:** The "stupid loading screen" is caused by 
+the global `$authService.loading` state in `+layout.svelte`, which is `true` by default and
+ only becomes `false` after `authService.initialize()` completes. 
+ Error messages currently pass through from the API; we should map `401` or specific error strings to "Email or password not found" in `handleSubmit`.
 
-2. in the sidebar. i want a styling for the active tab item. the current open tab menu name highlight or something. 
+5. when i click on buy tokens and select a package. it takes me to a sandbox payment page which is good. but in it there is a back button and when i click it im redirected to login page. im logged out. investigate why this is.
+**Finding:** The logout after clicking "Back" from the sandbox is likely due to the browser's security policy or `authService.initialize()` failing to find tokens when returning from an external origin. It might also be triggered by a session validation failure if the sandbox doesn't return to the exact same sub-origin.
 
 
-3. in choose bot page. the logo in the circle. remove the circle. make the icon full thumbnail bg. get the images. currently there is a question mark icon instead of linkedin seek indeed icons. investigate.
-and i dont like that we have to click so many times to run a bot. u have to choose a bot and then two items extract and apply and again u put the number of jobs to extract and then click on Go finally. ughhhh
-instead. try this. in the choose bot. the same thumbnails as of now. and click and and u will be directed to the bot dashboard and ur bot extraction bot for 10 jobs (defined in config/setting whatever). and voila. 
-we need to plan this one right aye. 
-
-
-4. im sure we have the images and its just the path issue. find and fix. 
-this in the choose bot pages
-[404] GET /linkedin-logo.png
-[404] GET /seek-logo.png
-[404] GET /indeed-logo.png
+6. Even after i click on stop even though the bot stops (the browser shuts down) the bot log dashboard still says stopping bot it dont know whats going on. it dont know the bots bin stopped. it should says the bot was stopped or maybe the cycle was complete and tell you what it did. how many jobs it found or applied to. whatever. 

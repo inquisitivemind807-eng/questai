@@ -1,3 +1,14 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer components {
+  .active-tab {
+    @apply text-primary font-bold border-l-4 border-primary !important;
+    background-color: color-mix(in srgb, var(--p), transparent 80%);
+  }
+  
+  .sidebar-nav li a {
+    @apply transition-all duration-200;
+  }
+}
