@@ -47,3 +47,4 @@ bot-logs.txt
 # Additional sensitive patterns
 debug/
 test_session/
+zcycleBin/

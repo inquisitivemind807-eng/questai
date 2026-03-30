@@ -97,7 +97,8 @@ FinalBoss is a comprehensive job application automation platform with the follow
 
 2. **Bot Automation System** (`src/bots/`)
    - **core/**: Workflow engine (YAML steps), browser manager (Selenium/Playwright), humanization, session manager, universal overlay
-   - **seek/**, **linkedin/**, **indeed/**: Per-platform impls with `*_impl.ts`, `*_steps.yaml`, and `config/*_selectors.json`
+   - **seek/**, **linkedin/**: Per-platform impls with `*_impl.ts`, `*_steps.yaml`, and `*_selectors.json`
+   - **indeed_bot/**: Standalone Camoufox Indeed bot (Active Indeed implementation)
    - Entry: `bot_starter.ts`; shared config: `user-bots-config.json`
 
 3. **API Integration**
@@ -153,7 +154,6 @@ finalboss/
 │   │   ├── user-bots-config.json
 │   │   ├── seek/
 │   │   ├── linkedin/
-│   │   ├── indeed/
 │   │   └── indeed_bot/       # Standalone Camoufox Indeed bot
 │   ├── lib/                 # Shared code
 │   │   ├── corpus-rag-client.js, corpus-rag-auth.js, api-config.js
@@ -161,7 +161,11 @@ finalboss/
 │   │   └── ...
 │   └── ...
 ├── src-tauri/               # Tauri 2 desktop shell
-├── static/
+├── static/                  # Static assets (images, logos, favicon)
+├── clients/                 # Canonical job application records (persistent storage)
+├── data/                    # User data and file uploads
+├── docs/                    # Technical documentation and data contracts
+├── zcycleBin/               # Archive for decommissioned, legacy, and unused files
 └── package.json
 ```
 
