@@ -3,7 +3,7 @@ import { writable, derived, get } from 'svelte/store';
 export interface BotState {
   botId: string;
   name: string;
-  status: 'running' | 'stopping' | 'completed' | 'failed';
+  status: 'running' | 'stopping' | 'completed' | 'failed' | 'stopped';
   totalJobs: number;
   extractLimit: number;
   jobsProcessed: number;
@@ -140,20 +140,29 @@ function createBotProgressStore() {
 
     addLogLine(botId: string, line: string) {
       update(state => {
-        let bot = state.bots[botId];
-        if (!bot) {
-          bot = getOrCreateBot(state, botId);
-          state.bots[botId] = bot;
-        }
-
         const trimmed = line.trim();
         if (!trimmed) return state;
 
+        let effectiveBotId = botId;
+        let payload: any = null;
+
         if (trimmed.startsWith('[BOT_EVENT]')) {
           try {
-            const payload = JSON.parse(trimmed.slice(11).trim());
-            applyEvent(bot, payload);
+            payload = JSON.parse(trimmed.slice(11).trim());
+            if (payload?.botId) {
+              effectiveBotId = payload.botId;
+            }
           } catch { /* not valid JSON, treat as plain log */ }
+        }
+
+        let bot = state.bots[effectiveBotId];
+        if (!bot) {
+          bot = getOrCreateBot(state, effectiveBotId);
+          state.bots[effectiveBotId] = bot;
+        }
+
+        if (payload) {
+          applyEvent(bot, payload);
         }
 
         const displayLine = trimmed.startsWith('[BOT_EVENT]') ? trimmed.slice(11).trim() : trimmed;
@@ -169,11 +178,12 @@ function createBotProgressStore() {
 
     addProgressEvent(botId: string, event: any) {
       update(state => {
-        let bot = state.bots[botId];
+        const effectiveBotId = event.botId || event.data?.botId || botId;
+        let bot = state.bots[effectiveBotId];
         if (!bot) {
-          const name = event.data?.botName || event.botName || botId;
-          bot = getOrCreateBot(state, botId, name);
-          state.bots[botId] = bot;
+          const name = event.data?.botName || event.botName || effectiveBotId;
+          bot = getOrCreateBot(state, effectiveBotId, name);
+          state.bots[effectiveBotId] = bot;
         }
         applyEvent(bot, event);
         return { ...state };
@@ -184,12 +194,26 @@ function createBotProgressStore() {
       set({ bots: {} });
     },
 
-    handleBotStopped(botName: string, exitCode: number) {
+    handleBotStopped(botName: string, exitCode: number, botId?: string) {
       update(state => {
         for (const bot of Object.values(state.bots)) {
-          if (bot.name === botName || bot.botId === botName) {
-            bot.status = exitCode === 0 ? 'completed' : 'failed';
-            bot.currentStep = exitCode === 0 ? 'Completed' : (exitCode === 130 || exitCode === 143 ? 'Stopped by user' : `Failed (Exit code: ${exitCode})`);
+          // If botId is provided, use it for exact matching. Otherwise fallback to name.
+          const isMatch = botId ? (bot.botId === botId) : (bot.name === botName || bot.botId === botName);
+          
+          if (isMatch) {
+            const wasStopping = bot.status === 'stopping';
+            
+            if (wasStopping) {
+              bot.status = 'stopped';
+              bot.currentStep = 'Stopped by user';
+            } else {
+              bot.status = exitCode === 0 ? 'completed' : 'failed';
+              bot.currentStep = exitCode === 0 ? 'Completed' : (exitCode === 130 || exitCode === 143 ? 'Stopped by user' : `Failed (Exit code: ${exitCode})`);
+            }
+
+            // Append a summary log line
+            const summary = `Bot finished. Status: ${bot.status}. Processed: ${bot.jobsProcessed}, Applied: ${bot.appliedJobs}, Skipped: ${bot.skippedJobs}${bot.totalJobs > 0 ? `, Total: ${bot.totalJobs}` : ''}`;
+            appendLog(bot, summary, bot.status === 'failed' ? 'error' : 'success');
           }
         }
         return { ...state };
@@ -201,7 +225,7 @@ function createBotProgressStore() {
 export const botProgressStore = createBotProgressStore();
 
 export const activeBots = derived(botProgressStore, ($store) =>
-  Object.values($store.bots).filter(b => b.status === 'running')
+  Object.values($store.bots).filter(b => b.status === 'running' || b.status === 'stopping')
 );
 
 export const allBots = derived(botProgressStore, ($store) =>
@@ -229,15 +253,28 @@ export async function initBotListeners() {
 
     await listen('bot-log', (event: any) => {
       const line = typeof event.payload === 'string' ? event.payload : String(event.payload);
-      const botId = _resolveActiveBotId();
+      
+      let botId = '';
+      if (line.startsWith('[BOT_EVENT]')) {
+        try {
+          const payload = JSON.parse(line.slice(11).trim());
+          botId = payload?.botId || payload?.data?.botId || '';
+        } catch { /* not valid JSON */ }
+      }
+      
+      if (!botId) {
+        botId = _resolveActiveBotId();
+      }
+      
       botProgressStore.addLogLine(botId, line);
     });
 
     await listen('bot-stopped', (event: any) => {
       const payload = event.payload;
       const botName = payload?.botName || '';
+      const botId = payload?.botId || '';
       const exitCode = payload?.exitCode ?? -1;
-      botProgressStore.handleBotStopped(botName, exitCode);
+      botProgressStore.handleBotStopped(botName, exitCode, botId);
     });
 
     console.log('[botProgressStore] Global Tauri event listeners initialized');
@@ -249,6 +286,11 @@ export async function initBotListeners() {
 
 function _resolveActiveBotId(): string {
   const state = get(botProgressStore);
-  const running = Object.values(state.bots).find(b => b.status === 'running');
-  return running?.botId || 'default';
+  // Include stopping bots so cleanup logs are attributed correctly.
+  // Sort by startedAt descending to pick the most recent one if multiple exist.
+  const active = Object.values(state.bots)
+    .filter(b => b.status === 'running' || b.status === 'stopping')
+    .sort((a, b) => b.startedAt - a.startedAt);
+  
+  return active[0]?.botId || 'default';
 }

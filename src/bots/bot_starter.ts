@@ -57,6 +57,7 @@ const normalizeSeekJobUrl = (rawUrl: string): string => {
 
 export interface BotRunOptions {
   bot_name: string;
+  bot_id?: string;
   config?: any;
   headless?: boolean;
   keep_open?: boolean;
@@ -73,7 +74,7 @@ export class BotStarter {
 
   // Main entry point - like Python's bot_runner.py
   async run_bot(options: BotRunOptions): Promise<void> {
-    const { bot_name, config, headless = false, keep_open = true } = options;
+    const { bot_name, bot_id, config, headless = false, keep_open = true } = options;
     const sessionId = logger.createSessionId(bot_name);
     logger.setContext({ sessionId, botName: bot_name });
 
@@ -215,7 +216,8 @@ export class BotStarter {
       logger.info('bot.impl_loaded', 'Bot implementation loaded', { implPath: bot_info.impl_path });
 
       // 4. Create workflow engine with bot's YAML
-      const workflow_engine = new WorkflowEngine(bot_info.yaml_path);
+      const explicitBotId = bot_id || process.env.BOT_ID;
+      const workflow_engine = new WorkflowEngine(bot_info.yaml_path, explicitBotId);
       activeWorkflowEngine = workflow_engine;
 
       // 5. Register bot's step functions

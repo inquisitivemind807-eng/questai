@@ -51,13 +51,13 @@ export class WorkflowEngine {
   private stepRetryCount: Map<string, number> = new Map();
   private aborted: boolean = false;
 
-  constructor(configPath: string) {
+  constructor(configPath: string, botId?: string) {
     const configContent = fs.readFileSync(configPath, 'utf8');
     this.config = yaml.load(configContent) as WorkflowConfig;
     this.currentStep = this.config.workflow_meta.start_step;
 
-    // Generate unique bot ID
-    this.botId = `${Date.now()}_${Math.random().toString(36).substring(7)}`;
+    // Use provided bot ID or generate unique one
+    this.botId = botId || `${Date.now()}_${Math.random().toString(36).substring(7)}`;
     this.eventsFilePath = ''; // Not used anymore, keeping for compatibility
 
     // Emit initial event

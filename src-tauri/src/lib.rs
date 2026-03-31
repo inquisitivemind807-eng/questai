@@ -770,6 +770,7 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
 #[tauri::command]
 async fn run_bot_streaming(
     app: tauri::AppHandle,
+    bot_id: String,
     bot_name: String,
     extract_limit: Option<u32>
 ) -> Result<String, String> {
@@ -795,6 +796,8 @@ async fn run_bot_streaming(
     cmd.arg("--no-cache")  // Always recompile; prevents stale bytecode missing new exports
        .arg(script_path.to_str().unwrap())
        .arg(&bot_name);
+
+    cmd.env("BOT_ID", &bot_id);
 
     if let Some(limit) = extract_limit {
         // Pass limit via env var — avoids any CLI arg serialization issues
@@ -839,6 +842,7 @@ async fn run_bot_streaming(
     // Wait for bot process to complete
     let app_exit = app.clone();
     let bot_name_exit = bot_name.clone();
+    let bot_id_exit = bot_id.clone();
     tokio::spawn(async move {
         let status = child.wait().await;
         {
@@ -847,6 +851,7 @@ async fn run_bot_streaming(
         }
         let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
         let _ = app_exit.emit("bot-stopped", serde_json::json!({
+            "botId": bot_id_exit,
             "botName": bot_name_exit,
             "exitCode": exit_code
         }));

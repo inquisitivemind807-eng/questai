@@ -42,6 +42,7 @@
     displayStatus === 'completed' ? 'badge-success'
     : displayStatus === 'failed' ? 'badge-error'
     : displayStatus === 'stopping' ? 'badge-warning'
+    : displayStatus === 'stopped' ? 'badge-ghost border-base-content/20'
     : 'badge-info';
 
   function formatTime(ts) {
@@ -215,10 +216,10 @@
   </div>
 
   <!-- Activity indicator -->
-  {#if displayStatus === 'running'}
+  {#if displayStatus === 'running' || displayStatus === 'stopping'}
     <div class="flex items-center justify-center gap-2 pb-4 text-sm">
       <span class="loading loading-spinner loading-sm text-primary"></span>
-      <span class="text-base-content/60">Bot is running...</span>
+      <span class="text-base-content/60">{displayStatus === 'stopping' ? 'Bot is stopping...' : 'Bot is running...'}</span>
     </div>
   {/if}
 </div>

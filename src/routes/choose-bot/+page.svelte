@@ -51,7 +51,13 @@
       const activeBotId = `bot_${Date.now()}`;
       botProgressStore.startBot(activeBotId, finalBotName, limit);
 
-      invoke("run_bot_streaming", params).catch(err => {
+      const runParams = {
+        botId: activeBotId,
+        botName: finalBotName,
+        extractLimit: limit
+      };
+
+      invoke("run_bot_streaming", runParams).catch(err => {
         console.error("run_bot_streaming error:", err);
       });
 
