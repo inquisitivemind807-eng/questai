@@ -282,6 +282,10 @@ export async function* openJobUrl(ctx: WorkflowContext): AsyncGenerator<string, 
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, 'Seek');
 
+    // Show overlay immediately — before any navigation so the user sees it right away
+    await ctx.overlay.initialize();
+    await ctx.overlay.showJobProgress(0, 1, 'Starting Seek bot...', 0);
+
     try {
       await driver.executeScript(`
         sessionStorage.removeItem('universal_overlay_state');
@@ -379,6 +383,10 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
     (driver as any).__recoverDriver = async () => {
       return await recreateDriverAndRestoreContext(ctx);
     };
+
+    // Show overlay immediately — before any navigation so the user sees it right away
+    await ctx.overlay.initialize();
+    await ctx.overlay.showJobProgress(0, 0, 'Starting Seek bot...', 0);
 
     // Clear stale overlay state from any previous run so the fresh overlay shows correctly
     try {
@@ -2032,6 +2040,10 @@ async function recreateDriverAndRestoreContext(ctx: WorkflowContext): Promise<bo
     (newDriver as any).__recoverDriver = async () => {
       return await recreateDriverAndRestoreContext(ctx);
     };
+
+    // Show overlay immediately on recovered driver
+    await ctx.overlay.initialize();
+    await ctx.overlay.showJobProgress(0, 0, 'Reconnected — resuming...', 0);
 
     // Clear stale overlay state
     try {

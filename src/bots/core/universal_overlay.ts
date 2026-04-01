@@ -43,6 +43,8 @@ export class UniversalOverlay {
   private botName: string;
   private initialized: boolean = false;
   private overlayUnavailable: boolean = false;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private static readonly HEARTBEAT_INTERVAL_MS = 3000;
 
   constructor(driver: WebDriver, botName: string = 'Bot', overlayId: string = 'universal-overlay') {
     this.driver = driver;
@@ -51,8 +53,11 @@ export class UniversalOverlay {
   }
 
   /**
-   * Initialize the persistent overlay system
-   * This sets up navigation detection and auto-reinjection
+   * Initialize the persistent overlay system.
+   * Injects the overlay immediately and starts a Node.js heartbeat that
+   * monitors the browser context every 3 seconds.  If a page navigation
+   * destroyed the injected JS, the heartbeat reinjects it automatically,
+   * so the overlay "self-heals" without the bot needing to ask.
    */
   async initialize(): Promise<void> {
     if (this.initialized || this.overlayUnavailable) return;
@@ -60,6 +65,7 @@ export class UniversalOverlay {
     try {
       await this.injectPersistentOverlaySystem();
       this.initialized = true;
+      this.startHeartbeat();
       console.log(`✅ Overlay system initialized for ${this.botName}`);
     } catch (error) {
       if (this.isWindowClosedError(error)) {
@@ -67,6 +73,51 @@ export class UniversalOverlay {
       } else {
         console.error('Error initializing overlay system:', error);
       }
+    }
+  }
+
+  /**
+   * Heartbeat: periodically checks if the browser-side overlay system is
+   * still alive.  If a full-page navigation killed it, reinjects it.
+   */
+  private startHeartbeat(): void {
+    if (this.heartbeatTimer) return;
+
+    this.heartbeatTimer = setInterval(async () => {
+      if (this.overlayUnavailable) {
+        this.stopHeartbeat();
+        return;
+      }
+
+      try {
+        const alive = await this.driver.executeScript(
+          `return typeof window.__overlaySystemInitialized !== 'undefined' && window.__overlaySystemInitialized === true;`
+        ) as boolean;
+
+        if (!alive) {
+          // Browser context was destroyed (navigation) — reinject
+          this.initialized = false;
+          await this.injectPersistentOverlaySystem();
+          this.initialized = true;
+        }
+      } catch (error) {
+        if (this.isWindowClosedError(error)) {
+          this.overlayUnavailable = true;
+          this.stopHeartbeat();
+        }
+        // Transient errors (page mid-load) are silently ignored;
+        // the next heartbeat tick will retry.
+      }
+    }, UniversalOverlay.HEARTBEAT_INTERVAL_MS);
+  }
+
+  /**
+   * Stop the heartbeat loop (called on dispose or when overlay becomes unavailable).
+   */
+  stopHeartbeat(): void {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
     }
   }
 
@@ -692,15 +743,18 @@ export class UniversalOverlay {
           if (window.__overlayNavWatcherInitialized) return;
           window.__overlayNavWatcherInitialized = true;
 
+          // Fast reinjection helper — used by every navigation listener
+          function reinjectOverlay() {
+            const state = loadState() || window.__overlayCurrentState;
+            if (state) queueOverlayRender(state);
+          }
+
           let lastUrl = location.href;
           const observer = new MutationObserver(() => {
             const currentUrl = location.href;
             if (currentUrl !== lastUrl) {
               lastUrl = currentUrl;
-              setTimeout(() => {
-                const state = loadState() || window.__overlayCurrentState;
-                if (state) queueOverlayRender(state);
-              }, 300);
+              setTimeout(reinjectOverlay, 50);
             }
             ensureOverlayPresent();
           });
@@ -713,27 +767,28 @@ export class UniversalOverlay {
             });
           }
 
+          // Re-inject on every page lifecycle event so the overlay
+          // reappears as fast as possible after navigations.
+          window.addEventListener('DOMContentLoaded', () => {
+            ensureOverlayPresent();
+            reinjectOverlay();
+          });
+          window.addEventListener('load', () => {
+            ensureOverlayPresent();
+          });
+
           const originalPushState = history.pushState;
           const originalReplaceState = history.replaceState;
           history.pushState = function(...args) {
             originalPushState.apply(this, args);
-            setTimeout(() => {
-              const state = loadState() || window.__overlayCurrentState;
-              if (state) queueOverlayRender(state);
-            }, 300);
+            setTimeout(reinjectOverlay, 50);
           };
           history.replaceState = function(...args) {
             originalReplaceState.apply(this, args);
-            setTimeout(() => {
-              const state = loadState() || window.__overlayCurrentState;
-              if (state) queueOverlayRender(state);
-            }, 300);
+            setTimeout(reinjectOverlay, 50);
           };
           window.addEventListener('popstate', () => {
-            setTimeout(() => {
-              const state = loadState() || window.__overlayCurrentState;
-              if (state) queueOverlayRender(state);
-            }, 300);
+            setTimeout(reinjectOverlay, 50);
           });
         }
 
@@ -805,7 +860,6 @@ export class UniversalOverlay {
     if (this.overlayUnavailable) return;
 
     await this.safeExecute(async () => {
-      await this.initialize();
 
       let existingLogs: string[] = [];
       const stateStr = await this.driver.executeScript(`
@@ -840,10 +894,6 @@ export class UniversalOverlay {
     if (this.overlayUnavailable) return;
 
     await this.safeExecute(async () => {
-      if (!this.initialized) {
-        await this.injectPersistentOverlaySystem();
-        this.initialized = true;
-      }
 
       const stateStr = await this.driver.executeScript(`
         return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
@@ -875,7 +925,6 @@ export class UniversalOverlay {
     if (this.overlayUnavailable) return;
 
     await this.safeExecute(async () => {
-      await this.initialize();
 
       let existingLogs: string[] = [];
       let existingInternal = 0;
@@ -1055,7 +1104,6 @@ export class UniversalOverlay {
     if (this.overlayUnavailable) return;
 
     await this.safeExecute(async () => {
-      await this.initialize();
 
       let existingLogs: string[] = [];
       const stateStr = await this.driver.executeScript(`
@@ -1200,7 +1248,6 @@ export class UniversalOverlay {
     if (this.overlayUnavailable) return;
 
     await this.safeExecute(async () => {
-      await this.initialize();
 
       const icons: Record<string, string> = { info: 'ℹ️', success: '✅', warning: '⚠️', error: '❌' };
       const colors: Record<string, string> = {
