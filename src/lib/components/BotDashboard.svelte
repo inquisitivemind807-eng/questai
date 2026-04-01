@@ -18,7 +18,7 @@
   export let logs = [];
   export let onStop = () => {};
 
-  /** @type {'logs' | 'stats'} */
+  /** @type {string} */
   let activeTab = 'logs';
   let logContainer;
   let autoScroll = true;
@@ -137,81 +137,40 @@
     <div role="tablist" class="tabs tabs-bordered px-4">
       <button
         role="tab"
-        class="tab"
-        class:tab-active={activeTab === 'logs'}
-        on:click={() => activeTab = 'logs'}
+        class="tab tab-active"
       >
         Logs
         <span class="badge badge-ghost badge-xs ml-1">{displayLogs.length}</span>
-      </button>
-      <button
-        role="tab"
-        class="tab"
-        class:tab-active={activeTab === 'stats'}
-        on:click={() => activeTab = 'stats'}
-      >
-        Stats
       </button>
     </div>
   </div>
 
   <!-- Tab Content -->
   <div class="px-4 pb-4 pt-2">
-    {#if activeTab === 'logs'}
-      <div
-        bind:this={logContainer}
-        on:scroll={handleLogScroll}
-        class="log-area bg-base-300 rounded-lg font-mono text-xs leading-relaxed overflow-y-auto overflow-x-hidden"
-        style="height: 400px; max-height: 60vh;"
-      >
-        {#if displayLogs.length === 0}
-          <div class="p-4 text-base-content/40 italic">Waiting for events...</div>
-        {:else}
-          {#each displayLogs as log}
-            <div class="px-3 py-0.5 flex gap-2 hover:bg-base-100/30">
-              <span class="text-base-content/40 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
-              <span class="{getLogClass(log.type)} break-all">{log.text}</span>
-            </div>
-          {/each}
-        {/if}
-      </div>
-      {#if !autoScroll && displayLogs.length > 0}
-        <button
-          class="btn btn-xs btn-ghost mt-1 w-full"
-          on:click={() => { autoScroll = true; if (logContainer) logContainer.scrollTop = logContainer.scrollHeight; }}
-        >
-          ↓ Scroll to bottom
-        </button>
+    <div
+      bind:this={logContainer}
+      on:scroll={handleLogScroll}
+      class="log-area bg-base-300 rounded-lg font-mono text-xs leading-relaxed overflow-y-auto overflow-x-hidden"
+      style="height: 400px; max-height: 60vh;"
+    >
+      {#if displayLogs.length === 0}
+        <div class="p-4 text-base-content/40 italic">Waiting for events...</div>
+      {:else}
+        {#each displayLogs as log}
+          <div class="px-3 py-0.5 flex gap-2 hover:bg-base-100/30">
+            <span class="text-base-content/40 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
+            <span class="{getLogClass(log.type)} break-all">{log.text}</span>
+          </div>
+        {/each}
       {/if}
-    {:else if activeTab === 'stats'}
-      <div class="grid grid-cols-3 gap-3 mt-1">
-        <div class="stat bg-base-300 rounded-lg p-4 text-center">
-          <div class="stat-title text-xs">Found</div>
-          <div class="stat-value text-2xl text-info">{displayTotalJobs}</div>
-        </div>
-        <div class="stat bg-base-300 rounded-lg p-4 text-center">
-          <div class="stat-title text-xs">Extracted</div>
-          <div class="stat-value text-2xl text-success">{displayJobsProcessed}</div>
-        </div>
-        <div class="stat bg-base-300 rounded-lg p-4 text-center">
-          <div class="stat-title text-xs">Skipped</div>
-          <div class="stat-value text-2xl text-warning">{displaySkippedJobs}</div>
-        </div>
-      </div>
-      <div class="mt-4 space-y-2 text-sm">
-        <div class="flex justify-between">
-          <span class="text-base-content/60">Extract Limit</span>
-          <span class="font-semibold">{displayExtractLimit || 'Unlimited'}</span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-base-content/60">Applied</span>
-          <span class="font-semibold">{displayAppliedJobs}</span>
-        </div>
-        <div class="flex justify-between">
-          <span class="text-base-content/60">Current Step</span>
-          <span class="font-semibold truncate ml-4">{displayCurrentStep}</span>
-        </div>
-      </div>
+    </div>
+    {#if !autoScroll && displayLogs.length > 0}
+      <button
+        class="btn btn-xs btn-ghost mt-1 w-full"
+        on:click={() => { autoScroll = true; if (logContainer) logContainer.scrollTop = logContainer.scrollHeight; }}
+      >
+        ↓ Scroll to bottom
+      </button>
     {/if}
   </div>
 
