@@ -85,68 +85,39 @@ Restructuring the configuration form UI and validation logic.
 - `src/bots/core/universal_overlay.ts` — browser-injected overlay system
 
 **Exact Lines:**
-- `src/bots/core/universal_overlay.ts` line 192: `width: '600px',` (fixed width in the shell style)
-- `src/bots/core/universal_overlay.ts` line 199: `overflow: 'hidden',` (prevents resize handles from working)
-- `src/bots/core/universal_overlay.ts` line 191: `pointerEvents: 'none',` (main container doesn't capture mouse events)
+- `src/bots/core/universal_overlay.ts` line 19: `interface OverlayState` (where the UI state is defined)
+- `src/bots/core/universal_overlay.ts` lines 192–194: Hardcoded `width: '600px'` and `maxHeight: '90vh'` in the shell creation.
+- `src/bots/core/universal_overlay.ts` lines 429–431: Style updates in `applyShellStyles` using fixed dimensions.
+- `src/bots/core/universal_overlay.ts` line 250: The current `collapseBtn` implementation.
 
 **Root Cause:**
-The overlay's outer `<div>` (created on line 174) has its styles set on lines 177–204. It uses `pointer-events: none` (line 191), a fixed `width: '600px'` (line 192), and `overflow: 'hidden'` (line 199). For CSS `resize: both` to work, the element needs `pointer-events: auto`, `overflow: auto` (or `scroll`), and the `resize` CSS property. Currently, only the header (line 218, `pointerEvents: 'auto'`) and content area (line 291, `pointerEvents: 'auto'`) have pointer events — the containing div blocks all interaction in non-interactive areas.
+The overlay's dimensions are hardcoded to fixed values (`600px` width) within the `ensureOverlayShell` and `applyShellStyles` functions. While a `collapsed` state exists to minimize the overlay into a circle, there is no state or UI control to toggle between a compact view and an expanded view for better log visibility.
 
 **Side Effects & Dependencies:**
-Enabling `pointer-events: auto` on the full container would block interactions with the underlying webpage through the overlay's transparent regions. The `pointer-events: none` on the shell with `pointer-events: auto` on children is a deliberate pattern to make the overlay see-through for click purposes.
+Changing the default size affects the initial viewport real estate occupied by the bot. Since the overlay uses `pointer-events: none` for the shell but `auto` for children, a larger overlay might block more interactions if not carefully managed, but the current design already handles this with child-specific pointer events.
 
 **Original Intent vs. Breakdown:**
-Designed as a non-intrusive HUD with a fixed width for consistent layout. Fails to allow users to expand the view for more complex bot logs.
+Intended as a fixed-size HUD. However, users often need more horizontal or vertical space to read complex logs without collapsing the entire UI into a circle.
 
 **Scope Notes:**
-Browser-side DOM/CSS modifications only.
+Browser-side DOM/CSS modifications. No mouse dragging required.
 
 **Fix Plan:**
-⚠️ COMPLEXITY: Medium. CSS `resize: both` on the *outer* div requires `pointer-events: auto` and `overflow: auto`, which would block click-through on the underlying page. Instead, use a dedicated resize handle approach:
-1. Add a small 16×16px drag handle `<div>` in the bottom-right corner of the overlay shell with `pointer-events: auto`, `cursor: nwse-resize`, `position: absolute; right: 0; bottom: 0;`.
-2. Attach `mousedown`/`mousemove`/`mouseup` listeners to this handle (similar to the existing drag logic on lines 388–417).
-3. On drag, update `overlay.style.width` and `overlay.style.maxHeight` dynamically.
-4. Persist the size in `sessionStorage` alongside position (extend the `saveState`/`loadState` functions, lines 98–113).
-5. In `applyShellStyles` (line 426), restore persisted width/height from state.
-6. Do NOT set `pointer-events: auto` on the outer overlay div — keep the see-through pattern intact.
+1. **Extend State:** Update the `OverlayState` interface (line 19) in `universal_overlay.ts` to include `expanded?: boolean`.
+2. **Inject Toggle Button:** In `ensureOverlayShell` (around line 280, inside the `controls` div creation):
+   - Create a new `sizeBtn`.
+   - Style it similarly to `collapseBtn` but with an expand icon (e.g., `⤢` / `⤡`).
+   - Add an `onclick` listener that toggles `current.expanded = !current.expanded` and calls `queueOverlayRender(current)`.
+   - Append `sizeBtn` to the `controls` container.
+3. **Update Styles:** In `applyShellStyles` (lines 429–431), replace fixed values with conditional logic based on `state.expanded`:
+   - If `collapsed` is false:
+     - **Default (Small):** `width: '450px'`, `maxHeight: '500px'`.
+     - **Expanded:** `width: '850px'`, `maxHeight: '90vh'`.
+   - Update `refs.overlay.style.width`, `refs.overlay.style.maxHeight`, and `refs.overlay.style.minHeight` accordingly.
+4. **Persistence:** Ensure `saveState` (line 107) persists the `expanded` property. This is handled automatically by the current `sessionStorage` logic if the property is added to the state object.
+5. **Set Default:** Ensure new overlays initialize with `expanded: false` to keep the UI compact by default.
+6. Complexity: Low-Medium. Logic is similar to the existing collapse toggle but targets dimensions instead of visibility.
 
----
-
-### Issue #9: Navigation: Remove Analytics
-
-**Files Involved:**
-- `src/routes/+layout.svelte` — application sidebar navigation
-- `src/routes/backend-analytics/` — the standalone analytics page directory
-- `src/routes/control-bar/+page.svelte` — bot control bar with jump link
-- `src/routes/welcome/+page.svelte` — welcome page with feature action link
-- `src/routes/app/+page.svelte` — dashboard with analytics card and quick stats detail link
-
-**Exact Lines:**
-- `src/routes/+layout.svelte` lines 250–257: `<li>` containing the standalone link to `/backend-analytics` (The "Analytics" item to be removed)
-- `src/routes/+layout.svelte` lines 258–289: `<li>` containing the `<details>` dropdown for "Job Analytics" (This item must stay)
-- `src/routes/control-bar/+page.svelte` lines 46–50: `flipToJobsTracker` function using `/backend-analytics`
-- `src/routes/control-bar/+page.svelte` lines 135–137: "Jobs Tracker" button element
-- `src/routes/welcome/+page.svelte` lines 145–147: "View Analytics" button link
-- `src/routes/app/+page.svelte` lines 90–107: "Analytics" dashboard card calling `/backend-analytics`
-- `src/routes/app/+page.svelte` lines 170–172: "View Details" button in Quick Stats card
-
-**Root Cause:**
-There are two analytics-related entries in the sidebar. A standalone "Analytics" link (lines 250–257) and a "Job Analytics" dropdown with sub-items (lines 258–289). The standalone one is redundant and its references are scattered across the Control Bar, Welcome page, and Dashboard. It should be removed entirely, along with its source files.
-
-**Side Effects & Dependencies:**
-Removing the standalone link and its page folder will completely remove the legacy "Analytics" feature. The more detailed "Job Analytics" dropdown remains fully functional. Dashboard and Control Bar layouts will need minor adjustments after card/button removal.
-
-**Original Intent vs. Breakdown:**
-The standalone "Analytics" link was likely a placeholder or legacy link that is now superseded by the more detailed "Job Analytics" section.
-
-**Fix Plan:**
-1. `src/routes/+layout.svelte` lines 250–257: Delete the entire `<li>` block for "Analytics" (the one pointing to `/backend-analytics`).
-2. Delete the directory `src/routes/backend-analytics/` and its contents.
-3. `src/routes/control-bar/+page.svelte`: Delete the `flipToJobsTracker` function (lines 46–50) and the "Jobs Tracker" button (lines 135–137).
-4. `src/routes/welcome/+page.svelte`: Delete the "View Analytics" button link (lines 145–147).
-5. `src/routes/app/+page.svelte`: Delete the "Analytics" card (lines 90–107) and the "View Details" button (lines 170–172).
-6. Do NOT modify the "Job Analytics" block on lines 258–289 of `+layout.svelte`.
-7. Complexity: Low-Medium. Selective template and file deletion across multiple components.
 
 ---
 
@@ -187,35 +158,6 @@ The system was built to track all bots within a session, but failed to account f
    ```
 3. In the parent component that renders `<BotDashboard>`, pass `onDismiss={() => botProgressStore.removeBot(botId)}`.
 4. Complexity: Low-Medium. Store method + UI button + wiring in parent.
-
----
-
-### Issue #12: Login Flow: Post-Login Delay
-
-**Files Involved:**
-- `src/routes/login/+page.svelte` — login form logic
-
-**Exact Lines:**
-- `src/routes/login/+page.svelte` lines 105–107:
-```javascript
-      setTimeout(() => {
-        goto('/app');
-      }, 500);
-```
-
-**Root Cause:**
-A hardcoded 500ms `setTimeout` delay is executed upon successful login (line 105) before navigating to the application dashboard. This applies to both login and signup flows since they share the same `handleSubmit` function.
-
-**Side Effects & Dependencies:**
-Affects the perceived performance of the login and signup flows. The `success` message "Login successful! Redirecting..." (line 103) is shown during the 500ms window.
-
-**Original Intent vs. Breakdown:**
-Intended to give the user time to see the "Login successful!" message. Breakdown occurs because it feels like an artificial lag to modern users.
-
-**Fix Plan:**
-1. `src/routes/login/+page.svelte` lines 105–107: Remove the `setTimeout` wrapper and call `goto('/app')` directly. If the success message is desired, reduce the delay to 100ms or use a reactive transition instead.
-2. Alternative: Keep a 100ms delay (`setTimeout(() => goto('/app'), 100)`) so the success alert briefly flashes — purely cosmetic.
-3. Complexity: Low. One-line change.
 
 ---
 

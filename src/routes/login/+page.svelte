@@ -102,9 +102,7 @@
       // Success! Show feedback and redirect
       success = mode === 'signup' ? 'Account created successfully!' : 'Login successful!';
       // Small delay to show success message, then redirect
-      setTimeout(() => {
-        goto('/app');
-      }, 500);
+      goto('/app');
     }
   }
 </script>
