@@ -43,11 +43,6 @@
     }
   }
 
-  function flipToJobsTracker() {
-    isFlipped = !isFlipped;
-    // In a real app, this would navigate to the jobs tracker page
-    window.location.href = '/backend-analytics';
-  }
 
   function getBotStatusClass() {
     switch (botStatus) {
@@ -132,9 +127,6 @@
   </div>
 
   <div class="navbar-end">
-    <button class="btn btn-outline" onclick={flipToJobsTracker}>
-      🔍 Jobs Tracker
-    </button>
 
     <div class="ml-4 text-right">
       <div class="flex items-center gap-2">

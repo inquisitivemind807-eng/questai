@@ -142,9 +142,6 @@
           <a href="/control-bar" class="btn btn-secondary btn-lg">
             🎮 Control Panel
           </a>
-          <a href="/backend-analytics" class="btn btn-accent btn-lg">
-            📊 View Analytics
-          </a>
         </div>
       </div>
     </div>

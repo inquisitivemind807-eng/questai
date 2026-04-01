@@ -87,24 +87,6 @@
         </div>
       </div>
 
-      <!-- Analytics Card -->
-      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
-           on:click={() => navigateTo('/backend-analytics')}
-           on:keydown={(e) => e.key === 'Enter' && navigateTo('/backend-analytics')}
-           role="button"
-           tabindex="0">
-        <figure class="px-10 pt-10">
-          <div class="text-6xl">📊</div>
-        </figure>
-        <div class="card-body items-center text-center">
-          <h2 class="card-title">Analytics</h2>
-          <p>View detailed reports on your job applications, success rates, and performance metrics</p>
-          <div class="card-actions">
-            <div class="badge badge-accent">Insights</div>
-            <div class="badge badge-outline">Reports</div>
-          </div>
-        </div>
-      </div>
 
       <!-- Test Functions Card -->
       <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
@@ -167,9 +149,6 @@
             </div>
           </div>
           <div class="card-actions justify-end">
-            <button class="btn btn-sm btn-outline" on:click={() => navigateTo('/backend-analytics')}>
-              View Details
-            </button>
           </div>
         </div>
       </div>

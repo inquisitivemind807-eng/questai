@@ -112,56 +112,41 @@ Browser-side DOM/CSS modifications only.
 
 ---
 
-### Issue #8: Bot Logs Dashboard: Remove Stats Tab
-
-**Files Involved:**
-- `src/lib/components/BotDashboard.svelte` — bot panel component
-
-**Exact Lines:**
-- `src/lib/components/BotDashboard.svelte` lines 147–154: `<button role="tab" ... on:click={() => activeTab = 'stats'}>Stats</button>` (the Stats tab button)
-- `src/lib/components/BotDashboard.svelte` lines 186–215: `{:else if activeTab === 'stats'} ... {/if}` block (the Stats tab content with grid/stats)
-- `src/lib/components/BotDashboard.svelte` line 22: `let activeTab = 'logs';` (type declaration allows 'logs' | 'stats')
-
-**Root Cause:**
-The "Stats" tab is explicitly defined in lines 147–154 (tab button) and content rendered on lines 186–215 (stat grid + detail rows). It is now considered redundant since the progress bar in the header (lines 119–132) shows extracted/total counts, and logs provide real-time detail.
-
-**Side Effects & Dependencies:**
-Removal involves deleting the `<button>` tab, the `{:else if activeTab === 'stats'}` content block, and simplifying the `activeTab` type to always be `'logs'`.
-
-**Original Intent vs. Breakdown:**
-Intended to provide a metrics-heavy view, but deemed unnecessary by the user for daily monitoring.
-
-**Fix Plan:**
-1. `src/lib/components/BotDashboard.svelte` line 22: Change type comment to remove `'stats'` — just `let activeTab = 'logs';` (already is this, but remove the type annotation on line 21 that allows 'stats').
-2. Lines 147–154: Delete the Stats `<button>` element.
-3. Lines 186–215: Delete the entire `{:else if activeTab === 'stats'} ... ` block up to the `{/if}`.
-4. Complexity: Low. Pure template deletion.
-
----
-
 ### Issue #9: Navigation: Remove Analytics
 
 **Files Involved:**
 - `src/routes/+layout.svelte` — application sidebar navigation
+- `src/routes/backend-analytics/` — the standalone analytics page directory
+- `src/routes/control-bar/+page.svelte` — bot control bar with jump link
+- `src/routes/welcome/+page.svelte` — welcome page with feature action link
+- `src/routes/app/+page.svelte` — dashboard with analytics card and quick stats detail link
 
 **Exact Lines:**
-- `src/routes/+layout.svelte` lines 250–257: `<li>` containing the link to `/backend-analytics` (the "Analytics" menu item)
-- `src/routes/+layout.svelte` lines 258–289: `<details>` containing the "Job Analytics" sub-menu with sub-items for Overview, LinkedIn, Seek, Indeed job trackers
+- `src/routes/+layout.svelte` lines 250–257: `<li>` containing the standalone link to `/backend-analytics` (The "Analytics" item to be removed)
+- `src/routes/+layout.svelte` lines 258–289: `<li>` containing the `<details>` dropdown for "Job Analytics" (This item must stay)
+- `src/routes/control-bar/+page.svelte` lines 46–50: `flipToJobsTracker` function using `/backend-analytics`
+- `src/routes/control-bar/+page.svelte` lines 135–137: "Jobs Tracker" button element
+- `src/routes/welcome/+page.svelte` lines 145–147: "View Analytics" button link
+- `src/routes/app/+page.svelte` lines 90–107: "Analytics" dashboard card calling `/backend-analytics`
+- `src/routes/app/+page.svelte` lines 170–172: "View Details" button in Quick Stats card
 
 **Root Cause:**
-The analytics-related menu items are hardcoded in the sidebar of the main layout. The "Analytics" standalone link (line 250–257) goes to `/backend-analytics`. The "Job Analytics" `<details>` dropdown (lines 258–289) contains sub-links to `/job-analytics`, `/linkedin-job-tracker`, `/seek-job-tracker`, `/indeed-job-tracker`.
+There are two analytics-related entries in the sidebar. A standalone "Analytics" link (lines 250–257) and a "Job Analytics" dropdown with sub-items (lines 258–289). The standalone one is redundant and its references are scattered across the Control Bar, Welcome page, and Dashboard. It should be removed entirely, along with its source files.
 
 **Side Effects & Dependencies:**
-Removing these items will hide the routes from the navigation but will not delete the page files themselves (the route directories still exist under `src/routes/`). Users will lose access to these pages via the sidebar.
+Removing the standalone link and its page folder will completely remove the legacy "Analytics" feature. The more detailed "Job Analytics" dropdown remains fully functional. Dashboard and Control Bar layouts will need minor adjustments after card/button removal.
 
 **Original Intent vs. Breakdown:**
-Intended to provide deep insights into bot performance, but currently adds too much complexity to the navigation.
+The standalone "Analytics" link was likely a placeholder or legacy link that is now superseded by the more detailed "Job Analytics" section.
 
 **Fix Plan:**
-1. `src/routes/+layout.svelte` lines 250–257: Delete the entire `<li>` block for "Analytics" (link to `/backend-analytics`).
-2. Lines 258–289: Delete the entire `<li><details>` block for "Job Analytics" and all its sub-menu items.
-3. Optionally keep the route directories intact for direct-URL access — decide if the pages should also be deleted.
-4. Complexity: Low. Pure template deletion.
+1. `src/routes/+layout.svelte` lines 250–257: Delete the entire `<li>` block for "Analytics" (the one pointing to `/backend-analytics`).
+2. Delete the directory `src/routes/backend-analytics/` and its contents.
+3. `src/routes/control-bar/+page.svelte`: Delete the `flipToJobsTracker` function (lines 46–50) and the "Jobs Tracker" button (lines 135–137).
+4. `src/routes/welcome/+page.svelte`: Delete the "View Analytics" button link (lines 145–147).
+5. `src/routes/app/+page.svelte`: Delete the "Analytics" card (lines 90–107) and the "View Details" button (lines 170–172).
+6. Do NOT modify the "Job Analytics" block on lines 258–289 of `+layout.svelte`.
+7. Complexity: Low-Medium. Selective template and file deletion across multiple components.
 
 ---
 
