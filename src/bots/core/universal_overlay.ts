@@ -33,6 +33,7 @@ interface OverlayState {
   };
   position?: { x: number; y: number };
   collapsed?: boolean;
+  expanded?: boolean;
   activeMode?: 'superbot' | 'review' | 'manual';
 }
 
@@ -152,6 +153,7 @@ export class UniversalOverlay {
             refs.title &&
             refs.controls &&
             refs.collapseBtn &&
+            refs.sizeBtn &&
             refs.content &&
             refs.mainContent &&
             refs.logsContainer &&
@@ -189,9 +191,9 @@ export class UniversalOverlay {
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
             pointerEvents: 'none',
-            width: '600px',
+            width: '450px',
             maxWidth: 'calc(100vw - 40px)',
-            maxHeight: '90vh',
+            maxHeight: '500px',
             minHeight: '120px',
             display: 'flex',
             flexDirection: 'column',
@@ -246,6 +248,38 @@ export class UniversalOverlay {
             flexShrink: 0,
             overflow: 'visible'
           });
+
+          const sizeBtn = document.createElement('button');
+          Object.assign(sizeBtn.style, {
+            background: 'none',
+            border: '1px solid #00ffff80',
+            color: '#00ffff',
+            width: '24px',
+            height: '24px',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontSize: '16px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            transition: 'all 0.2s ease',
+            padding: '0'
+          });
+          sizeBtn.onmouseover = () => {
+            sizeBtn.style.background = '#00ffff30';
+            sizeBtn.style.transform = 'scale(1.1)';
+          };
+          sizeBtn.onmouseout = () => {
+            sizeBtn.style.background = 'none';
+            sizeBtn.style.transform = 'scale(1)';
+          };
+          sizeBtn.onclick = (e) => {
+            e.stopPropagation();
+            const current = loadState() || window.__overlayCurrentState || state;
+            if (!current) return;
+            current.expanded = !current.expanded;
+            queueOverlayRender(current);
+          };
 
           const collapseBtn = document.createElement('button');
           Object.assign(collapseBtn.style, {
@@ -372,6 +406,7 @@ export class UniversalOverlay {
           logsContainer.appendChild(logList);
           content.appendChild(mainContent);
           content.appendChild(logsContainer);
+          controls.appendChild(sizeBtn);
           controls.appendChild(collapseBtn);
           header.appendChild(title);
           header.appendChild(controls);
@@ -418,17 +453,30 @@ export class UniversalOverlay {
 
           document.body.appendChild(overlay);
 
-          refs = { overlay, header, title, controls, collapseBtn, content, mainContent, logsContainer, logTitle, logList };
+          refs = { overlay, header, title, controls, collapseBtn, sizeBtn, content, mainContent, logsContainer, logTitle, logList };
           window.__overlayRefs = refs;
           return refs;
         }
 
         function applyShellStyles(refs, state) {
           const collapsed = Boolean(state.collapsed);
+          const expanded = Boolean(state.expanded);
           const position = state.position || { x: 20, y: 20 };
-          refs.overlay.style.width = collapsed ? '60px' : '600px';
+
+          let shellWidth = '450px';
+          let shellMaxHeight = '500px';
+          if (expanded) {
+            shellWidth = '850px';
+            shellMaxHeight = '90vh';
+          }
+          if (collapsed) {
+            shellWidth = '60px';
+            shellMaxHeight = '60px';
+          }
+
+          refs.overlay.style.width = shellWidth;
           refs.overlay.style.height = collapsed ? '60px' : 'auto';
-          refs.overlay.style.maxHeight = collapsed ? '60px' : '90vh';
+          refs.overlay.style.maxHeight = shellMaxHeight;
           refs.overlay.style.minHeight = collapsed ? '60px' : '120px';
           refs.overlay.style.borderRadius = collapsed ? '50%' : '16px';
           refs.overlay.style.left = position.x + 'px';
@@ -440,6 +488,12 @@ export class UniversalOverlay {
           refs.header.style.height = collapsed ? '100%' : 'auto';
           refs.title.style.display = collapsed ? 'none' : 'block';
           refs.content.style.display = collapsed ? 'none' : 'block';
+
+          if (refs.sizeBtn) {
+            refs.sizeBtn.textContent = expanded ? '⤡' : '⤢';
+            refs.sizeBtn.style.display = collapsed ? 'none' : 'flex';
+          }
+
           refs.collapseBtn.textContent = collapsed ? '+' : '−';
           refs.collapseBtn.style.width = collapsed ? '100%' : '24px';
           refs.collapseBtn.style.height = collapsed ? '100%' : '24px';
