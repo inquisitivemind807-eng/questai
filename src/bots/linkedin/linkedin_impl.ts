@@ -1,4 +1,4 @@
-import { WebDriver, By, until, Key } from 'selenium-webdriver';
+import { WebDriver, By, until, Key, error } from 'selenium-webdriver';
 import { setupChromeDriver } from '../core/browser_manager';
 import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/humanization';
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
@@ -256,14 +256,84 @@ async function dismissLinkedInOverlays(driver: WebDriver): Promise<void> {
 }
 
 /**
+ * Robust wait and click that safely navigates LinkedIn's dynamic DOM.
+ * Instead of waiting for page navigation load, we wait for target interactability.
+ * Handles stale elements with retries to account for SPAs.
+ * Adds a small delay for Svelte/React hydration interactions.
+ * Accounts for LinkedIn skeletons/overlays.
+ */
+export async function waitAndClick(
+    driver: WebDriver, 
+    locator: By | string, 
+    timeoutMs: number = 10000
+): Promise<void> {
+    const loc = typeof locator === 'string' ? By.css(locator) : locator;
+
+    // 1. Wait for global LinkedIn spinners/skeletons to disappear
+    try {
+        const skeletons = By.css('.artdeco-skeleton-loader, .artdeco-button--loading');
+        await driver.wait(async () => {
+            const elements = await driver.findElements(skeletons);
+            return elements.length === 0;
+        }, 5000);
+    } catch {
+        // Ignore timeout if spinner was never there or didn't disappear in time
+    }
+
+    const maxRetries = 3;
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            // Find and wait for visibility & interactability
+            const element = await driver.wait(until.elementLocated(loc), timeoutMs);
+            await driver.wait(until.elementIsVisible(element), timeoutMs);
+            await driver.wait(until.elementIsEnabled(element), timeoutMs);
+
+            // Ensure element is actually scrolled into view (bypasses sticky headers/footers)
+            await driver.executeScript("arguments[0].scrollIntoView({block: 'center'});", element);
+            
+            // Add a small delay for Svelte/React hydration (Crucial for handling modern SPA components)
+            await driver.sleep(200);
+
+            // Attempt Click
+            await element.click();
+            return; // Success!
+
+        } catch (err: any) {
+            if (err instanceof error.StaleElementReferenceError) {
+                // DOM changed beneath us, retry the loop
+                printLog(`[Warning] Stale element on ${loc}, retrying...`);
+                continue;
+            } 
+            else if (err instanceof error.ElementClickInterceptedError) {
+                // Something is blocking it (like the LinkedIn Messaging tab or cookie banner)
+                printLog(`[Warning] Click intercepted on ${loc}, attempting JS force click...`);
+                // Fallback: Execute a Javascript click directly on the DOM node
+                const element = await driver.findElement(loc).catch(() => null);
+                if (element) {
+                    await driver.executeScript("arguments[0].click();", element);
+                    return;
+                }
+            } 
+            else {
+                // Propagate non-recoverable errors (like TimeoutError)
+                throw err;
+            }
+        }
+    }
+    throw new Error(`Failed to click ${loc} after ${maxRetries} retries due to Stale Elements.`);
+}
+
+/**
  * Wait for the jobs page search form to be present and ready, dismiss overlays if needed.
  */
 async function waitForJobsSearchFormReady(driver: WebDriver, selectors: { jobs?: { keywords_input_candidates?: string[]; location_input_candidates?: string[] } }): Promise<boolean> {
   const keywordCandidates = selectors?.jobs?.keywords_input_candidates ?? [];
   const locationCandidates = selectors?.jobs?.location_input_candidates ?? [];
   const allCandidates = [...keywordCandidates, ...locationCandidates];
-  const maxAttempts = 6;
-  const attemptDelay = 2000;
+  // Reduced from 6 attempts to 3 — the old 6×(3s wait + 2s sleep) = 30s could eat
+  // the entire workflow step timeout before this function even returned.
+  const maxAttempts = 3;
+  const attemptDelay = 1000;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     // Dismiss overlays that might be covering the form
@@ -271,7 +341,7 @@ async function waitForJobsSearchFormReady(driver: WebDriver, selectors: { jobs?:
 
     for (const selector of allCandidates) {
       try {
-        const el = await driver.wait(until.elementLocated(By.css(selector)), 3000);
+        const el = await driver.wait(until.elementLocated(By.css(selector)), 2000);
         const isDisplayed = await el.isDisplayed();
         if (el && isDisplayed) {
           printLog(`Jobs search form ready (attempt ${attempt}): found ${selector.substring(0, 50)}`);
@@ -403,14 +473,29 @@ export async function* openJobsPage(ctx: WorkflowContext): AsyncGenerator<string
     const alreadyOnSearch = currentUrl.includes('/jobs/search') && (keywords ? currentUrl.includes(encodeURIComponent(keywords)) : true);
     if (!currentUrl.includes('/jobs') || !alreadyOnSearch) {
       printLog(`Navigating to: ${targetUrl}`);
-      await driver.get(targetUrl);
-      await driver.sleep(3000);
+      try {
+        await withTimeout(driver.get(targetUrl), 15000, 'Jobs page navigation');
+      } catch (err) {
+        // With pageLoadStrategy='eager', it might timeout on some resources but still have DOM ready.
+        printLog(`Navigation timeout detected but proceeding to check target element presence.`);
+      }
+      // Small sleep just to allow initial JS evaluation
+      await driver.sleep(1000);
     }
 
     // Wait for search form to be present and dismiss any overlays blocking it
     const formReady = await waitForJobsSearchFormReady(driver, selectors);
     if (!formReady) {
-      printLog("Warning: Search form not found after waiting; proceeding anyway.");
+      // If the URL already has our keywords/location baked in (we navigated directly),
+      // it is safe to proceed — job cards will load asynchronously anyway.
+      const currentUrlCheck = await driver.getCurrentUrl().catch(() => '');
+      const hasKeywordsInUrl = keywords ? currentUrlCheck.includes(encodeURIComponent(keywords)) : true;
+      if (!hasKeywordsInUrl) {
+        printLog('Search form not found and URL does not contain keywords - retrying.');
+        yield 'failed_opening_jobs_page';
+        return;
+      }
+      printLog('Search form not visible but URL is correct — proceeding to next step.');
     }
 
     {
@@ -915,7 +1000,11 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     // #region agent log
     DEBUG_LOG('linkedin_impl.ts:extractJobDetails', 'Page prepared for sequential extraction', { pageJobCount: toProcess, yielded: 'jobs_prepared' }, 'H3');
     // #endregion
-    if ((ctx as any).bot_name === 'linkedin_extract') {
+    // Use bot_name from ctx (set by workflow engine via setContext) to determine pipeline.
+    // linkedin_extract uses the extract-only pipeline (jobs_prepared → open_current_job_card).
+    // linkedin / linkedin_apply uses the legacy path (proceed_to_process_jobs → process_jobs).
+    const resolvedBotName = (ctx as any).bot_name || (ctx.config as any)?.botName || '';
+    if (resolvedBotName === 'linkedin_extract') {
       yield "jobs_prepared";
     } else {
       // Backward-compatible path for legacy linkedin_steps.yaml
@@ -1148,8 +1237,12 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
         name: 'direct-nav',
         async execute() {
           const directUrl = `https://www.linkedin.com/jobs/view/${jobId}`;
-          await withTimeout(driver.get(directUrl), 12000, 'Direct nav to job URL');
-          await driver.sleep(2000);
+          try {
+            await withTimeout(driver.get(directUrl), 15000, 'Direct nav to job URL');
+          } catch (err) {
+             printLog('Timeout during direct job nav (page load strategy eager might be active).');
+          }
+          await driver.sleep(1000);
         }
       }
     ];

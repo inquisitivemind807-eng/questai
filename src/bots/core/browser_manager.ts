@@ -359,6 +359,9 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
 
     const options = new Options();
 
+    // Prevent bot from timing out waiting for full page load (e.g. images, stylesheets)
+    options.setPageLoadStrategy('eager');
+
     // CRITICAL: Enable CDP explicitly (Chrome 144+ requirement).
     // Use a dynamic port/pipe to avoid collisions with an existing Chrome instance.
     options.addArguments('--remote-debugging-port=0');
@@ -482,6 +485,12 @@ export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ dri
       .forBrowser('chrome')
       .setChromeOptions(options)
       .build();
+
+    // CRITICAL: Set Selenium's own page load timeout.
+    // driver.get() uses Chrome's INTERNAL renderer timeout (~300s) and ignores
+    // Promise.race wrappers. Setting this forces Selenium to throw a TimeoutError
+    // after 20s, which our try/catch in openJobsPage handles gracefully.
+    await driver.manage().setTimeouts({ pageLoad: 20000, implicit: 0 });
 
     // Try to maximize window (may fail on Wayland)
     try {
