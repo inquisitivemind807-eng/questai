@@ -71,9 +71,6 @@
 
   /** @type {any[]} */
   let applications = [];
-  /** @type {any[]} */
-  let liveLogs = [];
-  let isBotRunning = false;
   let isLoading = true;
   let error = "";
   let refreshDebounceTimer;
@@ -95,57 +92,15 @@
       const { listen } = await import("@tauri-apps/api/event");
 
       const unlisten = await listen("bot-log", (event) => {
-        isBotRunning = true;
         const logLine = event.payload;
 
         if (
-          logLine.includes("[BOT_EVENT]") ||
-          logLine.includes("==================") ||
-          logLine.includes("▶️") ||
-          logLine.includes("✅") ||
-          logLine.includes("❌") ||
-          logLine.includes("⏳") ||
-          logLine.includes("🚀") ||
-          logLine.includes("🎉")
+          logLine.includes(
+            "Application recorded successfully with status 'applied'",
+          ) ||
+          logLine.includes("JobRecorder] API call successful!")
         ) {
-          let structuredData = null;
-          let displayMsg = logLine;
-
-          if (logLine.includes("[BOT_EVENT]")) {
-            try {
-              const jsonStr = logLine.split("[BOT_EVENT]")[1].trim();
-              structuredData = JSON.parse(jsonStr);
-
-              if (structuredData.event === "start") {
-                displayMsg = `🚀 Initializing workflow for Job ID: ${structuredData.jobId}`;
-              } else if (structuredData.event === "error") {
-                displayMsg = `❌ Workflow failed: ${structuredData.error}`;
-              } else {
-                displayMsg = `ℹ️ ${structuredData.event}`;
-              }
-            } catch (e) {
-              console.warn("Failed to parse BOT_EVENT", e);
-            }
-          }
-
-          liveLogs = [
-            ...liveLogs,
-            {
-              id: Date.now() + Math.random(),
-              message: displayMsg,
-              raw: logLine,
-              time: new Date(),
-            },
-          ];
-
-          if (
-            logLine.includes(
-              "Application recorded successfully with status 'applied'",
-            ) ||
-            logLine.includes("JobRecorder] API call successful!")
-          ) {
-            scheduleApplicationsRefresh();
-          }
+          scheduleApplicationsRefresh();
         }
       });
 
@@ -1931,60 +1886,6 @@
   </dialog>
 {/if}
 
-<!-- Live Execution Toast Overlay -->
-{#if isBotRunning && liveLogs.length > 0}
-  <div class="toast toast-end toast-bottom z-50 animate-fade-in-up w-96">
-    <div
-      class="alert alert-info bg-base-100 shadow-xl border border-primary/30 flex flex-col items-start gap-2 max-h-96 overflow-y-auto w-full text-sm"
-    >
-      <div
-        class="flex justify-between w-full items-center border-b border-base-300 pb-2 mb-1 sticky top-0 bg-base-100/95 backdrop-blur z-10"
-      >
-        <span class="font-bold text-primary">🤖 Bot Execution Sequence</span>
-        <button
-          class="btn btn-ghost btn-xs text-base-content/50 hover:text-error"
-          on:click={() => {
-            liveLogs = [];
-            isBotRunning = false;
-          }}
-        >
-          ✕ Close
-        </button>
-      </div>
-
-      <div class="flex flex-col w-full gap-2">
-        {#each liveLogs as log (log.id)}
-          <div
-            class="font-mono text-xs flex gap-2 animate-fade-in {log.message.includes(
-              '❌',
-            )
-              ? 'text-error'
-              : log.message.includes('✅')
-                ? 'text-success'
-                : 'text-base-content'}"
-          >
-            <span class="opacity-50 min-w-16"
-              >[{new Date(log.time).toLocaleTimeString([], {
-                hourCycle: "h23",
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}]</span
-            >
-            <span class="break-words w-full">{log.message}</span>
-          </div>
-        {/each}
-      </div>
-
-      <div class="w-full mt-2 pt-2 border-t border-base-300">
-        <button
-          class="btn btn-outline btn-xs w-full"
-          on:click={() => (liveLogs = [])}>Clear Buffer</button
-        >
-      </div>
-    </div>
-  </div>
-{/if}
 
 <style>
   .animate-fade-in {
