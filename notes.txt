@@ -1,26 +1,315 @@
-COMPLETED:
-- Item 2: Sidebar active tab styling. Added .active-tab class with border and background tint in src/app.css.
-- Item 3 & 4: Choose Bot page overhaul. 
-    * Fixed broken image paths (/finallinkedin.png, etc).
-    * Removed circles and verbose text (descriptions, mode indicators).
-    * Simplified to a clean 3-bot grid (LinkedIn, Seek, Indeed).
-    * Implemented one-click "Launch" (defaults to 10 jobs).
-    * Moved Configuration help box to the bottom.
+# QuestAI: Issues Investigation Report
 
-REMAINING:
-1. in the login page. 
-we need password or email not found err msg. 
-investigate why the stupid loading screen shows up everytime. i feel like there might be 
-a problem. like it maybe compulsoryly showing every time we run the app. no matter what. even if 
-the pc is fast enough u know what i mean? investigate. 
+**STRICKLY DONT MODIFY ANY CODE YET !!!!!!!!!!!!!**
+**STRICKLY DONT MODIFY ANY CODE YET !!!!!!!!!!!!!**
+**STRICKLY DONT MODIFY ANY CODE YET !!!!!!!!!!!!!**
 
-**Finding:** The "stupid loading screen" is caused by 
-the global `$authService.loading` state in `+layout.svelte`, which is `true` by default and
- only becomes `false` after `authService.initialize()` completes. 
- Error messages currently pass through from the API; we should map `401` or specific error strings to "Email or password not found" in `handleSubmit`.
+## Group 1: Easily Fixable UI Issues Only
 
-5. when i click on buy tokens and select a package. it takes me to a sandbox payment page which is good. but in it there is a back button and when i click it im redirected to login page. im logged out. investigate why this is.
-**Finding:** The logout after clicking "Back" from the sandbox is likely due to the browser's security policy or `authService.initialize()` failing to find tokens when returning from an external origin. It might also be triggered by a session validation failure if the sandbox doesn't return to the exact same sub-origin.
+---
+
+### 1. Login Page: Persistent Loading & Error Messages
+*   **Problem:** Email/password not found error message is missing. A loading
+    screen shows up every time, even on fast machines.
+*   **Finding:** The "stupid loading screen" is caused by the global
+    `$authService.loading` state in `src/routes/+layout.svelte`, which is `true`
+    by default. It only becomes `false` after `authService.initialize()`
+    completes its async operations (reading from cache via Tauri `invoke`).
+    Error messages currently pass through from the API via `handleSubmit` in
+    `src/routes/login/+page.svelte`; we should map `401` or specific error
+    strings to "Email or password not found" instead of showing generic API
+    errors.
+*   **Proposed Solution:** Map `401` and specific error strings to a friendly
+    "Email or password not found" message in `handleSubmit`. Modify
+    `$authService.loading` to handle fast loads more gracefully without a
+    prominent loading spinner.
+
+---
+
+### 4. Configuration Page: UI Polish & Legal Disclaimer
+*   **Problem:** Save button needs to be sticky/green. Legal disclaimer needs
+    removal.
+*   **Finding:** The configuration page is `src/routes/frontend-form/+page.svelte`.
+    The "Save Configuration" button is currently in a sticky footer at the
+    bottom. The "Legal Disclaimer" is a card just above the footer; it
+    currently enforces a checkbox requirement (`formData.acceptTerms`) in
+    `handleSubmit`, so removing it requires also removing this validation
+    logic.
+*   **Proposed Solution:** Remove the legal disclaimer card and the
+    `acceptTerms` validation from `handleSubmit`. Apply CSS classes to make the
+    Save button green and persistently sticky.
+
+---
+
+### 6. Overlay: Resizability
+*   **Problem:** Make the overlay resizable.
+*   **Finding:** The overlay is managed by `src/bots/core/universal_overlay.ts`.
+    It's currently injected into the browser page with fixed dimensions or
+    styles. Making it resizable would involve adding dragging handles and mouse
+    event listeners to the overlay's DOM structure to adjust its CSS width and
+    height dynamically.
+*   **Proposed Solution:** Inject `resize: both; overflow: auto;` CSS properties
+    to the overlay's container, or manually add drag handles and event listeners
+    to update dimensions.
+
+---
+
+### 8. Bot Logs Dashboard: Remove Stats Tab
+*   **Problem:** Remove the Stats tab from the dashboard.
+*   **Finding:** The "Stats" tab is defined in `src/lib/components/BotDashboard.svelte`.
+    Removing it involves deleting the tab button and the `{:else if activeTab === 'stats'}`
+    block, and potentially moving essential stats into the main "Logs" view or a
+    more compact header.
+*   **Proposed Solution:** Delete the Stats tab button and its corresponding
+    `{:else if activeTab === 'stats'}` logic from `BotDashboard.svelte`.
+
+---
+
+### 9. Navigation: Remove Analytics
+*   **Problem:** Remove Analytics menu and related pages.
+*   **Finding:** The menu items are in `src/routes/+layout.svelte`. Removing them
+    involves deleting the "Analytics" (`/backend-analytics`) and "Job
+    Analytics" (which includes `/job-analytics`, `/linkedin-job-tracker`, etc.)
+    `<li>` elements from the sidebar navigation.
+*   **Proposed Solution:** Remove the relevant `<li>` blocks for
+    `/backend-analytics` and the "Job Analytics" details group from
+    `src/routes/+layout.svelte`.
+
+---
+
+### 11. Bot Log Dashboard: Panel Close Button
+*   **Problem:** Add a close button to panels when the bot is stopped or
+    completed.
+*   **Finding:** This button should be added to the header section of
+    `src/lib/components/BotDashboard.svelte`. It would trigger a new function
+    in `botProgressStore.ts` to remove the bot from the `bots` record,
+    effectively dismissing the panel.
+*   **Proposed Solution:** Add a `removeBot(botId)` method to
+    `botProgressStore.ts` and call it from a new dismiss/close `<button>` in
+    the bot panel header.
+
+---
+
+### 12. Login Flow: Post-Login Delay
+*   **Problem:** Investigate the delay after a successful login.
+*   **Finding:** In `src/routes/login/+page.svelte`, there is an explicit
+    `setTimeout` of 500ms in the `handleSubmit` function after a successful
+    login before calling `goto('/app')`, intended to give the user time to see
+    the "Login successful!" message.
+*   **Proposed Solution:** Remove or significantly reduce the `setTimeout` delay
+    in `handleSubmit` for an instantaneous user transition.
+
+---
+
+### 15. Job Analytics: UI Cleanup
+*   **Problem:** Fix Seek/LinkedIn column info and remove apply confirmation
+    dialogs.
+*   **Finding:** These UI changes are in `src/lib/components/JobTrackerBase.svelte`.
+    The Seek "third info" (badges for jobType/workMode) should be removed from
+    the first column. For LinkedIn, the `jobType` should be moved to the
+    dedicated "Type" column. The `confirm()` call in `deleteSelectedJobs` or any
+    other apply-related dialogs should be removed.
+*   **Proposed Solution:** Refactor `JobTrackerBase.svelte` to remove the
+    `confirm()` popup. Move LinkedIn job type to the Type column and remove the
+    third info badges for Seek jobs.
+
+---
+
+### 16. Onboarding: Resume Builder Redirect
+*   **Problem:** Redirect first-time users to the resume builder if they haven't
+    uploaded one.
+*   **Finding:** In `src/lib/components/JobTrackerBase.svelte`, the
+    `triggerBotApply` and `bulkApply` functions check for `selectedResumeFile`.
+    If empty, they currently just `alert()`. These should be updated to call
+    `goto('/resume-builder')` if no resumes are found in
+    `availableResumeFiles`.
+*   **Proposed Solution:** Replace the standard `alert()` in `triggerBotApply`
+    and `bulkApply` with a redirection using `goto('/resume-builder')` when
+    `selectedResumeFile` is empty.
+
+---
+
+### 17. Error Messages: Custom Styling
+*   **Problem:** Replace default app error messages with a custom sleek design.
+*   **Finding:** The app currently uses standard browser `alert()` and simple
+    DaisyUI alerts in `+layout.svelte`. Replacing these with a custom "sleek"
+    toast or notification component would improve the UI consistently across
+    the app.
+*   **Proposed Solution:** Introduce a custom Toast notification component
+    throughout the application (especially replacing browser `alert()` calls)
+    for a cohesive and sleek design.
+
+---
+
+### 18. Analytics UI: Remove Small Overlay
+*   **Problem:** Remove the small overlay in the analytics page.
+*   **Finding:** This refers to the "Live Execution Toast Overlay" at the bottom
+    of `src/lib/components/JobTrackerBase.svelte`, which displays real-time bot
+    logs. Removing it involves deleting the `{#if isBotRunning &&
+    liveLogs.length > 0}` block.
+*   **Proposed Solution:** Delete the block `{#if isBotRunning && liveLogs.length > 0}`
+    entirely from `JobTrackerBase.svelte`.
 
 
-6. Even after i click on stop even though the bot stops (the browser shuts down) the bot log dashboard still says stopping bot it dont know whats going on. it dont know the bots bin stopped. it should says the bot was stopped or maybe the cycle was complete and tell you what it did. how many jobs it found or applied to. whatever. 
+## Group 2: Others (Logic, Scrapers, Auth, Backend)
+
+---
+
+### 2. Payment Redirect: Session Loss
+*   **Problem:** Clicking "Back" from the sandbox payment page redirects to the
+    login page (logged out).
+*   **Finding:** The logout is triggered by `authService.initialize()` in
+    `src/lib/authService.js`. When you return from the sandbox (an external
+    origin), the app re-initializes. If "Remember Me" was not checked, the
+    `auth_remember_me.txt` flag is 'false', causing `initialize()` to
+    aggressively wipe all tokens and the session, effectively logging you out
+    upon your return.
+*   **Proposed Solution:** Update `initialize()` to not wipe tokens aggressively
+    during an active session navigation, perhaps keeping the session alive in
+    `sessionStorage` or avoiding immediate cache clearing just because
+    `rememberMe` is false.
+
+---
+
+### 3. Bot Logs: Duplicate Panels
+*   **Problem:** Bot dashboard shows two separate log panels for the same bot.
+*   **Finding:** In `src/lib/stores/botProgressStore.ts`, the store uses `botId`
+    as the key. When a bot starts, it might initially use a generic name (e.g.,
+    'seek'), but then a `[BOT_EVENT]` might arrive with a specific `botId`
+    (e.g., 'seek_123'). If the logic doesn't unify these, `addLogLine` creates a
+    new entry in the `bots` record, leading to duplicate panels in
+    `src/routes/bot-logs/+page.svelte`.
+*   **Proposed Solution:** Ensure consistent mapping between the initial generic
+    `botId` and the specific event `botId` by resolving and unifying the keys
+    in `botProgressStore.ts`.
+
+---
+
+### 5. LinkedIn Bot: Viewport Sensitivity
+*   **Problem:** Investigating if smaller viewports cause element discovery
+    issues.
+*   **Finding:** In `src/bots/core/browser_manager.ts`, the driver attempts to
+    maximize the window or defaults to 1920x1080. If these fail (e.g., on
+    certain Linux/Wayland setups), the viewport might be too small. LinkedIn's
+    responsive design often hides or moves elements (like the "Easy Apply"
+    button or search fields) in smaller viewports, which would cause the
+    Selenium selectors in `src/bots/linkedin/linkedin_impl.ts` to fail.
+*   **Proposed Solution:** Implement fallback resizing if maximize fails and
+    update Selenium selectors in `linkedin_impl.ts` to be responsive to smaller
+    viewports or ensure the minimum required width is enforced.
+
+---
+
+### 7. Bot Completion: Auto-Close & State Reset
+*   **Problem:** Close bot on completion and improve overlay display persistence.
+*   **Finding:** Bot completion is handled in `src/bots/bot_starter.ts` via
+    `handle_post_execution`. If `keep_open` is true, the driver stays open. The
+    overlay reset happens because the `botProgressStore.ts` sets the status to
+    'completed' but doesn't persist the final state well if the process
+    terminates or re-initializes. Improving this requires better state
+    persistence in the `BotDashboard.svelte`.
+*   **Proposed Solution:** Improve the persistent storage of bot statuses in
+    `botProgressStore.ts` after execution finishes and correctly utilize the
+    `keep_open: false` flag to ensure the driver is closed.
+
+---
+
+### 10. Data Storage: Origin of Data
+*   **Problem:** Determine if data (resumes, images, jobs) is stored in
+    corpus-rag or questai.
+*   **Finding:** Resumes and job artifacts are stored locally in the `clients/`,
+    `data/`, and `.cache/` directories of the project root.
+    `src/lib/file-manager.ts` handles local storage via Tauri `invoke`.
+    However, for AI-powered tasks (like resume extraction), data is sent to the
+    `corpus-rag` API as seen in `src/routes/frontend-form/+page.svelte`.
+*   **Proposed Solution:** Maintain local Tauri storage for basic artifacts and
+    strictly use the `corpus-rag` API solely for AI-specific processing to keep
+    responsibilities clean.
+
+---
+
+### 13. Filter Logic: Seek & LinkedIn
+*   **Problem:** Check the status of the filters code.
+*   **Finding:** `src/bots/seek/seek_impl.ts` has `applySeekFilters` and
+    `src/bots/linkedin/linkedin_impl.ts` has `applyFilters`. Both use a mix of
+    injected JavaScript and Selenium actions to interact with the "All Filters"
+    modals. They are functional but fragile as they rely on complex CSS/XPath
+    candidates that can break if the platforms update their UI.
+*   **Proposed Solution:** Refactor the filtering methods to use more robust
+    selectors or API-based configurations where possible, reducing reliance on
+    brittle DOM injection.
+
+---
+
+### 14. Bot Automation: Chrome Auto-Close
+*   **Problem:** Ensure Chrome instances close automatically after task
+    completion.
+*   **Finding:** In `src/bots/bot_starter.ts`, the `handle_post_execution`
+    function checks the `keep_open` flag. Currently, it defaults to staying
+    open for manual review. Changing this behavior or ensuring it closes
+    requires setting `keep_open: false` in the `BotRunOptions`.
+*   **Proposed Solution:** Default `keep_open` to `false` in `bot_starter.ts` or
+    make it explicitly configurable via the form settings.
+
+---
+
+### 19. LinkedIn Bot: Extraction Hang
+*   **Problem:** Bot says "Extracting" but fails to apply. This is critical.
+*   **Finding:** In `src/bots/linkedin/linkedin_impl.ts`, the bot gets stuck in
+    `extractJobDetailsFromPanel` if the panel sync check fails or if the DOM
+    structure has changed, preventing it from ever reaching the
+    `attemptEasyApply` step. The "extracting" message is a progress update from
+    this extraction phase.
+*   **Proposed Solution:** Implement a definitive timeout and a fallback catch
+    block inside `extractJobDetailsFromPanel` to yield an error or gracefully
+    skip the extraction without hanging the main flow.
+
+---
+
+### 20. Tauri Dev Error: Session/Driver Crash
+*   **Problem:** SessionNotCreatedError during `bun run tauri dev`.
+*   **Finding:** The `SessionNotCreatedError` occurred because ChromeDriver
+    failed to start a new Chrome instance. This is often caused by a stale
+    `LOCK` file in the user data directory (e.g., `sessions/seek/LOCK`). While
+    `src/bots/core/browser_manager.ts` has `cleanStaleLockFiles`, it only
+    removes locks older than 1 hour. If a previous crash was recent, the bot
+    fails to start. Additionally, the "invalid session ID" errors indicate the
+    overlay system tried to update after the driver had already crashed or been
+    closed.
+*   **Proposed Solution:** Modify `cleanStaleLockFiles` in `browser_manager.ts`
+    to forcefully delete the `LOCK` file regardless of its age upon initializing
+    a new bot run to prevent `SessionNotCreatedError`.
+
+---
+
+### 21. Authentication: Refresh Token Logic (Deep Dive)
+*   **Finding:** The access token's 15-minute lifespan is the root of the
+    problem. `authService.initialize()` runs on every page load and manually
+    checks this expiry; if expired, it calls `logout()`, which wipes
+    everything—including the refresh token and the "Remember Me" flag. This
+    prevents `CorpusRagAuth.validateSession()` from ever attempting a refresh.
+    Furthermore, `initialize()` aggressively deletes sessions on refresh if
+    "Remember Me" was unchecked.
+*   **Summary of what's happening:**
+    1. You login (with or without Remember Me).
+    2. 15 minutes pass. Your Access Token expires.
+    3. You refresh the page or come back to the app.
+    4. `initialize()` runs, sees the expired token, and calls `logout()`.
+    5. `logout()` deletes everything from your disk/localStorage.
+    6. You are redirected to the Login page.
+*   **Proposed Fix Strategy:**
+    1. Modify `initialize()` in `src/lib/authService.js` to attempt a token
+       refresh if the access token is expired, instead of calling `logout()`.
+    2. Update `logout()` to be more selective, or ensure it's not called
+       prematurely.
+    3. Adjust "Remember Me" handling so that 'false' doesn't trigger an
+       immediate deletion of the current active session during a refresh.
+*   **Proposed Solution:** Explicitly call `refreshAccessToken()` inside
+    `initialize()` if the token is found to be expired before executing the
+    `logout()` sequence, ensuring session continuity.
+
+---
+
+**STRICKLY DONT MODIFY ANY CODE YET !!!!!!!!!!!!!**
+**STRICKLY DONT MODIFY ANY CODE YET !!!!!!!!!!!!!**
+**STRICKLY DONT MODIFY ANY CODE YET !!!!!!!!!!!!!**

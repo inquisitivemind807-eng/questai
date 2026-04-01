@@ -1,0 +1,118 @@
+.gitignore
+.idea/.gitignore
+.idea/finalboss.iml
+.idea/modules.xml
+.idea/vcs.xml
+.vscode/extensions.json
+.vscode/settings.json
+README.md
+docs/archive/AUTH_INVESTIGATION.md
+docs/archive/CHROME_SPAM_FIX.md
+docs/archive/CLOUDFLARE_BYPASS.md
+docs/archive/CONFIG_STANDARDIZATION.md
+docs/archive/FINAL_CONFIG_STATUS.md
+docs/archive/FIXES_APPLIED_OLD.md
+docs/archive/IMPLEMENTATION_ISSUES.md
+docs/archive/INDEED_SELENIUM_MIGRATION.md
+docs/archive/INDEED_UI_INTEGRATION.md
+docs/archive/LINKEDIN_FIXES.md
+docs/archive/linkedin-python-legacy/IMPLEMENTATION_COMPLETE.md
+docs/archive/linkedin-python-legacy/README.md
+docs/archive/linkedin-python-legacy/steps_config.py
+docs/archive/linkedin-python-legacy/steps_impl.py
+notes.txt
+package-lock.json
+run-indeed-stealth.sh
+scripts/generate-contract.mjs
+shared-resumes/Black and White Simple Lawyer Resume CV.docx
+shared-resumes/Black and White Simple Minimalist Real Estate Resume.docx
+shared-resumes/Black and White UX Designer Resume.docx
+shared-resumes/Education Resume in Cream Black Warm Classic Style.docx
+shared-resumes/Junior Athlete-resume .docx
+shared-resumes/Manthan's CV.docx
+shared-resumes/Minimalist Modern Professional CV Resume.docx
+shared-resumes/Recreational Activities assisant-resume.docx
+shared-resumes/Science and Engineering Resume in Green Black Simple Style.docx
+shared-resumes/medical doctor-resume.docx
+src-tauri/src/lib.rs
+src/app.css
+src/bots/bot_starter.ts
+src/bots/core/workflow_engine.ts
+src/bots/indeed/README.md
+src/bots/indeed/config/indeed_selectors.json
+src/bots/indeed/handlers/cover_letter_handler.js
+src/bots/indeed/handlers/resume_handler.js
+src/bots/indeed/indeed_impl.ts
+src/bots/indeed/indeed_steps.yaml
+src/bots/indeed/old/indeed_standards.js
+src/bots/indeed/old/indeed_steps.yaml
+src/bots/indeed/old/linkjobcards.html
+src/bots/indeed/test_indeed_basic.ts
+src/bots/indeed/tests/indeed_standards_test.ts
+src/bots/indeed/tests/indeed_test.ts
+src/bots/seek/legacy/quick_apply.py
+src/bots/seek/unused/seek_steps copy.yaml
+src/deprecated/botrunner.js
+src/deprecated/botrunner.ts
+src/deprecated/botsinit.json
+src/deprecated/indeed.js
+src/deprecated/indeed.ts
+src/deprecated/linkedin.js
+src/deprecated/linkedin.ts
+src/deprecated/seek.js
+src/deprecated/seekLater.js
+src/deprecated/seekSelenium.ts
+src/deprecated/seek_impl.py
+src/deprecated/workflows/__init__.py
+src/deprecated/workflows/__pycache__/__init__.cpython-310.pyc
+src/deprecated/workflows/__pycache__/__init__.cpython-313.pyc
+src/deprecated/workflows/indeed/indeed_impl.py
+src/deprecated/workflows/indeed/steps_config.py
+src/deprecated/workflows/linkedin/__init__.py
+src/deprecated/workflows/linkedin/__pycache__/__init__.cpython-313.pyc
+src/deprecated/workflows/linkedin/__pycache__/steps_config.cpython-313.pyc
+src/deprecated/workflows/linkedin/__pycache__/steps_impl.cpython-313.pyc
+src/deprecated/workflows/linkedin/linkedin_selectors.json
+src/deprecated/workflows/linkedin/new_yields_table.py
+src/deprecated/workflows/linkedin/steps_config.py
+src/deprecated/workflows/linkedin/steps_impl.py
+src/deprecated/workflows/seek/quick_apply_utils.py
+src/deprecated/workflows/seek/scripts/__pycache__/job_details.cpython-313.pyc
+src/deprecated/workflows/seek/scripts/genericQuestions/__pycache__/formsBeautifulshup_fixed.cpython-313.pyc
+src/deprecated/workflows/seek/scripts/genericQuestions/form_parser.py
+src/deprecated/workflows/seek/scripts/genericQuestions/formsBeautifulshup_fixed.py
+src/deprecated/workflows/seek/scripts/genericQuestions/generic_form.py
+src/deprecated/workflows/seek/scripts/genericQuestions/generic_form_detector.js
+src/deprecated/workflows/seek/scripts/genericQuestions/genericforms.js
+src/deprecated/workflows/seek/scripts/genericQuestions/newjalik.js
+src/deprecated/workflows/seek/scripts/genericQuestions/simple_jalik_detector.js
+src/deprecated/workflows/seek/scripts/job_content_extractor.js
+src/deprecated/workflows/seek/scripts/job_details.py
+src/deprecated/workflows/seek/scripts/progress_bar_checker.js
+src/deprecated/workflows/seek/scripts/quick_apply_detector.js
+src/deprecated/workflows/seek/scripts/quick_apply_questions.js
+src/deprecated/workflows/seek/scripts/radio_button_handler.js
+src/deprecated/workflows/seek/steps_config.py
+src/deprecated/workflows/seek/steps_config.yaml
+src/deprecated/workflows/seek/steps_impl.ts
+src/favicon.png
+src/lib/components/BotDashboard.svelte
+src/lib/components/TemplateCard.svelte
+src/lib/stores/botProgressStore.ts
+src/routes/+layout.svelte
+src/routes/choose-bot/+page.svelte
+src/routes/resume-templates/+page.svelte
+src/routes/resume-templates/edit/[templateId]/+page.svelte
+static/indeed-logo.png
+static/linkedin-logo.png
+static/resumes/Black and White Simple Lawyer Resume CV.docx
+static/resumes/Black and White Simple Minimalist Real Estate Resume.docx
+static/resumes/Black and White UX Designer Resume.docx
+static/resumes/Education Resume in Cream Black Warm Classic Style.docx
+static/resumes/Junior Athlete-resume .docx
+static/resumes/Manthan's CV.docx
+static/resumes/Minimalist Modern Professional CV Resume.docx
+static/resumes/Recreational Activities assisant-resume.docx
+static/resumes/Science and Engineering Resume in Green Black Simple Style.docx
+static/resumes/medical doctor-resume.docx
+static/seek-logo.png
