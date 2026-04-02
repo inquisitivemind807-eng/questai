@@ -104,9 +104,8 @@ The alerts were quick placeholders. The user wants a proactive redirect or a mor
 
 
 
-## Group 2: Others (Logic, Scrapers, Auth, Backend)
 
----
+## Group 2: Others (Logic, Scrapers, Auth, Backend)
 
 ### Issue #2: Payment Redirect: Session Loss
 
@@ -165,36 +164,6 @@ The fallback chain (maximize → setRect → continue anyway) aims for maximum c
    ```
 2. In `src/bots/linkedin/linkedin_impl.ts`, add a viewport-width guard before selector-intensive steps like `extractJobDetailsFromPanel` (line 1517). If width < 1200, attempt a `setRect` resize or log an actionable error.
 3. Complexity: Medium. The core issue is OS/WM constraints that may be unresolvable — the fix is mostly about detection and graceful degradation.
-
----
-
-### Issue #7 & #14: Bot Automation: Chrome Auto-Close
-
-**Files Involved:**
-- `src/bots/bot_starter.ts` — bot lifecycle orchestrator
-
-**Exact Lines:**
-- `src/bots/bot_starter.ts` line 77: `const { bot_name, bot_id, config, headless = false, keep_open = true } = options;` (destructured with `keep_open` defaulting to `true`)
-- `src/bots/bot_starter.ts` lines 315–349: `handle_post_execution` method. If `keep_open` is `true` (line 331), it prints messages and does NOT close the browser. If `false` (line 340), it calls `driver.quit()`.
-
-**Root Cause:**
-The `keep_open` parameter defaults to `true` on line 77. Even if the UI intends an automated "run and close" flow, any caller that doesn't explicitly pass `keep_open: false` will leave Chrome open indefinitely. The `handle_post_execution` on line 331 checks `context.driver && keep_open` — when true, it prints "Browser will remain open" and returns without quitting. This leads to ghost Chrome processes.
-
-Note: The CLI on line 554 correctly uses `keep_open: !no_keep_open` (negation of `--close` flag), and `bulk_run_jobs` on line 427 passes `keep_open: false`. But the default for programmatic callers is still `true`.
-
-**Side Effects & Dependencies:**
-Impacts system resource usage and bot automation efficiency. Chrome processes accumulate and consume RAM/CPU.
-
-**Original Intent vs. Breakdown:**
-`keep_open: true` was the safe default so users could manually review bot results in the browser. For automated/superbot modes, this default is wrong.
-
-**Fix Plan:**
-1. `src/bots/bot_starter.ts` line 77: Change default from `keep_open = true` to `keep_open = false`. This makes the safe default "close after completion."
-2. Update the Tauri-side `run_bot_for_job` IPC handler to explicitly pass `keep_open: true` only when the user requests it (e.g., in "review" or "manual" bot modes).
-3. Verify all callers: `run_bot` (line 365), `bulk_run_jobs` (line 427), CLI (line 552). `bulk_run_jobs` already passes `keep_open: false`. CLI uses `--close` flag. Changing the default should not break these.
-4. Complexity: Low. Default value change + verification of callers.
-
----
 
 ### Issue #10: Data Storage: Origin of Data
 

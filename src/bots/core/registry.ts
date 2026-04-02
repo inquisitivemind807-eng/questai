@@ -23,7 +23,12 @@ export class BotRegistry {
     this.bots_dir = bots_dir || path.join(__dirname, '..');
   }
 
-  // Discover all available bots
+  // Discover all available bots and their workflow variants.
+  // A single bot folder (e.g. seek/) can contain multiple *_steps.yaml files.
+  // Each YAML becomes a first-class variant:
+  //   seek_extract_steps.yaml  →  variant name "seek_extract"  (or "seek" as default)
+  //   seek_apply_steps.yaml    →  variant name "seek_apply"
+  // All variants share the same impl, selectors, and config from the parent folder.
   discover_bots(): string[] {
     const bot_names: string[] = [];
 
@@ -39,8 +44,13 @@ export class BotRegistry {
           const bot_path = path.join(this.bots_dir, bot_name);
 
           if (this.validate_bot_structure(bot_name, bot_path)) {
-            bot_names.push(bot_name);
-            this.discovered_bots.set(bot_name, this.create_bot_info(bot_name, bot_path));
+            // Discover all YAML workflow variants in this folder
+            const variants = this.discover_yaml_variants(bot_name, bot_path);
+
+            for (const [variant_name, yaml_path] of variants) {
+              bot_names.push(variant_name);
+              this.discovered_bots.set(variant_name, this.create_bot_info(variant_name, bot_name, bot_path, yaml_path));
+            }
           }
         }
       }
@@ -52,21 +62,78 @@ export class BotRegistry {
     return bot_names;
   }
 
-  // Validate bot has required files
-  private validate_bot_structure(bot_name: string, bot_path: string): boolean {
-    const resolvedYaml = this.resolve_yaml_path(bot_name, bot_path);
-    const required_files = [
-      resolvedYaml ? path.basename(resolvedYaml) : `${bot_name}_steps.yaml`,
-      `${bot_name}_impl.ts`
-    ];
+  // Discover all *_steps.yaml files in a bot folder and map them to variant names.
+  // E.g. in seek/:
+  //   seek_extract_steps.yaml  →  "seek" (default) and "seek_extract"
+  //   seek_apply_steps.yaml    →  "seek_apply"
+  private discover_yaml_variants(bot_name: string, bot_path: string): Map<string, string> {
+    const variants = new Map<string, string>();
 
-    // Check for files in root of bot directory
-    for (const file of required_files) {
-      const file_path = path.join(bot_path, file);
-      if (!fs.existsSync(file_path)) {
-        console.warn(`[Registry] Bot '${bot_name}' missing required file: ${file}`);
+    try {
+      const files = fs.readdirSync(bot_path);
+      const yaml_files = files.filter(f => f.endsWith('_steps.yaml'));
+
+      if (yaml_files.length === 0) {
+        return variants;
+      }
+
+      // Determine which YAML is the default for the base bot name.
+      // Priority: {bot_name}_steps.yaml → {bot_name}_extract_steps.yaml → first available.
+      const default_yaml = this.resolve_default_yaml(bot_name, yaml_files);
+
+      // Register the base bot name with the default YAML
+      if (default_yaml) {
+        variants.set(bot_name, path.join(bot_path, default_yaml));
+      }
+
+      // Register each YAML as a variant name.
+      // E.g. seek_apply_steps.yaml → variant name "seek_apply"
+      for (const yaml_file of yaml_files) {
+        const variant_name = yaml_file.replace('_steps.yaml', '');
+        if (variant_name !== bot_name) {
+          variants.set(variant_name, path.join(bot_path, yaml_file));
+        }
+      }
+    } catch (error) {
+      console.error(`[Registry] Error scanning YAML variants in '${bot_name}': ${error}`);
+    }
+
+    return variants;
+  }
+
+  // Pick the default YAML for a bot folder.
+  private resolve_default_yaml(bot_name: string, yaml_files: string[]): string | null {
+    // First choice: {bot_name}_steps.yaml (e.g. linkedin_steps.yaml)
+    const exact = `${bot_name}_steps.yaml`;
+    if (yaml_files.includes(exact)) return exact;
+
+    // Second choice: {bot_name}_extract_steps.yaml (e.g. seek_extract_steps.yaml)
+    const extract = `${bot_name}_extract_steps.yaml`;
+    if (yaml_files.includes(extract)) return extract;
+
+    // Fallback: first available
+    return yaml_files[0] || null;
+  }
+
+  // Validate bot has required files: impl + at least one YAML + selectors
+  private validate_bot_structure(bot_name: string, bot_path: string): boolean {
+    // Check impl file
+    const impl_path = path.join(bot_path, `${bot_name}_impl.ts`);
+    if (!fs.existsSync(impl_path)) {
+      console.warn(`[Registry] Bot '${bot_name}' missing required file: ${bot_name}_impl.ts`);
+      return false;
+    }
+
+    // Check for at least one *_steps.yaml
+    try {
+      const files = fs.readdirSync(bot_path);
+      const has_yaml = files.some(f => f.endsWith('_steps.yaml'));
+      if (!has_yaml) {
+        console.warn(`[Registry] Bot '${bot_name}' has no *_steps.yaml workflow files`);
         return false;
       }
+    } catch {
+      return false;
     }
 
     // Check for selectors.json either in root or config/ subdirectory
@@ -80,39 +147,24 @@ export class BotRegistry {
     return true;
   }
 
-  // Create bot info object
-  private create_bot_info(bot_name: string, bot_path: string): BotInfo {
+  // Create bot info object for a variant.
+  // variant_name may differ from bot_name (e.g. "seek_apply" vs "seek")
+  // but impl, selectors, and config always come from the parent bot folder.
+  private create_bot_info(variant_name: string, bot_name: string, bot_path: string, yaml_path: string): BotInfo {
     // Check if selectors file is in config/ subdirectory
     const selectors_root = path.join(bot_path, `${bot_name}_selectors.json`);
     const selectors_config = path.join(bot_path, 'config', `${bot_name}_selectors.json`);
     const selectors_path = fs.existsSync(selectors_config) ? selectors_config : selectors_root;
-    const yaml_path = this.resolve_yaml_path(bot_name, bot_path) || path.join(bot_path, `${bot_name}_steps.yaml`);
 
     return {
-      name: bot_name,
-      display_name: this.format_display_name(bot_name),
-      description: `Automation bot for ${this.format_display_name(bot_name)}`,
+      name: variant_name,
+      display_name: this.format_display_name(variant_name),
+      description: `Automation bot for ${this.format_display_name(variant_name)}`,
       yaml_path,
       impl_path: path.join(bot_path, `${bot_name}_impl.ts`),
       config_path: path.join(bot_path, `${bot_name}_configuration.ts`),
       selectors_path: selectors_path
     };
-  }
-
-  // Resolve workflow YAML with seek-specific fallback naming.
-  private resolve_yaml_path(bot_name: string, bot_path: string): string | null {
-    const candidates =
-      bot_name === 'seek'
-        ? ['seek_extract_steps.yaml', 'seek_steps.yaml']
-        : [`${bot_name}_steps.yaml`];
-
-    for (const candidate of candidates) {
-      const file_path = path.join(bot_path, candidate);
-      if (fs.existsSync(file_path)) {
-        return file_path;
-      }
-    }
-    return null;
   }
 
   // Format bot name for display
