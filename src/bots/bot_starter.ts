@@ -74,7 +74,7 @@ export class BotStarter {
 
   // Main entry point - like Python's bot_runner.py
   async run_bot(options: BotRunOptions): Promise<void> {
-    const { bot_name, bot_id, config, headless = false, keep_open = true } = options;
+    const { bot_name, bot_id, config, headless = false, keep_open = false } = options;
     const sessionId = logger.createSessionId(bot_name);
     logger.setContext({ sessionId, botName: bot_name });
 
@@ -468,7 +468,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const is_test_mode = args.includes('test');
   const is_quicktest_mode = args.includes('quicktest');
   const headless = args.includes('--headless');
-  const no_keep_open = args.includes('--close');
+  const keep_open = args.includes('--keep-open') || args.includes('--review');
 
   // Extract optional extraction limit — env var (from Tauri) takes priority, CLI arg is fallback
   const env_limit = process.env.BOT_EXTRACT_LIMIT;
@@ -481,13 +481,16 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const url_arg = args.find(a => a.startsWith('--url='));
   const job_url = url_arg ? url_arg.split('=')[1] : null;
 
+  const mode_arg = args.find(a => a.startsWith('--mode='));
+  const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
+
   // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
   if (job_url && (bot_name === 'seek' || bot_name === 'seek_apply')) {
     (async () => {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
         const normalizedUrl = normalizeSeekJobUrl(job_url);
-        await run_bot('seek_apply', { directApplyUrl: normalizedUrl }, { headless, keep_open: !no_keep_open });
+        await run_bot('seek_apply', { directApplyUrl: normalizedUrl, botMode: mode }, { headless, keep_open });
       } catch (error) {
         console.error('Direct Apply execution failed:', error);
         process.exit(1);
@@ -497,7 +500,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     (async () => {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
-        await run_bot('linkedin_apply', { directApplyUrl: job_url }, { headless, keep_open: !no_keep_open });
+        await run_bot('linkedin_apply', { directApplyUrl: job_url, botMode: mode }, { headless, keep_open });
       } catch (error) {
         console.error('LinkedIn Direct Apply execution failed:', error);
         process.exit(1);
@@ -528,11 +531,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     (async () => {
       try {
         const jobs_arg = args.find(a => a.startsWith('--jobs='));
-        const mode_arg = args.find(a => a.startsWith('--mode='));
         const superbot_arg = args.find(a => a.startsWith('--superbot='));
 
         const job_ids_csv = jobs_arg ? jobs_arg.split('=')[1] : '';
-        const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
         const superbot = superbot_arg ? superbot_arg.split('=')[1] === 'true' : false;
 
         const jobIdsArray = job_ids_csv.split(',').filter(Boolean);
@@ -549,9 +550,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       }
     })();
   } else {
-    run_bot(bot_name, { maxJobsToProcess }, {
+    run_bot(bot_name, { maxJobsToProcess, botMode: mode }, {
       headless,
-      keep_open: !no_keep_open
+      keep_open
     }).catch(error => {
       console.error('Bot execution failed:', error);
       process.exit(1);

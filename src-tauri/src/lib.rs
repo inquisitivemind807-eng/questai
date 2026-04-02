@@ -868,7 +868,9 @@ async fn run_bot_streaming(
 async fn run_bot_for_job(
     app: tauri::AppHandle,
     bot_name: String,
-    job_url: String
+    job_url: String,
+    mode: String,
+    keep_open: bool
 ) -> Result<String, String> {
     use tokio::process::Command;
     use tokio::io::{BufReader, AsyncBufReadExt};
@@ -888,11 +890,16 @@ async fn run_bot_for_job(
     }
 
     // Spawn bot process with piped stdout and explicit `--url` param
-    let mut child = Command::new("bun")
-        .arg(script_path.to_str().unwrap())
-        .arg(&bot_name)
-        .arg(format!("--url={}", job_url))
-        .current_dir(&project_root)
+    let mut cmd = Command::new("bun");
+    cmd.arg(script_path.to_str().unwrap())
+       .arg(&bot_name)
+       .arg(format!("--url={}", job_url))
+       .arg(format!("--mode={}", mode));
+    if keep_open {
+        cmd.arg("--keep-open");
+    }
+
+    let mut child = cmd.current_dir(&project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit()) // Debug logs show in terminal
         .spawn()
