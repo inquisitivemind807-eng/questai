@@ -95,8 +95,17 @@
       result = await authService.login(email, password, rememberMe);
     }
 
+    function friendlyError(raw) {
+      const lower = (raw || '').toLowerCase();
+      if (lower.includes('unauthorized') || lower.includes('401') || lower.includes('invalid credentials'))
+        return 'Incorrect email or password. Please try again.';
+      if (lower.includes('not found'))
+        return 'No account found with that email address.';
+      return raw || 'Login failed. Please try again.';
+    }
+
     if (!result.success) {
-      error = result.error || `${mode === 'signup' ? 'Signup' : 'Login'} failed. Please try again.`;
+      error = friendlyError(result.error);
       loading = false;
     } else {
       // Success! Show feedback and redirect

@@ -320,8 +320,23 @@ function createAuthStore() {
           await logout();
         }
       } else {
-        console.log('Session expired, clearing auth state');
-        await logout();
+        console.log('Session expired, attempting refresh...');
+        const newToken = await refreshAccessToken();
+        if (newToken) {
+          // Re-read user data (may have been updated during refresh)
+          const freshUserStr = await readCache('.cache/auth_user.json') || localStorage.getItem('auth_user');
+          try {
+            const user = typeof freshUserStr === 'string' ? JSON.parse(freshUserStr) : freshUserStr;
+            set({ user, isLoggedIn: true, loading: false });
+            console.log('✅ Session refreshed successfully');
+          } catch (e) {
+            console.error('Failed to parse user after refresh:', e);
+            await logout();
+          }
+        } else {
+          console.log('Refresh failed, logging out');
+          await logout();
+        }
       }
     } else {
       set({ user: null, isLoggedIn: false, loading: false });

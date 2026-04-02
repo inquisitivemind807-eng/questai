@@ -32,7 +32,9 @@
 
           // Session explicitly invalid - log out silently
           console.log('Session invalid, logging out:', validation.error);
-          await authService.logout();
+          // Removed aggressive proactive logout on startup
+          // If the token is truly invalid, CorpusRagClient intercepts the first 401 and logs out natively
+          // await authService.logout();
 
           // Show a friendly notification if on a protected page
           if (!$page.url.pathname.startsWith('/login')) {
@@ -56,7 +58,7 @@
   }
 </script>
 
-{#if $authService.loading}
+{#if $authService.loading && !isLoginPage}
   <!-- Loading State -->
   <div class="min-h-screen flex items-center justify-center bg-base-200">
     <div class="text-center">
