@@ -5,6 +5,7 @@
   import { page } from '$app/stores';
   import TokenBalance from '$lib/components/TokenBalance.svelte';
   import { initBotListeners, activeBots } from '$lib/stores/botProgressStore';
+  import ScrollToTop from '$lib/components/ScrollToTop.svelte';
   import '../app.css';
 
   // Always show clean login page, regardless of auth state
@@ -13,6 +14,7 @@
   let sessionValidationMessage = '';
   let showSessionNotification = false;
   let isMenuCollapsed = false;
+  let mainScrollArea;
 
   onMount(async () => {
     initBotListeners().catch(() => {});
@@ -120,29 +122,24 @@
 
       <!-- Main Content -->
       <main class="drawer-content flex flex-col min-h-screen max-h-screen">
-        <!-- Desktop Header with Toggle (Fixed at top) -->
-        <div class="hidden lg:flex justify-between items-center bg-base-100/90 backdrop-blur-sm p-2 border-b border-base-200/50 z-40 shrink-0">
-          <div class="flex items-center gap-4">
+        <!-- Toggle Button for Collapsed State -->
+        {#if isMenuCollapsed}
+          <div class="fixed top-4 left-4 z-50">
             <button
-              class="btn btn-circle btn-sm btn-ghost bg-base-200/50 hover:bg-base-300 text-base-content transition-all duration-300 transform hover:scale-105"
-              on:click={() => isMenuCollapsed = !isMenuCollapsed}
-              title={isMenuCollapsed ? "Show Menu" : "Hide Menu"}
+              class="btn btn-circle btn-sm btn-ghost bg-base-100 shadow-md border hover:bg-base-200 text-base-content transition-all duration-300"
+              on:click={() => isMenuCollapsed = false}
+              title="Show Menu"
+              aria-label="Show Menu"
             >
-              {#if isMenuCollapsed}
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-right"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
-              {:else}
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-left"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
-              {/if}
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-right"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
             </button>
-            {#if isMenuCollapsed}
-               <a class="text-xl font-extrabold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" href="/app">Quest Bot</a>
-            {/if}
           </div>
-        </div>
+        {/if}
         
         <!-- Scrollable Content Area -->
-        <div class="flex-1 overflow-y-auto w-full">
+        <div bind:this={mainScrollArea} class="flex-1 overflow-y-auto w-full relative">
           <slot></slot>
+          <ScrollToTop scrollContainer={mainScrollArea} />
         </div>
       </main>
     </div>
@@ -151,11 +148,18 @@
     <div class="drawer-side">
       <label for="drawer-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
       <aside class="min-h-full w-80 bg-base-200">
-        <!-- Sidebar Header -->
-        <div class="p-2 border-b border-base-300">
+        <div class="p-4 border-b border-base-300 flex items-center justify-between">
           <a href="/app" class="text-2xl font-bold text-primary">
             Quest Bot
           </a>
+          <button
+            class="btn btn-circle btn-xs btn-ghost hover:bg-base-300 transition-colors"
+            on:click={() => isMenuCollapsed = true}
+            title="Hide Menu"
+            aria-label="Hide Menu"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-chevrons-left"><path d="m11 17-5-5 5-5"/><path d="m18 17-5-5 5-5"/></svg>
+          </button>
         </div>
 
         <!-- Navigation Menu -->
@@ -378,6 +382,7 @@
   {#if isLoginPage}
     <!-- Login page: completely clean, no navbar or wrapper -->
     <slot></slot>
+    <ScrollToTop />
   {:else}
     <!-- Other non-authenticated pages: show navbar -->
     <div class="navbar bg-base-100">
@@ -389,8 +394,9 @@
       </div>
     </div>
 
-    <main class="min-h-screen bg-base-200">
+    <main class="min-h-screen bg-base-200 relative">
       <slot></slot>
+      <ScrollToTop />
     </main>
   {/if}
 {/if}
