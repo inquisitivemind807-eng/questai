@@ -49,11 +49,11 @@ steps_config:
     step: 5
     func: "detectPageState"
     transitions:
-      logged_in: "fill_search_form"
+      logged_in: "perform_search"
       sign_in_required: "show_sign_in_banner"
-      no_cards_found: "fill_search_form"
+      no_cards_found: "perform_search"
     timeout: 20
-    on_timeout_event: "fill_search_form"
+    on_timeout_event: "perform_search"
 
   fill_search_form:
     step: 6
@@ -77,7 +77,7 @@ steps_config:
     step: 8
     func: "showSignInBanner"
     transitions:
-      signin_banner_shown: "fill_search_form"
+      signin_banner_shown: "perform_search"
       signin_banner_retry: "refresh_page"
     timeout: 300
     on_timeout_event: "signin_banner_retry"
@@ -88,9 +88,9 @@ steps_config:
     func: "performBasicSearch"
     transitions:
       search_completed: "apply_filters"
-      search_failed: "fill_search_form"
+      search_failed: "apply_filters"
     timeout: 60
-    on_timeout_event: "search_failed"
+    on_timeout_event: "apply_filters"
 
   apply_filters:
     step: 10

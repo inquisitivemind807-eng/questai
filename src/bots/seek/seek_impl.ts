@@ -156,8 +156,14 @@ function slugify(text: string): string {
   return text.replace(/^-|-$/g, "");
 }
 
-// Build search URL from keywords and location
-function build_search_url(base_url: string, keywords: string, location: string): string {
+// Build search URL from keywords, location, and filters
+function build_search_url(base_url: string, keywords: string, location: string, filters?: {
+  jobType?: string,
+  remotePreference?: string,
+  listedDate?: string,
+  minSalary?: string,
+  maxSalary?: string
+}): string {
   const keyword_slug = slugify(keywords);
   const location_slug = slugify(location);
 
@@ -166,7 +172,42 @@ function build_search_url(base_url: string, keywords: string, location: string):
     search_path += `/in-${location_slug}`;
   }
 
-  return `${base_url}${search_path}`;
+  const url = new URL(`${base_url}${search_path}`);
+
+  if (filters) {
+    if (filters.jobType && filters.jobType !== 'any') {
+      // Seek uses worktype=Full+Time etc.
+      url.searchParams.append('worktype', filters.jobType);
+    }
+    if (filters.remotePreference && filters.remotePreference !== 'any') {
+      // Seek uses where=Remote or similar; sometimes it's better to just use the DOM for this
+      // but let's try to add it if it's 'remote'
+      if (filters.remotePreference === 'remote') {
+        url.searchParams.append('whereid', '0');
+        url.searchParams.append('where', 'Remote');
+      }
+    }
+    if (filters.listedDate) {
+      // map 'today', '3d', '7d', '14d', '30d' to dateRange values
+      const dateMap: Record<string, string> = {
+        'today': '1',
+        '3d': '3',
+        '7d': '7',
+        '14d': '14',
+        '30d': '31'
+      };
+      const mapped = dateMap[filters.listedDate.toLowerCase()];
+      if (mapped) url.searchParams.append('daterange', mapped);
+    }
+    if (filters.minSalary || filters.maxSalary) {
+      const min = filters.minSalary || '0';
+      const max = filters.maxSalary || '999999';
+      url.searchParams.append('salaryrange', `${min}-${max}`);
+      url.searchParams.append('salarytype', 'annual');
+    }
+  }
+
+  return url.toString();
 }
 
 function normalize_seek_direct_url(rawUrl: string): string {
@@ -220,8 +261,20 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
   ctx.config = mergedConfig;
   const mergedKeywords = String(mergedConfig?.formData?.keywords || mergedConfig?.formData?.keyword || '').trim();
   const mergedLocations = String(mergedConfig?.formData?.locations || mergedConfig?.formData?.location || mergedConfig?.formData?.where || '').trim();
-  printLog(`Config values loaded: keywords='${mergedKeywords}', locations='${mergedLocations}'`);
-  ctx.seek_url = build_search_url(BASE_URL, mergedKeywords, mergedLocations);
+  const jobType = String(mergedConfig?.formData?.jobType || 'any').trim();
+  const remotePreference = String(mergedConfig?.formData?.remotePreference || 'any').trim();
+  const listedDate = String(mergedConfig?.formData?.listedDate || '').trim();
+  const minSalary = String(mergedConfig?.formData?.minSalary || '').trim();
+  const maxSalary = String(mergedConfig?.formData?.maxSalary || '').trim();
+
+  printLog(`Config values loaded: keywords='${mergedKeywords}', locations='${mergedLocations}', jobType='${jobType}', remote='${remotePreference}'`);
+  ctx.seek_url = build_search_url(BASE_URL, mergedKeywords, mergedLocations, {
+    jobType,
+    remotePreference,
+    listedDate,
+    minSalary,
+    maxSalary
+  });
 
   // Override seek_url if direct apply mode
   if (directApplyUrl) {
