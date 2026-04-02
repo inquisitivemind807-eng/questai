@@ -42,7 +42,7 @@ const findDefaultProfileDirectory = (): string | null => {
 };
 
 const printLog = (message: string) => {
-  console.log(message);
+  console.log(`[DEV] ${message}`);
 };
 
 /**

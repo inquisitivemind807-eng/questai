@@ -24,6 +24,11 @@ const __dirname = path.dirname(__filename);
 const BASE_URL = "https://www.seek.com.au";
 
 const printLog = (message: string) => {
+  console.log(`[DEV] ${message}`);
+};
+
+/** User-facing log — shown on the Bot Dashboard. Keep these clean and minimal. */
+const userLog = (message: string) => {
   console.log(message);
 };
 
@@ -268,6 +273,7 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
   const maxSalary = String(mergedConfig?.formData?.maxSalary || '').trim();
 
   printLog(`Config values loaded: keywords='${mergedKeywords}', locations='${mergedLocations}', jobType='${jobType}', remote='${remotePreference}'`);
+  userLog(`🔍 Searching: ${mergedKeywords || 'all jobs'}${mergedLocations ? ` in ${mergedLocations}` : ''}${jobType !== 'any' ? ` (${jobType})` : ''}`);
   ctx.seek_url = build_search_url(BASE_URL, mergedKeywords, mergedLocations, {
     jobType,
     remotePreference,
@@ -303,7 +309,7 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
   } else {
     printLog(`Search URL: ${ctx.seek_url}`);
     if (ctx.maxJobsLimit > 0) {
-      printLog(`🎯 Will extract up to ${ctx.maxJobsLimit} jobs`);
+      userLog(`🎯 Will extract up to ${ctx.maxJobsLimit} jobs`);
     }
     yield "ctx_ready";
   }
@@ -1006,7 +1012,7 @@ export async function* collectJobCards(ctx: WorkflowContext): AsyncGenerator<str
 
         // Reset retry counter on success
         ctx.retry_counts.collect_cards_retries = 0;
-        printLog(`✅ Found ${cards.length} job cards`);
+        userLog(`✅ Found ${cards.length} jobs`);
         yield "cards_collected";
         return;
       }
@@ -1437,9 +1443,6 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
       ctx.currentJobFile = filepath;
       ctx.currentJobDir = jobDir;
 
-      printLog(`\n═══════════════════════════════════════════════════════════════`);
-      printLog(`🎯 APPLYING TO: ${ctx.currentJobTitle} | ${ctx.currentJobCompany}`);
-      printLog(`═══════════════════════════════════════════════════════════════\n`);
       printLog(`Quick Apply job saved: ${jobData.title} at ${jobData.company} (${filepath})`);
 
       // Increment extracted jobs counter
@@ -1572,7 +1575,7 @@ export async function* parseExternalJobDetails(ctx: WorkflowContext): AsyncGener
       ctx.currentJobFile = filepath;
       ctx.currentJobDir = jobDir;
 
-      printLog(`🌐 External job saved: ${jobData.title} at ${jobData.company}`);
+      printLog(`External job saved: ${jobData.title} at ${jobData.company}`);
 
       // Increment extracted jobs counter (counts both internal and external)
       ctx.jobs_extracted = (ctx.jobs_extracted || 0) + 1;
@@ -1600,7 +1603,7 @@ export async function* parseExternalJobDetails(ctx: WorkflowContext): AsyncGener
 
       yield "external_job_parsed";
     } else {
-      printLog(`⚠️ External job: could not extract title from panel, skipping`);
+      userLog(`⚠️ Skipped — could not extract job details from panel`);
       yield "parse_failed";
     }
   } catch (error) {
@@ -1646,7 +1649,8 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
       // Primary path: API client with JWT/session conversion
       const result = await apiRequest('/api/scraped-jobs', 'POST', payload);
       if (result?.success) {
-        printLog(`✅ Saved to DB: ${payload.title} at ${payload.company} (id: ${result.id || 'new'})`);
+        userLog(`📋 ${payload.title} — ${payload.company} ✅ Saved`);
+        printLog(`DB id: ${result.id || 'new'}`);
       } else {
         printLog(`⚠️ DB save returned unexpected response: ${JSON.stringify(result)}`);
       }
@@ -1673,7 +1677,8 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
         });
 
         if (resp.ok) {
-          printLog(`✅ Saved to DB via fallback: ${payload.title} at ${payload.company}`);
+          userLog(`📋 ${payload.title} — ${payload.company} ✅ Saved`);
+          printLog(`Saved via fallback path`);
         } else {
           const txt = await resp.text().catch(() => '');
           printLog(`⚠️ Fallback DB save failed (${resp.status}): ${txt}`);
@@ -2716,9 +2721,9 @@ export async function* skipToNextCard(ctx: WorkflowContext): AsyncGenerator<stri
   const title = ctx.currentJobTitlePreview || ctx.currentJobTitle;
   const company = ctx.currentJobCompanyPreview || ctx.currentJobCompany;
   if (title || company) {
-    printLog(`\u23ed\ufe0f Skipping (regular apply): ${title || '?'} at ${company || '?'}`);
+    printLog(`Skipping (regular apply): ${title || '?'} at ${company || '?'}`);
   } else {
-    printLog("Regular Apply job found - skipping job details parsing and moving to next card...");
+    printLog("Regular Apply job found - skipping");
   }
 
   ctx.jobs_scanned = (ctx.jobs_scanned || 0) + 1;

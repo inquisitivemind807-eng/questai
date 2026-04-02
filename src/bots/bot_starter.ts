@@ -24,7 +24,7 @@ try {
       const val = trimmed.slice(eqIdx + 1).trim();
       if (!process.env[key]) process.env[key] = val;
     }
-    console.log(`[bot_starter] Loaded .env from: ${resolvedEnvPath}`);
+    console.log(`[DEV] [bot_starter] Loaded .env from: ${resolvedEnvPath}`);
   }
 } catch (e) {
   console.warn('[bot_starter] Could not load .env:', e);
@@ -165,7 +165,7 @@ export class BotStarter {
     });
 
     try {
-      print_log(`🚀 Starting bot runner for: ${bot_name}`);
+      print_log(`[DEV] 🚀 Starting bot runner for: ${bot_name}`);
       logger.info('bot.start', 'Bot runner started', { bot_name, headless, keep_open });
 
       // Indeed: run standalone Camoufox bot (same UI flow as Seek/LinkedIn)
@@ -199,20 +199,20 @@ export class BotStarter {
         throw new Error(`Failed to load bot info for '${bot_name}'`);
       }
 
-      print_log(`✅ Bot validated: ${bot_info.display_name}`);
+      print_log(`[DEV] ✅ Bot validated: ${bot_info.display_name}`);
       logger.info('bot.validated', 'Bot validated', { displayName: bot_info.display_name });
 
       // 2. Load bot configuration and selectors
       const bot_config = this.registry.load_bot_config(bot_name);
       const bot_selectors = this.registry.load_bot_selectors(bot_name);
 
-      print_log(`⚙️ Configuration and selectors loaded for ${bot_name}`);
+      print_log(`[DEV] ⚙️ Configuration and selectors loaded for ${bot_name}`);
       logger.info('bot.config_loaded', 'Bot configuration and selectors loaded');
 
       // 3. Load bot implementation
       const bot_impl = await this.load_bot_implementation(bot_info.impl_path);
 
-      print_log(`🔧 Implementation loaded for ${bot_name}`);
+      print_log(`[DEV] 🔧 Implementation loaded for ${bot_name}`);
       logger.info('bot.impl_loaded', 'Bot implementation loaded', { implPath: bot_info.impl_path });
 
       // 4. Create workflow engine with bot's YAML
@@ -227,7 +227,7 @@ export class BotStarter {
       const initial_context = this.create_initial_context(bot_config, bot_selectors, config);
 
       // 7. Run the workflow
-      print_log(`▶️ Executing workflow for ${bot_name}...`);
+      print_log(`[DEV] ▶️ Executing workflow for ${bot_name}...`);
       workflow_engine.setContext('config', initial_context.config);
       workflow_engine.setContext('selectors', initial_context.selectors);
       workflow_engine.setContext('bot_name', bot_name);
@@ -237,7 +237,7 @@ export class BotStarter {
       if (extractLimit > 0) {
         workflow_engine.setContext('extract_limit', extractLimit);
       }
-      print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot initialized: ${bot_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, extractLimit: extractLimit || null } })}`);
+      print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot started: ${bot_info.display_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, extractLimit: extractLimit || null } })}`);
 
       await workflow_engine.run();
 
@@ -318,7 +318,7 @@ export class BotStarter {
       context.stopMonitoring();
       print_log('✅ Stopped browser monitoring');
     }
-    
+
     // Mark workflow as completed on driver to prevent monitoring from trying to recover
     if (context.driver) {
       try {
@@ -327,7 +327,7 @@ export class BotStarter {
         // Ignore if driver is already invalid
       }
     }
-    
+
     if (context.driver && keep_open) {
       print_log('🎯 Workflow completed! Browser will remain open for you to continue using.');
       if (context.sessionsDir) {

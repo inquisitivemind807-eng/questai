@@ -58,7 +58,7 @@ export class BotRegistry {
       console.error(`Error discovering bots: ${error}`);
     }
 
-    console.log(`[Registry] Discovered bots: ${bot_names.join(', ')}`);
+    console.log(`[DEV] [Registry] Discovered bots: ${bot_names.join(', ')}`);
     return bot_names;
   }
 
@@ -198,7 +198,7 @@ export class BotRegistry {
         // Use core user config as fallback
         const core_config_path = path.join(__dirname, '../user-bots-config.json');
         if (fs.existsSync(core_config_path)) {
-          console.log(`[Registry] Using core configuration for '${bot_name}'`);
+          console.log(`[DEV] [Registry] Using core configuration for '${bot_name}'`);
           return JSON.parse(fs.readFileSync(core_config_path, 'utf8'));
         } else {
           console.warn(`[Registry] Configuration file not found for '${bot_name}', using defaults`);

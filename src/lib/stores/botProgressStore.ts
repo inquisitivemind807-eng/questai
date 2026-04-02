@@ -143,33 +143,53 @@ function createBotProgressStore() {
         const trimmed = line.trim();
         if (!trimmed) return state;
 
+        // 1. Drop developer-only lines
+        if (trimmed.startsWith('[DEV]')) return state;
+
         let effectiveBotId = botId;
         let payload: any = null;
+        let isStructuredEvent = false;
 
+        // 2. Parse [BOT_EVENT] JSON — extract state + human message
         if (trimmed.startsWith('[BOT_EVENT]')) {
+          isStructuredEvent = true;
           try {
             payload = JSON.parse(trimmed.slice(11).trim());
             if (payload?.botId) {
               effectiveBotId = payload.botId;
             }
-          } catch { /* not valid JSON, treat as plain log */ }
+          } catch { /* malformed JSON, treat as plain log */ }
         }
 
         let bot = state.bots[effectiveBotId];
-        if (!bot) {
-          // Unknown bot ID — do not create a phantom panel. Drop the log.
-          return state;
-        }
+        if (!bot) return state; // Unknown bot — drop
 
+        // Apply state updates (progress, status, etc.)
         if (payload) {
           applyEvent(bot, payload);
         }
 
-        const displayLine = trimmed.startsWith('[BOT_EVENT]') ? trimmed.slice(11).trim() : trimmed;
-        const logType = trimmed.includes('❌') || trimmed.includes('Error') ? 'error' as const
-          : trimmed.includes('✅') ? 'success' as const
-          : trimmed.includes('→') || trimmed.includes('Step') ? 'transition' as const
+        // 3. Determine what to display
+        let displayLine: string | null = null;
+
+        if (isStructuredEvent && payload) {
+          // Only show the human-readable message, never raw JSON
+          if (payload.message) {
+            displayLine = payload.message;
+          }
+          // Transitions and data-only events: don't add a log line
+          // (their data is already applied via applyEvent above)
+        } else {
+          // Non-structured line (plain console.log from bot impl)
+          displayLine = trimmed;
+        }
+
+        if (!displayLine) return { ...state };
+
+        const logType = displayLine.includes('❌') || displayLine.toLowerCase().includes('error') ? 'error' as const
+          : displayLine.includes('✅') || displayLine.toLowerCase().includes('completed') ? 'success' as const
           : 'info' as const;
+
         appendLog(bot, displayLine, logType);
 
         return { ...state };

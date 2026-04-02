@@ -66,7 +66,7 @@ export class UniversalOverlay {
       await this.injectPersistentOverlaySystem();
       this.initialized = true;
       this.startHeartbeat();
-      console.log(`✅ Overlay system initialized for ${this.botName}`);
+      console.log(`[DEV] Overlay system initialized for ${this.botName}`);
     } catch (error) {
       if (this.isWindowClosedError(error)) {
         this.overlayUnavailable = true;

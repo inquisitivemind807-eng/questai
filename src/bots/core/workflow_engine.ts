@@ -60,13 +60,7 @@ export class WorkflowEngine {
     this.botId = botId || `${Date.now()}_${Math.random().toString(36).substring(7)}`;
     this.eventsFilePath = ''; // Not used anymore, keeping for compatibility
 
-    // Emit initial event
-    this.emitProgress({
-      type: 'info',
-      timestamp: Date.now(),
-      message: `Bot initialized: ${this.config.workflow_meta.title}`,
-      data: { botId: this.botId }
-    });
+    // Initial event is emitted by bot_starter after context is set up.
   }
 
   private emitProgress(event: BotProgressEvent): void {
@@ -151,7 +145,7 @@ export class WorkflowEngine {
 
       // Initialize fallback overlay if no bot overlay and driver available
       if (!activeOverlay && !this.overlay && this.context.driver) {
-        console.log('🎨 Creating fallback overlay (bot should create its own)...');
+        console.log('[DEV] Creating fallback overlay (bot should create its own)...');
         this.overlay = new UniversalOverlay(this.context.driver, 'Workflow');
         try {
           await this.overlay.showOverlay({
@@ -165,9 +159,9 @@ export class WorkflowEngine {
             draggable: true,
             collapsible: true
           });
-          console.log('✅ Fallback overlay visible');
+          console.log('[DEV] Fallback overlay visible');
         } catch (error) {
-          console.warn('❌ Failed to initialize fallback overlay:', error);
+          console.warn('[DEV] Failed to initialize fallback overlay:', error);
           this.overlay = null;
         }
       }
@@ -184,7 +178,7 @@ export class WorkflowEngine {
               <p style="color: #00ff00; font-size: 16px;">→ ${result}</p>
             </div>
           `
-        }).catch(() => {});
+        }).catch(() => { });
       }
 
       return result;
@@ -208,7 +202,7 @@ export class WorkflowEngine {
   }
 
   async run(): Promise<void> {
-    console.log(`🤖 ${this.config.workflow_meta.title}`);
+    console.log(`[DEV] 🤖 ${this.config.workflow_meta.title}`);
     logger.info('workflow.start', 'Workflow started', {
       title: this.config.workflow_meta.title,
       description: this.config.workflow_meta.description,
@@ -220,12 +214,12 @@ export class WorkflowEngine {
 
 
     // Initialize fallback overlay if no bot overlay and driver is available
-    console.log('🔍 Workflow context at start: driver=', !!this.context.driver, 'overlay=', !!this.context.overlay);
+    console.log('[DEV] Workflow context at start: driver=', !!this.context.driver, 'overlay=', !!this.context.overlay);
     if (this.context.driver && !this.context.overlay && !this.overlay) {
-      console.log('🎨 Debug: Creating fallback overlay (bot should create its own)...');
+      console.log('[DEV] Creating fallback overlay (bot should create its own)...');
       this.overlay = new UniversalOverlay(this.context.driver, 'Workflow');
       try {
-        console.log('🎨 Debug: Showing initial overlay...');
+        console.log('[DEV] Showing initial overlay...');
         await this.overlay.showOverlay({
           title: '🤖 Bot Status: Starting',
           html: `
@@ -237,16 +231,16 @@ export class WorkflowEngine {
           draggable: true,
           collapsible: true
         });
-        console.log('✅ Debug: Fallback overlay initialized');
+        console.log('[DEV] Fallback overlay initialized');
       } catch (error) {
-        console.warn('❌ Failed to initialize fallback overlay:', error);
+        console.warn('[DEV] Failed to initialize fallback overlay:', error);
         this.overlay = null;
       }
     } else if (this.context.overlay) {
-      console.log('✅ Using bot-provided overlay');
+      console.log('[DEV] Using bot-provided overlay');
     } else if (!this.context.driver) {
       // Expected for bots that initialize the browser in step0/openJobUrl.
-      console.log('ℹ️ Driver is not initialized yet; bot will create it in early workflow steps.');
+      console.log('[DEV] Driver is not initialized yet; bot will create it in early workflow steps.');
     }
 
     let currentStepName = this.currentStep;
@@ -283,15 +277,15 @@ export class WorkflowEngine {
           'workflow.transition',
           `Transition: step ${stepConfig.step} '${currentStepName}' --(${event})-> step ${nextStepConfig?.step ?? '?'} '${nextStepName}'`,
           {
-          fromStep: currentStepName,
-          fromStepNumber: stepConfig.step,
-          event,
-          toStep: nextStepName,
-          toStepNumber: nextStepConfig?.step
-        },
+            fromStep: currentStepName,
+            fromStepNumber: stepConfig.step,
+            event,
+            toStep: nextStepName,
+            toStepNumber: nextStepConfig?.step
+          },
           {
-          sessionId: this.context.sessionId,
-          botName: this.context.bot_name
+            sessionId: this.context.sessionId,
+            botName: this.context.bot_name
           }
         );
         currentStepName = nextStepName;
@@ -340,10 +334,10 @@ export class WorkflowEngine {
         });
 
         // Keep the overlay visible for longer so user can see the completion
-        console.log('✅ Workflow completed! Overlay will remain visible.');
+        console.log('[DEV] Workflow completed! Overlay will remain visible.');
         await new Promise(resolve => setTimeout(resolve, 2000));
       } catch {
-        console.warn('Overlay completion update skipped (window may be closed).');
+        console.warn('[DEV] Overlay completion update skipped (window may be closed).');
       }
     }
 
