@@ -157,8 +157,8 @@ function createBotProgressStore() {
 
         let bot = state.bots[effectiveBotId];
         if (!bot) {
-          bot = getOrCreateBot(state, effectiveBotId);
-          state.bots[effectiveBotId] = bot;
+          // Unknown bot ID — do not create a phantom panel. Drop the log.
+          return state;
         }
 
         if (payload) {
@@ -181,9 +181,8 @@ function createBotProgressStore() {
         const effectiveBotId = event.botId || event.data?.botId || botId;
         let bot = state.bots[effectiveBotId];
         if (!bot) {
-          const name = event.data?.botName || event.botName || effectiveBotId;
-          bot = getOrCreateBot(state, effectiveBotId, name);
-          state.bots[effectiveBotId] = bot;
+          // Unknown bot ID — do not create a phantom panel.
+          return state;
         }
         applyEvent(bot, event);
         return { ...state };
@@ -252,21 +251,14 @@ export async function initBotListeners() {
     });
 
     await listen('bot-log', (event: any) => {
-      const line = typeof event.payload === 'string' ? event.payload : String(event.payload);
-      
-      let botId = '';
-      if (line.startsWith('[BOT_EVENT]')) {
-        try {
-          const payload = JSON.parse(line.slice(11).trim());
-          botId = payload?.botId || payload?.data?.botId || '';
-        } catch { /* not valid JSON */ }
+      const payload = event.payload;
+      // Rust now sends { line, botId } — use authoritative botId
+      const line = typeof payload === 'object' ? payload.line : String(payload);
+      const botId = (typeof payload === 'object' ? payload.botId : '') || _resolveActiveBotId();
+
+      if (botId) {
+        botProgressStore.addLogLine(botId, line);
       }
-      
-      if (!botId) {
-        botId = _resolveActiveBotId();
-      }
-      
-      botProgressStore.addLogLine(botId, line);
     });
 
     await listen('bot-stopped', (event: any) => {
@@ -286,11 +278,13 @@ export async function initBotListeners() {
 
 function _resolveActiveBotId(): string {
   const state = get(botProgressStore);
-  // Include stopping bots so cleanup logs are attributed correctly.
-  // Sort by startedAt descending to pick the most recent one if multiple exist.
-  const active = Object.values(state.bots)
+  const bots = Object.values(state.bots);
+  // Prefer running/stopping bots
+  const active = bots
     .filter(b => b.status === 'running' || b.status === 'stopping')
     .sort((a, b) => b.startedAt - a.startedAt);
-  
-  return active[0]?.botId || 'default';
+  if (active.length > 0) return active[0].botId;
+  // Fall back to most recent bot of any status (catches post-completion logs)
+  const any = [...bots].sort((a, b) => b.startedAt - a.startedAt);
+  return any[0]?.botId || '';
 }

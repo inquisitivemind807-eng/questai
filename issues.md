@@ -2,125 +2,6 @@
 
 ## Group 1: Easily Fixable UI Issues Only
 
----
-
-### Issue #1: Login Page: Persistent Loading & Error Messages
-
-**Files Involved:**
-- `src/lib/authService.js` — manages the global authentication state
-- `src/routes/+layout.svelte` — renders the full-page loading spinner
-- `src/routes/login/+page.svelte` — handles login form submission and error display
-
-**Exact Lines:**
-- `src/lib/authService.js` line 17: `loading: true,` (initializes the auth store in a loading state)
-- `src/routes/+layout.svelte` lines 59–66: `{#if $authService.loading} ... </div>` (the loading spinner container)
-- `src/routes/login/+page.svelte` lines 98–99: `error = result.error || '...'` (displays raw error strings from the API without mapping status codes to friendly messages)
-
-**Root Cause:**
-The "persistent loading" is caused by the `authService` store initializing its `loading` state to `true` on line 17 of `authService.js`. When `+layout.svelte` mounts (line 59), it checks `$authService.loading` and shows a full-page spinner. The `initialize()` function (line 289) is awaited in `+layout.svelte` `onMount` (line 19). Even though initialization from cache is near-instant, the default `true` state forces the spinner to flash before the store can set `loading: false`. The "Email or password not found" error is because `handleSubmit` in the login page directly uses `result.error` from the API (line 99) without mapping HTTP status codes (like 401/403) to user-friendly messages.
-
-**Side Effects & Dependencies:**
-The `$authService.loading` state is global; changing its default affects the initial render of every page in the application.
-
-**Original Intent vs. Breakdown:**
-The developer likely set `loading: true` by default to avoid showing unauthenticated content while the session was being restored. However, this creates a poor user experience on fast-loading sessions or when the user is already on the login page.
-
-**Scope Notes:**
-Mapping status codes to friendly messages is within scope; modifying backend API responses is not.
-
-**Fix Plan:**
-1. `src/lib/authService.js` line 17: Change `loading: true` → `loading: false`. Then at the beginning of `initialize()` (line 289), add `set({ user: null, isLoggedIn: false, loading: true })` as the first line after the `if (!browser) return;` check, so loading only activates when initialize actually runs.
-2. `src/routes/login/+page.svelte` line 99: Replace raw error with a mapping function. Add a helper:
-   ```
-   function friendlyError(raw) {
-     const lower = (raw || '').toLowerCase();
-     if (lower.includes('unauthorized') || lower.includes('401') || lower.includes('invalid credentials'))
-       return 'Incorrect email or password. Please try again.';
-     if (lower.includes('not found'))
-       return 'No account found with that email address.';
-     return raw || 'Login failed. Please try again.';
-   }
-   ```
-   Then use `error = friendlyError(result.error)` on line 99.
-3. Complexity: Low. Straightforward state default change + error mapping.
-
----
-
-### Issue #4: Configuration Page: UI Polish & Legal Disclaimer
-
-**Files Involved:**
-- `src/routes/frontend-form/+page.svelte` — the configuration page
-
-**Exact Lines:**
-- `src/routes/frontend-form/+page.svelte` lines 221–224: `if (!formData.acceptTerms) { formErrors.acceptTerms = "You must accept..." }` (validation check)
-- `src/routes/frontend-form/+page.svelte` lines 519–536: The Legal Disclaimer card (HTML with `⚠️ Legal Disclaimer` heading and checkbox)
-- `src/routes/frontend-form/+page.svelte` line 541: The Save button uses `btn-primary` + gradient classes (`bg-gradient-to-r from-primary to-secondary`)
-
-**Root Cause:**
-The "Legal Disclaimer" card on lines 519–536 is a static UI element whose checkbox (`formData.acceptTerms`) is validated in `handleSubmit` on lines 221–224. Removing it requires deleting both the HTML card and the validation logic. The Save button on line 541 uses a gradient (`bg-gradient-to-r from-primary to-secondary`) instead of a green `btn-success` class.
-
-**Side Effects & Dependencies:**
-- Removing the `acceptTerms` validation simplifies form submission logic.
-- The `formData` object (line 34) still declares `acceptTerms: false` — this field should also be removed from the `$state` declaration and from `resetForm()` (line 184).
-
-**Original Intent vs. Breakdown:**
-The disclaimer was intended for legal protection regarding automated job applications. The user now prioritizes a cleaner UI over this mandatory check.
-
-**Scope Notes:**
-Restructuring the configuration form UI and validation logic.
-
-**Fix Plan:**
-1. `src/routes/frontend-form/+page.svelte` line 34: Remove `acceptTerms: false,` from `formData` $state object.
-2. Lines 184: Remove `acceptTerms: false,` from the `resetForm()` function's reset object.
-3. Lines 221–224: Delete the `!formData.acceptTerms` validation block.
-4. Lines 519–536: Delete the entire Legal Disclaimer card `<div>` block.
-5. Line 541: Change `btn-primary` + gradient classes to `btn-success` and remove `bg-gradient-to-r from-primary to-secondary`. Replace with `bg-success text-success-content` or simply `btn-success`.
-6. Complexity: Low. Pure UI cleanup.
-
----
-
-### Issue #6: Overlay: Resizability
-
-**Files Involved:**
-- `src/bots/core/universal_overlay.ts` — browser-injected overlay system
-
-**Exact Lines:**
-- `src/bots/core/universal_overlay.ts` line 19: `interface OverlayState` (where the UI state is defined)
-- `src/bots/core/universal_overlay.ts` lines 192–194: Hardcoded `width: '600px'` and `maxHeight: '90vh'` in the shell creation.
-- `src/bots/core/universal_overlay.ts` lines 429–431: Style updates in `applyShellStyles` using fixed dimensions.
-- `src/bots/core/universal_overlay.ts` line 250: The current `collapseBtn` implementation.
-
-**Root Cause:**
-The overlay's dimensions are hardcoded to fixed values (`600px` width) within the `ensureOverlayShell` and `applyShellStyles` functions. While a `collapsed` state exists to minimize the overlay into a circle, there is no state or UI control to toggle between a compact view and an expanded view for better log visibility.
-
-**Side Effects & Dependencies:**
-Changing the default size affects the initial viewport real estate occupied by the bot. Since the overlay uses `pointer-events: none` for the shell but `auto` for children, a larger overlay might block more interactions if not carefully managed, but the current design already handles this with child-specific pointer events.
-
-**Original Intent vs. Breakdown:**
-Intended as a fixed-size HUD. However, users often need more horizontal or vertical space to read complex logs without collapsing the entire UI into a circle.
-
-**Scope Notes:**
-Browser-side DOM/CSS modifications. No mouse dragging required.
-
-**Fix Plan:**
-1. **Extend State:** Update the `OverlayState` interface (line 19) in `universal_overlay.ts` to include `expanded?: boolean`.
-2. **Inject Toggle Button:** In `ensureOverlayShell` (around line 280, inside the `controls` div creation):
-   - Create a new `sizeBtn`.
-   - Style it similarly to `collapseBtn` but with an expand icon (e.g., `⤢` / `⤡`).
-   - Add an `onclick` listener that toggles `current.expanded = !current.expanded` and calls `queueOverlayRender(current)`.
-   - Append `sizeBtn` to the `controls` container.
-3. **Update Styles:** In `applyShellStyles` (lines 429–431), replace fixed values with conditional logic based on `state.expanded`:
-   - If `collapsed` is false:
-     - **Default (Small):** `width: '450px'`, `maxHeight: '500px'`.
-     - **Expanded:** `width: '850px'`, `maxHeight: '90vh'`.
-   - Update `refs.overlay.style.width`, `refs.overlay.style.maxHeight`, and `refs.overlay.style.minHeight` accordingly.
-4. **Persistence:** Ensure `saveState` (line 107) persists the `expanded` property. This is handled automatically by the current `sessionStorage` logic if the property is added to the state object.
-5. **Set Default:** Ensure new overlays initialize with `expanded: false` to keep the UI compact by default.
-6. Complexity: Low-Medium. Logic is similar to the existing collapse toggle but targets dimensions instead of visibility.
-
-
----
-
 ### Issue #11: Bot Log Dashboard: Panel Close Button
 
 **Files Involved:**
@@ -221,33 +102,7 @@ The alerts were quick placeholders. The user wants a proactive redirect or a mor
 2. Lines 767–769: Keep as-is (just a job selection check) or convert `alert` to a toast.
 3. Complexity: Low. Simple redirect logic.
 
----
 
-### Issue #18: Analytics UI: Remove Small Overlay
-
-**Files Involved:**
-- `src/lib/components/JobTrackerBase.svelte` — contains the live log toast component
-
-**Exact Lines:**
-- `src/lib/components/JobTrackerBase.svelte` lines 1934–1987: `{#if isBotRunning && liveLogs.length > 0} ... {/if}` (The "Bot Execution Sequence" toast overlay, including the close button and log entries)
-
-**Root Cause:**
-The job tracker page includes its own "Live Execution Toast Overlay" (lines 1934–1987) which duplicates the real-time logs now handled by the Bot Dashboard. This overlay appears in the bottom-right corner with `toast toast-end toast-bottom` classes and mirrors log entries that are already visible on the `/bot-logs` page.
-
-**Side Effects & Dependencies:**
-- Removing this block cleans up the tracker UI.
-- The `liveLogs` array (line 75), `isBotRunning` flag (line 76), and the `bot-log` Tauri listener (lines 93–161) become partially dead code. However, `liveLogs` is still used internally to trigger `scheduleApplicationsRefresh()` (line 147), so don't remove the listener — only remove the UI.
-
-**Original Intent vs. Breakdown:**
-Intended to provide real-time feedback directly on the tracker page. Now redundant due to the dedicated Bot Logs dashboard.
-
-**Fix Plan:**
-1. `src/lib/components/JobTrackerBase.svelte` lines 1934–1987: Delete the entire `{#if isBotRunning && liveLogs.length > 0}` template block including the containing `<div>`.
-2. Keep the `bot-log` listener (lines 93–161) intact since it feeds `scheduleApplicationsRefresh()`.
-3. Optionally remove the `isBotRunning` variable if it has no other use after the toast removal.
-4. Complexity: Low. Template deletion only.
-
----
 
 ## Group 2: Others (Logic, Scrapers, Auth, Backend)
 
@@ -316,6 +171,31 @@ Intended to allow dynamic bot discovery via log streams. Breakdown occurs becaus
 2. Apply the same reconciliation in `addProgressEvent` (line 179) after computing `effectiveBotId` (line 181).
 3. Test: Start a bot, wait for `[BOT_EVENT]` with a runtime ID, verify only one panel appears.
 
+Viewed botProgressStore.ts:1-297
+
+I've investigated the duplicate bot log panels issue you described, and the hint from Issue #3 is exactly right, but with a slight twist because of how the event listeners work.
+
+Here is what's currently happening when you run a bot like `linkedin_extract`:
+
+1. **Initial Startup**: The UI calls [startBot('linkedin_extract', ...)](cci:1://file:///home/wagle/inquisitive_mind/jobapps/questai/src/lib/stores/botProgressStore.ts:110:4-118:5) which creates the first log panel under the generic ID `"linkedin_extract"`.
+2. **Early Logs**: The very first logs (like `"🚀 Starting bot runner for: linkedin_extract"`) are plain text, so they get appended to this original `"linkedin_extract"` panel.
+3. **Runtime ID Generation**: Once the actual bot script starts executing, it generates its own unique tracking ID (e.g., `"bot_1775141186239"`) to guarantee uniqueness.
+4. **Duplicate Creation**: The bot starts sending structured `[BOT_EVENT]` logs containing this new ID. The listener in [src/lib/stores/botProgressStore.ts](cci:7://file:///home/wagle/inquisitive_mind/jobapps/questai/src/lib/stores/botProgressStore.ts:0:0-0:0) extracts this runtime ID and looks for it in the active bots list. Because it can't find a bot under `"bot_1775141186239"`, it creates a completely fresh log panel for it (which gets the name "Default" initially because it fell back before setting everything up).
+5. **The Result**: You end up with two panels: The top one tracks the "startup" phase before the bot fully booted, and the bottom one tracks the actual runtime progress—with the two IDs never being merged.
+
+### To fix this, we need a smarter reconciliation step. 
+
+Instead of just checking the ID that was passed, we need the `botProgressStore` to recognize when a generic bot (like `"linkedin_extract"`) is transitioning to its runtime ID (like `"bot_1775141186239"`).
+
+Here is my proposed plan to fix it:
+
+1. **Update [addLogLine()](cci:1://file:///home/wagle/inquisitive_mind/jobapps/questai/src/lib/stores/botProgressStore.ts:140:4-176:5) and [addProgressEvent()](cci:1://file:///home/wagle/inquisitive_mind/jobapps/questai/src/lib/stores/botProgressStore.ts:178:4-190:5) to use `name` mapping:** Since the `[BOT_EVENT]` payload often contains `data.botName` (e.g., `"linkedin_extract"`), we can use this to reliably find the original generic bot when the new runtime ID appears.
+2. **Migrate existing bots securely:** If we encounter a new runtime ID but we find an existing bot whose `botId` matches the new log's `botName`, we will rename the existing bot's ID to the runtime ID, bringing all the previous logs with it.
+3. **Cleanup:** This will safely transition the single generic panel into the runtime-verified panel without duplicating anything, and avoiding the risk of stealing logs from other concurrently running bots.
+
+Additionally, to fix the vague "Default" name, we'll ensure that when the migration happens, the bot name from the payload is applied so it correctly identifies as `linkedin_extract`.
+
+What do you think of this approach? Shall I go ahead and implement this ID reconciliation logic in [src/lib/stores/botProgressStore.ts](cci:7://file:///home/wagle/inquisitive_mind/jobapps/questai/src/lib/stores/botProgressStore.ts:0:0-0:0)?
 ---
 
 ### Issue #5: LinkedIn Bot: Viewport Sensitivity
@@ -505,64 +385,3 @@ The 1-hour threshold was a safety measure to avoid removing LOCK files belonging
 3. Complexity: Medium. PID-based check is more robust but platform-specific (Linux LOCK files contain PIDs; Windows/macOS may differ).
 
 ---
-
-### Issue #21: Authentication: Refresh Token Logic (Deep Dive)
-
-**Files Involved:**
-- `src/lib/authService.js` — authentication service
-
-**Exact Lines:**
-- `src/lib/authService.js` lines 314–325:
-```javascript
-      if (!expiry || now < expiry) {
-        try {
-          const user = typeof userStr === 'string' ? JSON.parse(userStr) : userStr;
-          set({ user, isLoggedIn: true, loading: false });
-        } catch (e) {
-          console.error('Failed to parse user data:', e);
-          await logout();
-        }
-      } else {
-        console.log('Session expired, clearing auth state');
-        await logout();
-      }
-```
-
-**Root Cause:**
-The `initialize()` function (line 289) checks if the current access token is expired (line 314: `now < expiry`). If the token IS expired (the `else` branch on line 322), it immediately calls `logout()` (line 324). The `logout()` function (line 217) is destructive — it clears ALL tokens including the **refresh token** (line 222: `deleteCache('.cache/auth_refresh_token.txt')`). This means the app never attempts to use `refreshAccessToken()` (line 80) during initialization, even though a valid refresh token may exist. The user is forced to log in again manually every time the access token expires (typically 15 minutes).
-
-The `refreshAccessToken()` function exists (line 80) and works — it's used by `getAccessToken()` (line 281–283) when access token is near expiry. But `initialize()` bypasses this entirely.
-
-**Side Effects & Dependencies:**
-Root cause of the persistent logout issues across the entire application. Every time the app is opened after 15 minutes of inactivity, the user is logged out.
-
-**Original Intent vs. Breakdown:**
-Intended to prevent unauthorized access with expired credentials. Breakdown occurs because it ignores the presence of a valid refresh token and takes the destructive path.
-
-**Fix Plan:**
-⚠️ COMPLEXITY: Medium-High. This is the root authentication fix.
-1. `src/lib/authService.js` lines 322–325: Replace the immediate `logout()` call with a refresh attempt:
-```javascript
-      } else {
-        console.log('Session expired, attempting refresh...');
-        const newToken = await refreshAccessToken();
-        if (newToken) {
-          // Re-read user data (may have been updated during refresh)
-          const freshUserStr = await readCache('.cache/auth_user.json') || localStorage.getItem('auth_user');
-          try {
-            const user = typeof freshUserStr === 'string' ? JSON.parse(freshUserStr) : freshUserStr;
-            set({ user, isLoggedIn: true, loading: false });
-            console.log('✅ Session refreshed successfully');
-          } catch (e) {
-            console.error('Failed to parse user after refresh:', e);
-            await logout();
-          }
-        } else {
-          console.log('Refresh failed, logging out');
-          await logout();
-        }
-      }
-```
-2. The `refreshAccessToken` function (line 80) already handles the case where no refresh token exists (returns null on line 85–87) and where the refresh API call fails (calls logout on line 104). So this change is safe — if refresh fails for any reason, it falls through to logout.
-3. Test: Let access token expire (~15 min), then open the app. Verify it refreshes silently instead of redirecting to login.
-4. Also consider: In `refreshAccessToken` (line 80), the function calls `logout()` on failure (lines 86, 104, 109). This is correct for a "refresh token is truly invalid" case, but aggressive for network errors. Consider distinguishing network errors from auth errors in the refresh response.

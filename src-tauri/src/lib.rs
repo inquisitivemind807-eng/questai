@@ -820,14 +820,18 @@ async fn run_bot_streaming(
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
 
-    // Clone app handle for use in async task (AppHandle is Clone)
+    // Clone app handle and bot_id for use in async task
     let app_clone = app.clone();
+    let bot_id_log = bot_id.clone();
 
     // Spawn task to stream stdout lines as Tauri events
     tokio::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
-            // Forward ALL lines as bot-log so the UI can display raw console output
-            let _ = app_clone.emit("bot-log", &line);
+            // Forward ALL lines as bot-log with authoritative botId
+            let _ = app_clone.emit("bot-log", serde_json::json!({
+                "line": line,
+                "botId": bot_id_log
+            }));
 
             // Additionally parse structured events with [BOT_EVENT] prefix
             if line.starts_with("[BOT_EVENT]") {
