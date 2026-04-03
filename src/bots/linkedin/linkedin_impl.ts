@@ -5,7 +5,7 @@ import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager'
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
 import { recordJobApplicationToBackend } from '../core/job_application_recorder';
-import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
+import { getJobArtifactDir, getClientEmailFromContext, getJobArtifactCandidates } from '../core/client_paths';
 import { logger } from '../core/logger';
 import { getIntelligentAnswers } from '../seek/handlers/intelligent_qa_handler';
 import { fillQuestionFieldDetailed } from '../seek/handlers/answer_employer_questions';
@@ -2008,9 +2008,36 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
 
 export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    const directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
+    const targetJobId = ctx.config?.targetJobId as string | undefined;
+    let directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
+
+    if (targetJobId) {
+      const jobDirs = getJobArtifactCandidates(ctx, 'linkedin', targetJobId);
+      let foundJobDetail = false;
+      for (const dir of jobDirs) {
+        const p = path.join(dir, 'job_details.json');
+        if (fs.existsSync(p)) {
+          const jobData = JSON.parse(fs.readFileSync(p, 'utf8'));
+          ctx.currentJobFile = p;
+          ctx.currentJobDir = dir;
+          ctx.currentJobTitle = jobData.title || '';
+          ctx.currentJobCompany = jobData.company || '';
+          
+          if (jobData.url) {
+            directApplyUrl = jobData.url;
+          }
+          printLog(`🎯 LinkedIn Apply mode via Job ID. Using exact URL from JSON: ${directApplyUrl} (Found in ${p})`);
+          foundJobDetail = true;
+          break;
+        }
+      }
+      if (!foundJobDetail && directApplyUrl) {
+        printLog(`⚠️ targetJobId supplied but job_details.json missing! Falling back to raw URL: ${directApplyUrl}`);
+      }
+    }
+
     if (!directApplyUrl) {
-      printLog("No directApplyUrl provided for LinkedIn apply flow");
+      printLog("No directApplyUrl resolved for LinkedIn apply flow");
       yield "navigation_failed";
       return;
     }
