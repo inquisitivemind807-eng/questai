@@ -49,17 +49,17 @@
 
     <!-- Dashboard Cards -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      <!-- Choose Bot Card -->
+      <!-- Run Bots Card -->
       <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
-           on:click={() => navigateTo('/choose-bot')}
-           on:keydown={(e) => e.key === 'Enter' && navigateTo('/choose-bot')}
+           on:click={() => navigateTo('/run-bots')}
+           on:keydown={(e) => e.key === 'Enter' && navigateTo('/run-bots')}
            role="button"
            tabindex="0">
         <figure class="px-10 pt-10">
           <div class="text-6xl">🤖</div>
         </figure>
         <div class="card-body items-center text-center">
-          <h2 class="card-title">Choose Bot</h2>
+          <h2 class="card-title">Run Bots</h2>
           <p>Select and configure your automation bot for job searching across different platforms</p>
           <div class="card-actions">
             <div class="badge badge-primary">Automation</div>
@@ -122,6 +122,25 @@
           <div class="card-actions">
             <div class="badge badge-info">Q&A</div>
             <div class="badge badge-outline">Smart</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- My Jobs Card -->
+      <div class="card bg-base-100 shadow-xl hover:shadow-2xl transition-all duration-300 cursor-pointer"
+           on:click={() => navigateTo('/jobs')}
+           on:keydown={(e) => e.key === 'Enter' && navigateTo('/jobs')}
+           role="button"
+           tabindex="0">
+        <figure class="px-10 pt-10">
+          <div class="text-6xl">💼</div>
+        </figure>
+        <div class="card-body items-center text-center">
+          <h2 class="card-title">My Jobs</h2>
+          <p>Track, manage, and apply to your extracted jobs across all platforms</p>
+          <div class="card-actions">
+            <div class="badge badge-success">Tracking</div>
+            <div class="badge badge-outline">Manage</div>
           </div>
         </div>
       </div>

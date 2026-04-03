@@ -174,11 +174,26 @@
     {/if}
   </div>
 
-  <!-- Activity indicator -->
+  <!-- Activity indicator / Completion CTA -->
   {#if displayStatus === 'running' || displayStatus === 'stopping'}
     <div class="flex items-center justify-center gap-2 pb-4 text-sm">
       <span class="loading loading-spinner loading-sm text-primary"></span>
       <span class="text-base-content/60">{displayStatus === 'stopping' ? 'Bot is stopping...' : 'Bot is running...'}</span>
+    </div>
+  {:else if displayStatus === 'completed'}
+    <div class="flex flex-col items-center justify-center gap-3 pb-6 px-4">
+      <div class="text-success flex items-center gap-2 font-bold">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        Extraction Complete!
+      </div>
+      <a href="/jobs" class="btn btn-primary btn-wide shadow-lg shadow-primary/20">
+        View Extracted Jobs
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
+        </svg>
+      </a>
     </div>
   {/if}
 </div>

@@ -1,5 +1,0 @@
-<script>
-  import JobTrackerBase from "$lib/components/JobTrackerBase.svelte";
-</script>
-
-<JobTrackerBase />

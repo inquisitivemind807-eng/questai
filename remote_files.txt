@@ -1,2 +1,0 @@
-create_qa_issues.sh
-issues/15.md

@@ -1151,7 +1151,7 @@
                                   class="dropdown-content menu p-2 shadow bg-base-100 rounded-box w-40 z-50"
                                 >
                                   <li>
-                                    <a href={`/job-analytics/${job._id}`}
+                                    <a href={`/jobs/${job._id}`}
                                       >👁️ View Details</a
                                     >
                                   </li>
@@ -1501,7 +1501,7 @@
                           </td>
                           <td>
                             <a
-                              href={`/job-analytics/${application._id}`}
+                              href={`/jobs/${application._id}`}
                               class="btn btn-ghost btn-sm">👁️ View Details</a
                             >
                           </td>

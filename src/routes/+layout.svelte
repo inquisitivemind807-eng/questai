@@ -107,10 +107,8 @@
         </div>
         <div class="flex-none">
           <div class="dropdown dropdown-end">
-            <div tabindex="0" role="button" class="btn btn-ghost btn-circle avatar">
-              <div class="w-10 rounded-full bg-primary text-primary-content flex items-center justify-center">
-                {($authService.user.name || $authService.user.email).charAt(0).toUpperCase()}
-              </div>
+            <div tabindex="0" role="button" class="btn btn-ghost btn-circle overflow-hidden p-0">
+              <div class="w-10 h-10 rounded-full bg-primary text-primary-content flex items-center justify-center"><span class="font-bold leading-none text-sm">{($authService.user.name || $authService.user.email).charAt(0).toUpperCase()}</span></div>
             </div>
             <ul tabindex="-1" class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52">
               <li><a href="/profile">Profile</a></li>
@@ -163,7 +161,9 @@
         </div>
 
         <!-- Navigation Menu -->
-        <ul class="menu p-4 space-y-2 w-full sidebar-nav">
+        <ul class="menu p-4 space-y-1 w-full sidebar-nav">
+          <li class="menu-title text-base-content/50 text-xs font-bold tracking-wider uppercase mt-2">Jobs</li>
+          
           <li>
             <a href="/app" class="{$page.url.pathname === '/app' ? 'active-tab' : ''}">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -197,11 +197,11 @@
           {/if}
 
           <li>
-            <a href="/choose-bot" class="{$page.url.pathname === '/choose-bot' ? 'active-tab' : ''}">
+            <a href="/run-bots" class="{$page.url.pathname === '/run-bots' ? 'active-tab' : ''}">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
               </svg>
-              Choose Bot
+              Run Bots
             </a>
           </li>
           <li>
@@ -209,15 +209,50 @@
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"></path>
               </svg>
-              Bot Logs
+              Bot Activity
             </a>
           </li>
           <li>
-            <a href="/cover-letters" class="{$page.url.pathname === '/cover-letters' ? 'active-tab' : ''}">
+            <details class="group" open={$page.url.pathname === '/jobs' || $page.url.pathname.endsWith('-job-tracker')}>
+              <summary class="flex items-center gap-2 cursor-pointer">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                </svg>
+                <span>My Jobs</span>
+              </summary>
+              <ul class="menu menu-compact pl-6 mt-1 space-y-1">
+                <li>
+                  <a href="/jobs" class="{$page.url.pathname === '/jobs' ? 'active-tab' : ''}">
+                    All Platforms
+                  </a>
+                </li>
+                <li>
+                  <a href="/linkedin-job-tracker" class="{$page.url.pathname === '/linkedin-job-tracker' ? 'active-tab' : ''}">
+                    LinkedIn
+                  </a>
+                </li>
+                <li>
+                  <a href="/seek-job-tracker" class="{$page.url.pathname === '/seek-job-tracker' ? 'active-tab' : ''}">
+                    Seek
+                  </a>
+                </li>
+                <li>
+                  <a href="/indeed-job-tracker" class="{$page.url.pathname === '/indeed-job-tracker' ? 'active-tab' : ''}">
+                    Indeed
+                  </a>
+                </li>
+              </ul>
+            </details>
+          </li>
+
+          <li class="menu-title text-base-content/50 text-xs font-bold tracking-wider uppercase mt-6">Documents</li>
+          
+          <li>
+            <a href="/resume-builder" class="{$page.url.pathname.startsWith('/resume-builder') ? 'active-tab' : ''}">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
               </svg>
-              Cover Letters
+              Resume Builder
             </a>
           </li>
           <li>
@@ -229,6 +264,14 @@
             </a>
           </li>
           <li>
+            <a href="/cover-letters" class="{$page.url.pathname === '/cover-letters' ? 'active-tab' : ''}">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+              </svg>
+              Cover Letters
+            </a>
+          </li>
+          <li>
             <a href="/files" class="{$page.url.pathname === '/files' ? 'active-tab' : ''}">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v10a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"></path>
@@ -236,14 +279,9 @@
               Files
             </a>
           </li>
-          <li>
-            <a href="/resume-builder" class="{$page.url.pathname.startsWith('/resume-builder') ? 'active-tab' : ''}">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-              </svg>
-              Resume Builder
-            </a>
-          </li>
+
+          <li class="menu-title text-base-content/50 text-xs font-bold tracking-wider uppercase mt-6">Settings & Billing</li>
+          
           <li>
             <a href="/frontend-form" class="{$page.url.pathname === '/frontend-form' ? 'active-tab' : ''}">
               <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -251,62 +289,6 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
               </svg>
               Configuration
-            </a>
-          </li>
-          <li>
-            <details class="group" open={$page.url.pathname.startsWith('/job-analytics') || $page.url.pathname.endsWith('-job-tracker') || $page.url.pathname.startsWith('/choose-bot')}>
-              <summary class="flex items-center gap-2 cursor-pointer">
-                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                </svg>
-                <span>Job Analytics</span>
-              </summary>
-              <ul class="menu menu-compact pl-6 mt-2 space-y-1">
-                <li>
-                  <a href="/job-analytics" class="{$page.url.pathname === '/job-analytics' ? 'active-tab' : ''}">
-                    Overview
-                  </a>
-                </li>
-                <li>
-                  <a href="/linkedin-job-tracker" class="{$page.url.pathname === '/linkedin-job-tracker' ? 'active-tab' : ''}">
-                    LinkedIn Job Tracker
-                  </a>
-                </li>
-                <li>
-                  <a href="/seek-job-tracker" class="{$page.url.pathname === '/seek-job-tracker' ? 'active-tab' : ''}">
-                    Seek Job Tracker
-                  </a>
-                </li>
-                <li>
-                  <a href="/indeed-job-tracker" class="{$page.url.pathname === '/indeed-job-tracker' ? 'active-tab' : ''}">
-                    Indeed Job Tracker
-                  </a>
-                </li>
-              </ul>
-            </details>
-          </li>
-          <li>
-            <a href="/testfunctions" class="{$page.url.pathname === '/testfunctions' ? 'active-tab' : ''}">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path>
-              </svg>
-              Test Functions
-            </a>
-          </li>
-          <li>
-            <a href="/generic-questions" class="{$page.url.pathname === '/generic-questions' ? 'active-tab' : ''}">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-              </svg>
-              Generic Questions
-            </a>
-          </li>
-          <li>
-            <a href="/api-test" class="{$page.url.pathname === '/api-test' ? 'active-tab' : ''}">
-              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
-              </svg>
-              API Test
             </a>
           </li>
           <li>
@@ -333,6 +315,36 @@
               Token History
             </a>
           </li>
+
+          <li class="menu-title text-base-content/50 text-xs font-bold tracking-wider uppercase mt-6">Dev Tools</li>
+          
+          <li>
+            <details class="group">
+              <summary class="flex items-center gap-2 cursor-pointer">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"></path>
+                </svg>
+                <span>Developer</span>
+              </summary>
+              <ul class="menu menu-compact pl-6 mt-1 space-y-1">
+                <li>
+                  <a href="/testfunctions" class="{$page.url.pathname === '/testfunctions' ? 'active-tab' : ''}">
+                    Test Functions
+                  </a>
+                </li>
+                <li>
+                  <a href="/generic-questions" class="{$page.url.pathname === '/generic-questions' ? 'active-tab' : ''}">
+                    Generic Questions
+                  </a>
+                </li>
+                <li>
+                  <a href="/api-test" class="{$page.url.pathname === '/api-test' ? 'active-tab' : ''}">
+                    API Test
+                  </a>
+                </li>
+              </ul>
+            </details>
+          </li>
         </ul>
 
         <!-- Token Balance Section -->
@@ -353,11 +365,7 @@
         <!-- User Section -->
         <div class="p-4 border-t border-base-300">
           <div class="flex items-center gap-3 mb-3">
-            <div class="avatar">
-              <div class="w-10 rounded-full bg-primary text-primary-content flex items-center justify-center">
-                {($authService.user.name || $authService.user.email).charAt(0).toUpperCase()}
-              </div>
-            </div>
+            <div class="w-10 h-10 rounded-full bg-primary text-primary-content flex items-center justify-center"><span class="font-bold leading-none text-sm">{($authService.user.name || $authService.user.email).charAt(0).toUpperCase()}</span></div>
             <div class="flex-1 min-w-0">
               <div class="font-semibold text-sm truncate">
                 {$authService.user.name || $authService.user.email.split('@')[0]}
