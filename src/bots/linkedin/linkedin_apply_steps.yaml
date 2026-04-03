@@ -27,7 +27,7 @@ steps_config:
     step: 1
     func: "attemptEasyApply"
     transitions:
-      modal_opened_successfully: "upload_resume"
+      modal_opened_successfully: "extract_job_details_from_panel"
       modal_failed_to_open: "application_failed"
       attempting_external_apply: "external_apply"
       no_jobs_page_found: "application_failed"
@@ -39,7 +39,14 @@ steps_config:
     timeout: 30
     on_timeout_event: "easy_apply_process_error"
 
-
+  extract_job_details_from_panel:
+    step: 2
+    func: "extractJobDetailsFromPanel"
+    transitions:
+      job_details_extracted: "upload_resume"
+      job_details_extraction_failed: "application_failed"
+    timeout: 30
+    on_timeout_event: "job_details_extraction_failed"
 
   upload_resume:
     step: 3

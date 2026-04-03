@@ -5,7 +5,7 @@ import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager'
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
 import { recordJobApplicationToBackend } from '../core/job_application_recorder';
-import { getJobArtifactDir, getClientEmailFromContext, getJobArtifactCandidates } from '../core/client_paths';
+import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
 import { logger } from '../core/logger';
 import { getIntelligentAnswers } from '../seek/handlers/intelligent_qa_handler';
 import { fillQuestionFieldDetailed } from '../seek/handlers/answer_employer_questions';
@@ -263,64 +263,64 @@ async function dismissLinkedInOverlays(driver: WebDriver): Promise<void> {
  * Accounts for LinkedIn skeletons/overlays.
  */
 export async function waitAndClick(
-    driver: WebDriver, 
-    locator: By | string, 
-    timeoutMs: number = 10000
+  driver: WebDriver,
+  locator: By | string,
+  timeoutMs: number = 10000
 ): Promise<void> {
-    const loc = typeof locator === 'string' ? By.css(locator) : locator;
+  const loc = typeof locator === 'string' ? By.css(locator) : locator;
 
-    // 1. Wait for global LinkedIn spinners/skeletons to disappear
+  // 1. Wait for global LinkedIn spinners/skeletons to disappear
+  try {
+    const skeletons = By.css('.artdeco-skeleton-loader, .artdeco-button--loading');
+    await driver.wait(async () => {
+      const elements = await driver.findElements(skeletons);
+      return elements.length === 0;
+    }, 5000);
+  } catch {
+    // Ignore timeout if spinner was never there or didn't disappear in time
+  }
+
+  const maxRetries = 3;
+  for (let i = 0; i < maxRetries; i++) {
     try {
-        const skeletons = By.css('.artdeco-skeleton-loader, .artdeco-button--loading');
-        await driver.wait(async () => {
-            const elements = await driver.findElements(skeletons);
-            return elements.length === 0;
-        }, 5000);
-    } catch {
-        // Ignore timeout if spinner was never there or didn't disappear in time
-    }
+      // Find and wait for visibility & interactability
+      const element = await driver.wait(until.elementLocated(loc), timeoutMs);
+      await driver.wait(until.elementIsVisible(element), timeoutMs);
+      await driver.wait(until.elementIsEnabled(element), timeoutMs);
 
-    const maxRetries = 3;
-    for (let i = 0; i < maxRetries; i++) {
-        try {
-            // Find and wait for visibility & interactability
-            const element = await driver.wait(until.elementLocated(loc), timeoutMs);
-            await driver.wait(until.elementIsVisible(element), timeoutMs);
-            await driver.wait(until.elementIsEnabled(element), timeoutMs);
+      // Ensure element is actually scrolled into view (bypasses sticky headers/footers)
+      await driver.executeScript("arguments[0].scrollIntoView({block: 'center'});", element);
 
-            // Ensure element is actually scrolled into view (bypasses sticky headers/footers)
-            await driver.executeScript("arguments[0].scrollIntoView({block: 'center'});", element);
-            
-            // Add a small delay for Svelte/React hydration (Crucial for handling modern SPA components)
-            await driver.sleep(200);
+      // Add a small delay for Svelte/React hydration (Crucial for handling modern SPA components)
+      await driver.sleep(200);
 
-            // Attempt Click
-            await element.click();
-            return; // Success!
+      // Attempt Click
+      await element.click();
+      return; // Success!
 
-        } catch (err: any) {
-            if (err instanceof error.StaleElementReferenceError) {
-                // DOM changed beneath us, retry the loop
-                printLog(`[Warning] Stale element on ${loc}, retrying...`);
-                continue;
-            } 
-            else if (err instanceof error.ElementClickInterceptedError) {
-                // Something is blocking it (like the LinkedIn Messaging tab or cookie banner)
-                printLog(`[Warning] Click intercepted on ${loc}, attempting JS force click...`);
-                // Fallback: Execute a Javascript click directly on the DOM node
-                const element = await driver.findElement(loc).catch(() => null);
-                if (element) {
-                    await driver.executeScript("arguments[0].click();", element);
-                    return;
-                }
-            } 
-            else {
-                // Propagate non-recoverable errors (like TimeoutError)
-                throw err;
-            }
+    } catch (err: any) {
+      if (err instanceof error.StaleElementReferenceError) {
+        // DOM changed beneath us, retry the loop
+        printLog(`[Warning] Stale element on ${loc}, retrying...`);
+        continue;
+      }
+      else if (err instanceof error.ElementClickInterceptedError) {
+        // Something is blocking it (like the LinkedIn Messaging tab or cookie banner)
+        printLog(`[Warning] Click intercepted on ${loc}, attempting JS force click...`);
+        // Fallback: Execute a Javascript click directly on the DOM node
+        const element = await driver.findElement(loc).catch(() => null);
+        if (element) {
+          await driver.executeScript("arguments[0].click();", element);
+          return;
         }
+      }
+      else {
+        // Propagate non-recoverable errors (like TimeoutError)
+        throw err;
+      }
     }
-    throw new Error(`Failed to click ${loc} after ${maxRetries} retries due to Stale Elements.`);
+  }
+  throw new Error(`Failed to click ${loc} after ${maxRetries} retries due to Stale Elements.`);
 }
 
 /**
@@ -1244,7 +1244,7 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
           try {
             await withTimeout(driver.get(directUrl), 15000, 'Direct nav to job URL');
           } catch (err) {
-             printLog('Timeout during direct job nav (page load strategy eager might be active).');
+            printLog('Timeout during direct job nav (page load strategy eager might be active).');
           }
           await driver.sleep(1000);
         }
@@ -1260,7 +1260,7 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
       let clickOk = false;
       try {
         if (attempt > 0) {
-          await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card).catch(() => {});
+          await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card).catch(() => { });
           await driver.sleep(300);
         }
         await strategy.execute();
@@ -1536,23 +1536,35 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
     }
 
     // Look for Easy Apply button - check button text to differentiate from regular Apply
+    // Introduce XPath support to reliably target the inner span text
     const easyApplySelectors = ctx.selectors?.easy_apply?.button_css_candidates || [
       'button#jobs-apply-button-id',
-      'button.jobs-apply-button'
+      'button.jobs-apply-button',
+      "//button[.//span[contains(text(), 'Easy Apply')]]",
+      "//button[contains(., 'Easy Apply')]"
     ];
 
     let easyApplyButton = null;
 
     for (const selector of easyApplySelectors) {
       try {
-        const button = await driver.findElement(By.css(selector));
-        const buttonText = await button.getText();
-
-        // Only accept if it's "Easy Apply", not just "Apply"
-        if (buttonText.includes('Easy Apply')) {
-          easyApplyButton = button;
-          break;
+        const byLocator = selector.startsWith('//') || selector.startsWith('(') ? By.xpath(selector) : By.css(selector);
+        
+        // Use findElements because findElement throws if not found
+        const buttons = await driver.findElements(byLocator);
+        for (const button of buttons) {
+          const isDisplayed = await button.isDisplayed().catch(() => false);
+          if (!isDisplayed) continue;
+          
+          const buttonText = await button.getText();
+          // Only accept if it's "Easy Apply", not just "Apply"
+          if (buttonText.includes('Easy Apply')) {
+            easyApplyButton = button;
+            break;
+          }
         }
+        
+        if (easyApplyButton) break;
       } catch (error) {
         continue;
       }
@@ -2008,36 +2020,9 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
 
 export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    const targetJobId = ctx.config?.targetJobId as string | undefined;
-    let directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
-
-    if (targetJobId) {
-      const jobDirs = getJobArtifactCandidates(ctx, 'linkedin', targetJobId);
-      let foundJobDetail = false;
-      for (const dir of jobDirs) {
-        const p = path.join(dir, 'job_details.json');
-        if (fs.existsSync(p)) {
-          const jobData = JSON.parse(fs.readFileSync(p, 'utf8'));
-          ctx.currentJobFile = p;
-          ctx.currentJobDir = dir;
-          ctx.currentJobTitle = jobData.title || '';
-          ctx.currentJobCompany = jobData.company || '';
-          
-          if (jobData.url) {
-            directApplyUrl = jobData.url;
-          }
-          printLog(`🎯 LinkedIn Apply mode via Job ID. Using exact URL from JSON: ${directApplyUrl} (Found in ${p})`);
-          foundJobDetail = true;
-          break;
-        }
-      }
-      if (!foundJobDetail && directApplyUrl) {
-        printLog(`⚠️ targetJobId supplied but job_details.json missing! Falling back to raw URL: ${directApplyUrl}`);
-      }
-    }
-
+    const directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
     if (!directApplyUrl) {
-      printLog("No directApplyUrl resolved for LinkedIn apply flow");
+      printLog("No directApplyUrl provided for LinkedIn apply flow");
       yield "navigation_failed";
       return;
     }
