@@ -481,6 +481,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const url_arg = args.find(a => a.startsWith('--url='));
   const job_url = url_arg ? url_arg.split('=')[1] : null;
 
+  // Extract explicit --jobId= parameter for targeting exact existing jobs
+  const jobId_arg = args.find(a => a.startsWith('--jobId='));
+  const target_job_id = jobId_arg ? jobId_arg.split('=')[1] : null;
+
   const mode_arg = args.find(a => a.startsWith('--mode='));
   const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
 
@@ -490,7 +494,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
         const normalizedUrl = normalizeSeekJobUrl(job_url);
-        await run_bot('seek_apply', { directApplyUrl: normalizedUrl, botMode: mode }, { headless, keep_open });
+        await run_bot('seek_apply', { directApplyUrl: normalizedUrl, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
         console.error('Direct Apply execution failed:', error);
         process.exit(1);
@@ -500,7 +504,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     (async () => {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
-        await run_bot('linkedin_apply', { directApplyUrl: job_url, botMode: mode }, { headless, keep_open });
+        await run_bot('linkedin_apply', { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
         console.error('LinkedIn Direct Apply execution failed:', error);
         process.exit(1);

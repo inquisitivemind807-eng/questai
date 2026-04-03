@@ -594,6 +594,7 @@
       const response = await invoke("run_bot_for_job", {
         botName: mappedBotName,
         jobUrl: app.url,
+        jobId: app.platformJobId,
         mode: selectedBotMode,
         keepOpen: selectedBotMode !== "bot",
       });

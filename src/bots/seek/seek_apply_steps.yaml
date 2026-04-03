@@ -45,31 +45,14 @@ steps_config:
     step: 2
     func: "detectApplyType"
     transitions:
-      quick_apply_found: "parse_job_details"
+      quick_apply_found: "click_quick_apply"
       regular_apply_found: "close_quick_apply_and_end"
       no_apply_found: "close_quick_apply_and_end"
       detect_apply_failed: "close_quick_apply_and_end"
     timeout: 15
     on_timeout_event: "close_quick_apply_and_end"
 
-  parse_job_details:
-    step: 3
-    func: "parseJobDetails"
-    transitions:
-      job_parsed: "save_scraped_job"
-      parse_failed: "close_quick_apply_and_end"
-    timeout: 20
-    on_timeout_event: "parse_failed"
 
-  save_scraped_job:
-    step: 3.5
-    func: "saveScrapedJob"
-    transitions:
-      job_saved_quick_apply: "click_quick_apply"
-      job_saved: "click_quick_apply"
-      save_failed: "close_quick_apply_and_end"
-    timeout: 20
-    on_timeout_event: "save_failed"
 
   click_quick_apply:
     step: 4

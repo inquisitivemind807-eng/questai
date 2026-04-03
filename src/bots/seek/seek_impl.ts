@@ -10,7 +10,7 @@ import { handleCoverLetter } from './handlers/cover_letter_handler';
 import { answerEmployerQuestions as handleEmployerQuestions } from './handlers/answer_employer_questions';
 import { extractEmployerQuestions } from './handlers/extract_employer_questions';
 import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
-import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
+import { getJobArtifactDir, getClientEmailFromContext, getJobArtifactCandidates } from '../core/client_paths';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -250,6 +250,7 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
 
   // *** Capture directApplyUrl BEFORE ctx.config is overwritten with fileConfig ***
   const directApplyUrl = runtimeConfig?.directApplyUrl as string | undefined;
+  const targetJobId = runtimeConfig?.targetJobId as string | undefined;
 
   // Merge runtime config over disk config so UI-submitted values win.
   // This prevents blank file values from overriding live form inputs.
@@ -283,10 +284,38 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
   });
 
   // Override seek_url if direct apply mode
-  if (directApplyUrl) {
+  if (targetJobId) {
+    const jobDirs = getJobArtifactCandidates(ctx, 'seek', targetJobId);
+    let foundJobDetail = false;
+    for (const d of jobDirs) {
+      const p = path.join(d, 'job_details.json');
+      if (fs.existsSync(p)) {
+        const jobData = JSON.parse(fs.readFileSync(p, 'utf8'));
+        ctx.currentJobFile = p;
+        ctx.currentJobDir = d;
+        ctx.currentJobTitle = jobData.title || '';
+        ctx.currentJobCompany = jobData.company || '';
+        
+        if (jobData.url) {
+           ctx.seek_url = jobData.url;
+        } else {
+           ctx.seek_url = directApplyUrl ? normalize_seek_direct_url(directApplyUrl) : `https://www.seek.com.au/job/${targetJobId}`;
+        }
+        printLog(`🎯 Direct Apply mode via Job ID. Using exact URL from extracted JSON: ${ctx.seek_url} (Found in ${p})`);
+        foundJobDetail = true;
+        break;
+      }
+    }
+    
+    if (!foundJobDetail && directApplyUrl) {
+      const normalizedDirectApplyUrl = normalize_seek_direct_url(directApplyUrl);
+      ctx.seek_url = normalizedDirectApplyUrl;
+      printLog(`⚠️ targetJobId supplied but job_details.json missing! Falling back to raw URL: ${normalizedDirectApplyUrl}`);
+    }
+  } else if (directApplyUrl) {
     const normalizedDirectApplyUrl = normalize_seek_direct_url(directApplyUrl);
     ctx.seek_url = normalizedDirectApplyUrl;
-    printLog(`🎯 Direct Apply mode detected. Bypassing search and targeting URL: ${normalizedDirectApplyUrl}`);
+    printLog(`🎯 Direct Apply mode detected (legacy URL). Bypassing search and targeting URL: ${normalizedDirectApplyUrl}`);
   }
 
   // Initialize retry counters to prevent infinite loops

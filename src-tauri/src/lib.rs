@@ -869,6 +869,7 @@ async fn run_bot_for_job(
     app: tauri::AppHandle,
     bot_name: String,
     job_url: String,
+    job_id: Option<String>,
     mode: String,
     keep_open: bool
 ) -> Result<String, String> {
@@ -889,12 +890,17 @@ async fn run_bot_for_job(
         return Err(format!("Bot starter script not found: {}", script_path.display()));
     }
 
-    // Spawn bot process with piped stdout and explicit `--url` param
+    // Spawn bot process with piped stdout and explicit params
     let mut cmd = Command::new("bun");
     cmd.arg(script_path.to_str().unwrap())
        .arg(&bot_name)
        .arg(format!("--url={}", job_url))
        .arg(format!("--mode={}", mode));
+       
+    if let Some(id) = job_id {
+        cmd.arg(format!("--jobId={}", id));
+    }
+
     if keep_open {
         cmd.arg("--keep-open");
     }
