@@ -144,6 +144,30 @@ function parseJobDetailsFromText(details: string): {
   return result;
 }
 
+function cleanLocation(location: string): { cleanedLocation: string, workplaceType?: string } {
+  if (!location) return { cleanedLocation: '' };
+  
+  const workplaceKeywords = [/Remote/i, /Hybrid/i, /On-site/i, /Onsite/i];
+  let workplaceType: string | undefined;
+  
+  let cleaned = location;
+  for (const kw of workplaceKeywords) {
+    if (kw.test(cleaned)) {
+      const match = cleaned.match(kw);
+      if (match) {
+        workplaceType = match[0];
+        // Remove the keyword and any surrounding separators (·, -, space, brackets)
+        cleaned = cleaned.replace(new RegExp(`\\s*(?:·|\\-|\\/|\\-|\\||\\(|\\))?\\s*${kw.source}\\s*(?:·|\\-|\\/|\\-|\\||\\(|\\))?\\s*`, 'i'), ' ').trim();
+      }
+    }
+  }
+  
+  // Clean up any double spaces or trailing separators
+  cleaned = cleaned.replace(/\s+/g, ' ').replace(/^[\s·\-\/\(\)]+|[\s·\-\/\(\)]+$/g, '').trim();
+  
+  return { cleanedLocation: cleaned, workplaceType };
+}
+
 /** Log current job from context so you always know which job the bot is applying to. */
 function logCurrentJob(ctx: WorkflowContext): void {
   const title = ctx.currentJobTitle ?? ctx.currentJobTitlePreview;
@@ -1439,6 +1463,13 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
     `);
 
     if (jobData) {
+      // Clean location and extract workplace type if needed
+      const { cleanedLocation, workplaceType } = cleanLocation(jobData.location || '');
+      jobData.location = cleanedLocation;
+      if (workplaceType && !jobData.workMode) {
+        jobData.workMode = workplaceType;
+      }
+      
       // Parse HR contact, required skills, required experience from details text (for Job Analytics)
       const parsed = parseJobDetailsFromText(jobData.details || '');
       if (parsed.hrContact && (parsed.hrContact.name || parsed.hrContact.email || parsed.hrContact.phone)) {
@@ -1591,6 +1622,13 @@ export async function* parseExternalJobDetails(ctx: WorkflowContext): AsyncGener
     `) as any;
 
     if (jobData && jobData.title) {
+      // Clean location and extract workplace type if needed
+      const { cleanedLocation, workplaceType } = cleanLocation(jobData.location || '');
+      jobData.location = cleanedLocation;
+      if (workplaceType && !jobData.workMode) {
+        jobData.workMode = workplaceType;
+      }
+
       const clientEmail = getClientEmailFromContext(ctx);
       if (clientEmail) jobData.clientEmail = clientEmail;
 
