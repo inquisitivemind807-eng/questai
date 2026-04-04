@@ -78,7 +78,18 @@
   let refreshDebounceTimer;
 
   // Sorting
-  let jobsSortOrder = "newest"; // "newest" | "oldest"
+  let sortColumn = "date";
+  let sortDirection = "desc";
+
+  function toggleSort(column) {
+    if (sortColumn === column) {
+      sortDirection = sortDirection === "desc" ? "asc" : "desc";
+    } else {
+      sortColumn = column;
+      sortDirection = "desc";
+    }
+  }
+
   let appliedSortOrder = "newest";
 
   let fpInstance;
@@ -176,16 +187,18 @@
   let columns = [
     { id: "details", label: "Job Details", visible: true, disableToggle: true },
     { id: "location", label: "Location", visible: true },
+    { id: "workplace_type", label: "Workplace Type", visible: false },
     { id: "salary", label: "Salary", visible: true },
     { id: "type", label: "Type", visible: true },
-    { id: "added", label: "Added", visible: true },
+    { id: "date", label: "Date", visible: true },
+    { id: "status", label: "Status", visible: true },
     { id: "actions", label: "Actions", visible: true, disableToggle: true }
   ];
 
   // Derived filtered views
   $: scrapedJobs = (() => {
     const list = applications.filter((a) => {
-      if (a.status !== "scraped") return false;
+      // Show all jobs (removed the status filter so applied jobs show too)
       if (platform) {
         if (a.platform !== platform) return false;
       } else if (platformFilter && a.platform !== platformFilter) {
@@ -198,7 +211,10 @@
           a.company?.toLowerCase().includes(q);
         if (!match) return false;
       }
-      const dStr = a.firstSeenAt || a.lastUpdatedAt;
+      const dStr = a.status === "scraped"
+        ? (a.firstSeenAt || a.lastUpdatedAt)
+        : (a.application?.appliedAt || a.lastUpdatedAt);
+        
       if (dStr && (jobsFromDate || jobsToDate)) {
         const d = new Date(dStr);
         if (!isNaN(d.getTime())) {
@@ -215,9 +231,33 @@
     });
 
     list.sort((a, b) => {
-      const da = new Date(a.firstSeenAt ?? a.lastUpdatedAt ?? 0).getTime();
-      const db = new Date(b.firstSeenAt ?? b.lastUpdatedAt ?? 0).getTime();
-      return jobsSortOrder === "newest" ? db - da : da - db;
+      let result = 0;
+      if (sortColumn === "salary") {
+        const sa = a.salary || "";
+        const sb = b.salary || "";
+        result = sa.localeCompare(sb, undefined, { numeric: true });
+      } else if (sortColumn === "type") {
+        const ta = a.applicationType || "";
+        const tb = b.applicationType || "";
+        result = ta.localeCompare(tb);
+      } else if (sortColumn === "status") {
+        const sa = a.status || "";
+        const sb = b.status || "";
+        result = sa.localeCompare(sb);
+      } else if (sortColumn === "workplace_type") {
+        const wa = getWorkplaceType(a.location);
+        const wb = getWorkplaceType(b.location);
+        result = wa.localeCompare(wb);
+      } else {
+        const timeA = a.status === "scraped"
+          ? new Date(a.firstSeenAt ?? a.lastUpdatedAt ?? 0).getTime()
+          : new Date(a.application?.appliedAt ?? a.lastUpdatedAt ?? 0).getTime();
+        const timeB = b.status === "scraped"
+          ? new Date(b.firstSeenAt ?? b.lastUpdatedAt ?? 0).getTime()
+          : new Date(b.application?.appliedAt ?? b.lastUpdatedAt ?? 0).getTime();
+        result = timeA - timeB;
+      }
+      return sortDirection === "desc" ? -result : result;
     });
 
     return list;
@@ -229,7 +269,7 @@
   );
 
   $: {
-    const _ = jobsFromDate + jobsToDate + jobsSearchQuery + jobsSortOrder;
+    const _ = jobsFromDate + jobsToDate + jobsSearchQuery + sortColumn + sortDirection;
     jobsCurrentPage = 1;
   }
 
@@ -560,6 +600,23 @@
     });
   }
 
+  function parseDateTime(d) {
+    if (!d) return null;
+    const date = typeof d === "string" ? new Date(d) : d;
+    if (isNaN(date.getTime())) return null;
+    return {
+      dateStr: date.toLocaleDateString(undefined, { dateStyle: "medium" }),
+      timeStr: date.toLocaleTimeString(undefined, { timeStyle: "short" })
+    };
+  }
+
+  function getJobDateTime(app) {
+    if (app.status === "scraped") {
+      return parseDateTime(app.firstSeenAt ?? app.lastUpdatedAt);
+    }
+    return parseDateTime(app.application?.appliedAt ?? app.lastUpdatedAt);
+  }
+
   function appliedAt(app) {
     if (app.status === "scraped") {
       return formatDate(app.firstSeenAt ?? app.lastUpdatedAt);
@@ -603,12 +660,38 @@
     }
   }
 
+  let showSelectionWarning = false;
+
   function toggleJobSelection(jobId) {
     if (selectedJobs.includes(jobId)) {
       selectedJobs = selectedJobs.filter((id) => id !== jobId);
+      if (selectedJobs.length < 10) showSelectionWarning = false;
     } else {
+      if (selectedJobs.length >= 10) {
+        showSelectionWarning = true;
+        setTimeout(() => (showSelectionWarning = false), 5000);
+        return;
+      }
       selectedJobs = [...selectedJobs, jobId];
     }
+  }
+
+  function getWorkplaceType(job) {
+    if (!job) return "—";
+    
+    // Check structured data fields first
+    const type = job.workMode || job.work_type || job.workType || job.jobType || "";
+    const t = type.toLowerCase();
+    if (t.includes("remote")) return "Remote";
+    if (t.includes("hybrid")) return "Hybrid";
+    if (t.includes("on-site") || t.includes("onsite")) return "On-site";
+
+    const loc = String(job.location || "").toLowerCase();
+    if (loc.includes("remote")) return "Remote";
+    if (loc.includes("hybrid")) return "Hybrid";
+    if (loc.includes("on-site") || loc.includes("onsite")) return "On-site";
+    
+    return "—";
   }
 
   $: allVisibleSelected =
@@ -813,6 +896,14 @@
       </div>
     {/if}
 
+    {#if showSelectionWarning}
+      <div class="toast toast-end toast-bottom z-[100] animate-bounce">
+        <div class="alert alert-error shadow-lg text-white font-semibold">
+          <span>⚠️ For your own safety, let's not apply to more than 10 jobs at a time.</span>
+        </div>
+      </div>
+    {/if}
+
     <!-- Tab Content -->
     {#if isLoading}
       <div class="flex justify-center py-20">
@@ -856,6 +947,7 @@
                   class="btn btn-ghost btn-circle bg-base-100 shadow-sm border border-base-300"
                   on:click={() => fpInstance?.open()}
                   title="Filter by Date Range"
+                  aria-label="Filter by Date Range"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-base-content/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
                 </button>
@@ -864,7 +956,7 @@
 
             <div class="form-control">
               <div class="dropdown dropdown-end">
-                <div tabindex="0" role="button" class="btn btn-ghost btn-circle bg-base-100 shadow-sm border border-base-300" title="Columns">
+                <div tabindex="0" role="button" class="btn btn-ghost btn-circle bg-base-100 shadow-sm border border-base-300" title="Columns" aria-label="Columns">
                   <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-base-content/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
                 </div>
                 <ul tabindex="-1" class="dropdown-content z-50 menu p-2 shadow bg-base-100 rounded-box w-52 mt-1">
@@ -905,7 +997,7 @@
                   <table class="table table-zebra w-full">
                     <thead>
                       <tr>
-                        <th class="w-12">
+                        <th class="w-12 pl-6">
                           <input
                             type="checkbox"
                             class="checkbox checkbox-sm"
@@ -913,37 +1005,64 @@
                             on:change={(e) => {
                               const checked = e.currentTarget.checked;
                               if (checked) {
-                                const visibleIds = paginatedJobs.map(
-                                  (j) => j._id,
-                                );
-                                const newSelection = new Set([
-                                  ...selectedJobs,
-                                  ...visibleIds,
-                                ]);
+                                const visibleIds = paginatedJobs.map((j) => j._id);
+                                const newSelection = new Set([...selectedJobs]);
+                                
+                                for (const id of visibleIds) {
+                                  if (newSelection.size < 10) {
+                                    newSelection.add(id);
+                                  } else {
+                                    showSelectionWarning = true;
+                                    setTimeout(() => showSelectionWarning = false, 5000);
+                                    break;
+                                  }
+                                }
                                 selectedJobs = Array.from(newSelection);
                               } else {
-                                const visibleIds = paginatedJobs.map(
-                                  (j) => j._id,
-                                );
+                                const visibleIds = paginatedJobs.map((j) => j._id);
                                 selectedJobs = selectedJobs.filter(
                                   (id) => !visibleIds.includes(id),
                                 );
+                                showSelectionWarning = false;
                               }
                             }}
                           />
                         </th>
                         <th>Job Details</th>
                         {#if columns.find(c => c.id === 'location')?.visible}<th>Location</th>{/if}
-                        {#if columns.find(c => c.id === 'salary')?.visible}<th>Salary</th>{/if}
-                        {#if columns.find(c => c.id === 'type')?.visible}<th>Type</th>{/if}
-                        {#if columns.find(c => c.id === 'added')?.visible}<th>Added</th>{/if}
-                        <th>Actions</th>
+                        {#if columns.find(c => c.id === 'workplace_type')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200" on:click={() => toggleSort('workplace_type')}>
+                            Workplace Type {sortColumn === 'workplace_type' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'salary')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200" on:click={() => toggleSort('salary')}>
+                            Salary {sortColumn === 'salary' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'type')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200" on:click={() => toggleSort('type')}>
+                            Type {sortColumn === 'type' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'date')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200 text-center w-[160px] min-w-[160px]" on:click={() => toggleSort('date')}>
+                            Date {sortColumn === 'date' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'status')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200 text-center w-[160px] min-w-[160px]" on:click={() => toggleSort('status')}>
+                            Status {sortColumn === 'status' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        <th class="text-center w-[130px] min-w-[130px]">Actions</th>
+                        <th class="w-[60px] min-w-[60px] pr-6"></th>
                       </tr>
                     </thead>
                     <tbody>
                       {#each paginatedJobs as job}
                         <tr class="hover">
-                          <td>
+                          <td class="pl-6">
                             <input
                               type="checkbox"
                               checked={selectedJobs.includes(job._id)}
@@ -952,10 +1071,10 @@
                             />
                           </td>
                           <td>
-                            <div class="font-bold text-primary">
+                            <div class="font-bold text-base text-primary">
                               {job.title || "—"}
                             </div>
-                            <div class="text-sm text-base-content/70 mt-1">
+                            <div class="text-sm text-base-content/60 mt-0.5">
                               {job.company || "—"}
                             </div>
                           </td>
@@ -963,6 +1082,13 @@
                             <td>
                               <div class="text-sm">
                                 {job.location || "—"}
+                              </div>
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'workplace_type')?.visible}
+                            <td>
+                              <div class="text-sm">
+                                {getWorkplaceType(job)}
                               </div>
                             </td>
                           {/if}
@@ -993,23 +1119,51 @@
                               {/if}
                             </td>
                           {/if}
-                          {#if columns.find(c => c.id === 'added')?.visible}
-                            <td>
-                              <div class="text-sm whitespace-nowrap">
-                                {appliedAt(job)}
-                              </div>
+                          {#if columns.find(c => c.id === 'date')?.visible}
+                            {@const dt = getJobDateTime(job)}
+                            <td class="text-center w-[160px] min-w-[160px]">
+                              {#if dt}
+                                <div class="flex flex-col items-center">
+                                  <div class="text-xs text-error font-medium mb-0.5">{dt.timeStr}</div>
+                                  <div class="text-sm whitespace-nowrap">{dt.dateStr}</div>
+                                </div>
+                              {:else}
+                                <span class="text-sm text-base-content/50">—</span>
+                              {/if}
                             </td>
                           {/if}
-                          <td>
-                            <div class="flex items-center gap-2">
-                              <button
-                                class="btn btn-primary btn-sm"
-                                on:click={() => triggerBotApply(job)}
-                                >Bot Apply</button
-                              >
+                          {#if columns.find(c => c.id === 'status')?.visible}
+                            <td class="text-center w-[160px] min-w-[160px]">
+                              {#if job.status === "applied"}
+                                <span class="badge badge-info badge-sm">Applied</span>
+                              {:else if job.status === "interview"}
+                                <span class="badge badge-warning badge-sm">Interview</span>
+                              {:else if job.status === "offer"}
+                                <span class="badge badge-success badge-sm">Offer</span>
+                              {:else if job.status === "rejected"}
+                                <span class="badge badge-error badge-sm">Rejected</span>
+                              {:else if job.status === "scraped"}
+                                <span class="badge badge-ghost badge-sm text-base-content/60">Discovered</span>
+                              {:else}
+                                <span class="badge badge-ghost badge-sm">{job.status}</span>
+                              {/if}
+                            </td>
+                          {/if}
+                          <td class="text-center w-[130px] min-w-[130px]">
+                            <div class="flex items-center justify-center">
+                              {#if job.status !== 'applied'}
+                                <button
+                                  class="btn btn-primary btn-sm"
+                                  on:click={() => triggerBotApply(job)}
+                                >{job.applicationType === "external" ? "Apply" : "Bot Apply"}</button>
+                              {/if}
+                            </div>
+                          </td>
+                          <td class="w-[60px] min-w-[60px] text-center pr-6">
                               <div class="dropdown dropdown-end">
                                 <button
-                                  class="btn btn-ghost btn-sm"
+                                  class="btn btn-ghost btn-sm px-2"
+                                  aria-label="Job actions"
                                   tabindex="0">⋮</button
                                 >
                                 <ul
@@ -1029,7 +1183,6 @@
                                   {/if}
                                 </ul>
                               </div>
-                            </div>
                           </td>
                         </tr>
                       {/each}
