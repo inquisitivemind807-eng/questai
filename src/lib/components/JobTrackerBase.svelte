@@ -1,5 +1,7 @@
 <script>
   import { onMount } from "svelte";
+  import flatpickr from "flatpickr";
+  import "flatpickr/dist/flatpickr.min.css";
   import { get } from "svelte/store";
   import { authService } from "$lib/authService.js";
   import { tokenService } from "$lib/services/tokenService.js";
@@ -79,6 +81,30 @@
   let jobsSortOrder = "newest"; // "newest" | "oldest"
   let appliedSortOrder = "newest";
 
+  let fpInstance;
+  function datepickerAction(node) {
+    fpInstance = flatpickr(node, {
+      mode: "range",
+      dateFormat: "Y-m-d",
+      onChange: (selectedDates) => {
+        if (selectedDates.length === 2) {
+          const offset = selectedDates[0].getTimezoneOffset() * 60000;
+          jobsFromDate = new Date(selectedDates[0].getTime() - offset).toISOString().split("T")[0];
+          jobsToDate = new Date(selectedDates[1].getTime() - offset).toISOString().split("T")[0];
+        } else if (selectedDates.length === 0) {
+          jobsFromDate = undefined;
+          jobsToDate = undefined;
+        }
+      }
+    });
+
+    return {
+      destroy() {
+        if (fpInstance) fpInstance.destroy();
+      }
+    };
+  }
+
   function scheduleApplicationsRefresh(delayMs = 1200) {
     if (refreshDebounceTimer) clearTimeout(refreshDebounceTimer);
     refreshDebounceTimer = setTimeout(() => {
@@ -146,39 +172,14 @@
   /** @type {string[]} */
   let selectedJobs = [];
 
-  $: tabs = [
-    {
-      id: "jobs",
-      label: "Jobs",
-      icon: "🔍",
-      count: applications.filter((a) => {
-        if (a.status !== "scraped") return false;
-        if (platform) {
-          return a.platform === platform;
-        }
-        if (platformFilter) {
-          return a.platform === platformFilter;
-        }
-        return true;
-      }).length,
-    },
-    {
-      id: "applied",
-      label: "Applied",
-      icon: "✅",
-      count: applications.filter((a) => {
-        if (a.status === "scraped") return false;
-        if (platform) {
-          return a.platform === platform;
-        }
-        if (appliedPlatformFilter) {
-          return a.platform === appliedPlatformFilter;
-        }
-        return true;
-      }).length,
-    },
-    { id: "logs", label: "Logs", icon: "📋", count: null },
-    { id: "analytics", label: "Analytics", icon: "📊", count: null },
+  // Column Visibility State
+  let columns = [
+    { id: "details", label: "Job Details", visible: true, disableToggle: true },
+    { id: "location", label: "Location", visible: true },
+    { id: "salary", label: "Salary", visible: true },
+    { id: "type", label: "Type", visible: true },
+    { id: "added", label: "Added", visible: true },
+    { id: "actions", label: "Actions", visible: true, disableToggle: true }
   ];
 
   // Derived filtered views
@@ -588,9 +589,6 @@
           : app.platform === "linkedin"
             ? "linkedin_apply"
             : app.platform;
-      alert(
-        `Triggering Bot Apply for ${app.platform} job: ${app.title} via direct job URL... Watch the Tauri console!`,
-      );
       const response = await invoke("run_bot_for_job", {
         botName: mappedBotName,
         jobUrl: app.url,
@@ -772,38 +770,18 @@
 
 <svelte:head>
   <title>
-    {trackerLabel} Job Tracker – Job Analytics
+    {trackerLabel}
   </title>
 </svelte:head>
 
 <div class="min-h-screen bg-base-200">
   <div class="p-6 max-w-7xl mx-auto">
-    <!-- Header, Tabs & Bot Access Panel -->
+    <!-- Header & Bot Access Panel -->
     <div class="flex flex-col gap-4 mb-6">
       <div class="flex justify-between items-center flex-wrap gap-4">
-        <h1 class="text-4xl font-bold text-primary">
-          🔍 {platform ? `${trackerLabel} Job Tracker` : "Job Tracker"}
+        <h1 class="text-4xl font-bold text-primary mb-4">
+          🔍 {trackerLabel}
         </h1>
-
-        <div class="tabs tabs-boxed bg-base-100 shadow-sm">
-          {#each tabs as tab}
-            <button
-              class="tab"
-              class:tab-active={activeTab === tab.id}
-              on:click={() => (activeTab = tab.id)}
-            >
-              <span class="mr-2">{tab.icon}</span>
-              {tab.label}
-              {#if tab.count !== null}
-                <span
-                  class="badge badge-sm ml-2 {activeTab === tab.id
-                    ? 'badge-primary'
-                    : 'badge-ghost'}">{tab.count}</span
-                >
-              {/if}
-            </button>
-          {/each}
-        </div>
 
         <div class="dropdown dropdown-end">
           <button class="btn btn-ghost" tabindex="0">
@@ -845,15 +823,12 @@
       {#if activeTab === "jobs"}
         <div class="jobs-tab animate-fade-in">
           <!-- Search & Filter Bar -->
-          <div class="flex gap-4 mb-8 flex-wrap">
+          <div class="flex items-center gap-4 mb-8 flex-wrap">
             <div class="form-control flex-1 min-w-[250px]">
-              <label class="label" for="search-jobs-input">
-                <span class="label-text font-semibold">Search Jobs</span>
-              </label>
               <input
                 id="search-jobs-input"
                 type="text"
-                placeholder="Search by title, company..."
+                placeholder="Search jobs by title, company..."
                 bind:value={jobsSearchQuery}
                 class="input input-bordered w-full bg-base-100 shadow-sm"
               />
@@ -861,9 +836,6 @@
 
             {#if !platform}
               <div class="form-control">
-                <label class="label" for="jobs-platform-filter">
-                  <span class="label-text font-semibold">Platform</span>
-                </label>
                 <select
                   id="jobs-platform-filter"
                   class="select select-bordered bg-base-100 shadow-sm w-32"
@@ -878,57 +850,36 @@
             {/if}
 
             <div class="form-control">
-              <label class="label" for="filter-from">
-                <span class="label-text font-semibold">From Date</span>
-              </label>
-              <input
-                id="filter-from"
-                type="date"
-                class="input input-bordered bg-base-100 shadow-sm"
-                bind:value={jobsFromDate}
-              />
-            </div>
-
-            <div class="form-control">
-              <label class="label" for="filter-to">
-                <span class="label-text font-semibold">To Date</span>
-              </label>
-              <input
-                id="filter-to"
-                type="date"
-                class="input input-bordered bg-base-100 shadow-sm"
-                bind:value={jobsToDate}
-              />
-            </div>
-
-            <div class="form-control">
-              <label class="label" for="jobs-sort-order">
-                <span class="label-text font-semibold">Sort</span>
-              </label>
-              <select
-                id="jobs-sort-order"
-                class="select select-bordered bg-base-100 shadow-sm w-40"
-                bind:value={jobsSortOrder}
-              >
-                <option value="newest">Newest first</option>
-                <option value="oldest">Oldest first</option>
-              </select>
-            </div>
-
-            <div class="form-control">
-              <div class="label">
-                <span class="label-text font-semibold">&nbsp;</span>
+              <div class="relative">
+                <input class="hidden" use:datepickerAction />
+                <button
+                  class="btn btn-ghost btn-circle bg-base-100 shadow-sm border border-base-300"
+                  on:click={() => fpInstance?.open()}
+                  title="Filter by Date Range"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-base-content/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                </button>
               </div>
-              <button
-                class="btn btn-ghost shadow-sm"
-                on:click={() => {
-                  jobsSearchQuery = "";
-                  jobsFromDate = undefined;
-                  jobsToDate = undefined;
-                  jobsSortOrder = "newest";
-                  if (!platform) platformFilter = "";
-                }}>Clear filters</button
-              >
+            </div>
+
+            <div class="form-control">
+              <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button" class="btn btn-ghost btn-circle bg-base-100 shadow-sm border border-base-300" title="Columns">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-base-content/70" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                </div>
+                <ul tabindex="-1" class="dropdown-content z-50 menu p-2 shadow bg-base-100 rounded-box w-52 mt-1">
+                  {#each columns as col}
+                    {#if !col.disableToggle}
+                      <li>
+                        <label class="label cursor-pointer justify-start gap-3">
+                          <input type="checkbox" class="checkbox checkbox-sm" bind:checked={col.visible} />
+                          <span class="label-text">{col.label}</span>
+                        </label>
+                      </li>
+                    {/if}
+                  {/each}
+                </ul>
+              </div>
             </div>
           </div>
 
@@ -940,96 +891,15 @@
                   <p>No jobs found for this platform.</p>
                 </div>
               {:else}
-                <!-- Pagination Controls for Jobs (TOP) -->
-                <div
-                  class="flex justify-between items-center bg-base-100 p-4 rounded-t-xl border-b border-base-200"
-                >
-                  <div class="flex items-center gap-4">
-                    <div class="flex items-center gap-2">
-                      <span class="text-sm text-base-content/70"
-                        >Rows per page:</span
-                      >
-                      <select
-                        class="select select-bordered select-sm w-20"
-                        bind:value={jobsItemsPerPage}
-                        on:change={() => (jobsCurrentPage = 1)}
-                      >
-                        <option value={10}>10</option>
-                        <option value={20}>20</option>
-                        <option value={50}>50</option>
-                        <option value={100}>100</option>
-                      </select>
-                    </div>
-
-                    {#if selectedJobs.length > 0}
-                      <div
-                        class="flex items-center gap-3 pl-4 border-l border-base-300 animate-fade-in"
-                      >
-                        <span class="text-sm font-bold text-primary"
-                          >{selectedJobs.length} Selected</span
-                        >
-                        <div class="flex gap-2">
-                          <button
-                            class="btn btn-primary btn-sm shadow-sm"
-                            on:click={bulkApply}
-                          >
-                            ✉️ Auto-Apply
-                          </button>
-                          <button
-                            class="btn btn-error btn-outline btn-sm shadow-sm"
-                            on:click={() => (selectedJobs = [])}
-                          >
-                            Clear
-                          </button>
-                        </div>
-                      </div>
-                    {/if}
-                  </div>
-
-                  <div class="flex items-center gap-4">
-                    <div class="text-sm text-base-content/70 hidden lg:block">
-                      {(jobsCurrentPage - 1) * jobsItemsPerPage + 1}-
-                      {Math.min(
-                        jobsCurrentPage * jobsItemsPerPage,
-                        scrapedJobs.length,
-                      )}
-                      of
-                      {scrapedJobs.length}
-                    </div>
-
-                    <div class="join">
-                      <button
-                        class="join-item btn btn-sm"
-                        disabled={jobsCurrentPage === 1}
-                        on:click={() => jobsCurrentPage--}
-                      >
-                        «
-                      </button>
-                      {#each getPageNumbers(
-                        jobsCurrentPage,
-                        scrapedJobs.length,
-                        jobsItemsPerPage,
-                      ) as p}
-                        <button
-                          class="join-item btn btn-sm {jobsCurrentPage === p
-                            ? 'btn-primary'
-                            : ''}"
-                          on:click={() => (jobsCurrentPage = p)}
-                        >
-                          {p}
-                        </button>
-                      {/each}
-                      <button
-                        class="join-item btn btn-sm"
-                        disabled={jobsCurrentPage * jobsItemsPerPage >=
-                          scrapedJobs.length}
-                        on:click={() => jobsCurrentPage++}
-                      >
-                        »
-                      </button>
+                {#if selectedJobs.length > 0}
+                  <div class="flex items-center gap-3 animate-fade-in p-4 rounded-t-xl border-b border-base-200 bg-base-100">
+                    <span class="text-sm font-bold text-primary">{selectedJobs.length} Selected</span>
+                    <div class="flex gap-2">
+                      <button class="btn btn-primary btn-sm shadow-sm" on:click={bulkApply}>✉️ Auto-Apply</button>
+                      <button class="btn btn-error btn-outline btn-sm shadow-sm" on:click={() => (selectedJobs = [])}>Clear</button>
                     </div>
                   </div>
-                </div>
+                {/if}
 
                 <div class="overflow-x-auto">
                   <table class="table table-zebra w-full">
@@ -1063,10 +933,10 @@
                           />
                         </th>
                         <th>Job Details</th>
-                        <th>Location</th>
-                        <th>Salary</th>
-                        <th>Type</th>
-                        <th>Added</th>
+                        {#if columns.find(c => c.id === 'location')?.visible}<th>Location</th>{/if}
+                        {#if columns.find(c => c.id === 'salary')?.visible}<th>Salary</th>{/if}
+                        {#if columns.find(c => c.id === 'type')?.visible}<th>Type</th>{/if}
+                        {#if columns.find(c => c.id === 'added')?.visible}<th>Added</th>{/if}
                         <th>Actions</th>
                       </tr>
                     </thead>
@@ -1085,57 +955,51 @@
                             <div class="font-bold text-primary">
                               {job.title || "—"}
                             </div>
-                            <div class="text-sm text-base-content/70">
+                            <div class="text-sm text-base-content/70 mt-1">
                               {job.company || "—"}
                             </div>
-                            <div class="flex gap-1 flex-wrap mt-2">
-                              {#if job.jobType}
-                                <span
-                                  class="badge badge-accent badge-outline badge-sm text-xs"
-                                  >{job.jobType}</span
-                                >
-                              {/if}
-                              {#if job.workMode}
-                                <span
-                                  class="badge badge-secondary badge-outline badge-sm text-xs"
-                                  >{job.workMode}</span
-                                >
-                              {/if}
-                            </div>
                           </td>
-                          <td>
-                            <div class="text-sm">
-                              {job.location || "—"}
-                            </div>
-                          </td>
-                          <td>
-                            <div
-                              class="font-semibold text-sm max-w-[150px] truncate"
-                              title={job.salary}
-                            >
-                              {job.salary || "—"}
-                            </div>
-                          </td>
-                          <td>
-                            {#if job.applicationType === "internal"}
-                              <span
-                                class="badge badge-sm badge-success badge-outline text-xs tooltip"
-                                data-tip="Quick Apply available">Internal</span
+                          {#if columns.find(c => c.id === 'location')?.visible}
+                            <td>
+                              <div class="text-sm">
+                                {job.location || "—"}
+                              </div>
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'salary')?.visible}
+                            <td>
+                              <div
+                                class="font-semibold text-sm max-w-[150px] truncate"
+                                title={job.salary}
                               >
-                            {:else if job.applicationType === "external"}
-                              <span
-                                class="badge badge-sm badge-warning badge-outline text-xs tooltip"
-                                data-tip="Requires external site">External</span
-                              >
-                            {:else}
-                              <span class="text-base-content/50 text-xs">—</span>
-                            {/if}
-                          </td>
-                          <td>
-                            <div class="text-sm whitespace-nowrap">
-                              {appliedAt(job)}
-                            </div>
-                          </td>
+                                {job.salary || "—"}
+                              </div>
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'type')?.visible}
+                            <td>
+                              {#if job.applicationType === "internal"}
+                                <span
+                                  class="badge badge-sm badge-success badge-outline text-xs tooltip"
+                                  data-tip="Quick Apply available">Internal</span
+                                >
+                              {:else if job.applicationType === "external"}
+                                <span
+                                  class="badge badge-sm badge-warning badge-outline text-xs tooltip"
+                                  data-tip="Requires external site">External</span
+                                >
+                              {:else}
+                                <span class="text-base-content/50 text-xs">—</span>
+                              {/if}
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'added')?.visible}
+                            <td>
+                              <div class="text-sm whitespace-nowrap">
+                                {appliedAt(job)}
+                              </div>
+                            </td>
+                          {/if}
                           <td>
                             <div class="flex items-center gap-2">
                               <button
