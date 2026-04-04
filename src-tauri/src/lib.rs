@@ -867,6 +867,7 @@ async fn run_bot_streaming(
 #[tauri::command]
 async fn run_bot_for_job(
     app: tauri::AppHandle,
+    bot_id: String,
     bot_name: String,
     job_url: String,
     job_id: Option<String>,
@@ -905,6 +906,8 @@ async fn run_bot_for_job(
         cmd.arg("--keep-open");
     }
 
+    cmd.env("BOT_ID", &bot_id);
+
     let mut child = cmd.current_dir(&project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit()) // Debug logs show in terminal
@@ -921,18 +924,24 @@ async fn run_bot_for_job(
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
 
-    let app_handle = app.clone();
+    let app_clone = app.clone();
+    let bot_id_log = bot_id.clone();
     
     // Background task to read output and emit to frontend
     tauri::async_runtime::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
-            // Check if the line is JSON
-            if line.starts_with('{') && line.ends_with('}') {
-                // If the frontend parsing breaks, this will still parse as a string
-                // But typically, emitting standard text blocks or custom Event objects happens here
-                let _ = app_handle.emit("bot-log", line.clone());
-            } else {
-                let _ = app_handle.emit("bot-log", line.clone());
+            // Forward ALL lines as bot-log with authoritative botId
+            let _ = app_clone.emit("bot-log", serde_json::json!({
+                "line": line,
+                "botId": bot_id_log
+            }));
+
+            // Additionally parse structured events with [BOT_EVENT] prefix
+            if line.starts_with("[BOT_EVENT]") {
+                let json_str = &line[11..]; // Remove prefix
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    let _ = app_clone.emit("bot-progress", event);
+                }
             }
             // Also print to Tauri console
             println!("[BOT]: {}", line);
@@ -942,6 +951,7 @@ async fn run_bot_for_job(
     // Wait for bot process to complete
     let app_exit = app.clone();
     let bot_name_exit = bot_name.clone();
+    let bot_id_exit = bot_id.clone();
     tokio::spawn(async move {
         let status = child.wait().await;
         {
@@ -950,6 +960,7 @@ async fn run_bot_for_job(
         }
         let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
         let _ = app_exit.emit("bot-stopped", serde_json::json!({
+            "botId": bot_id_exit,
             "botName": bot_name_exit,
             "exitCode": exit_code
         }));
@@ -961,6 +972,7 @@ async fn run_bot_for_job(
 #[tauri::command]
 async fn run_bot_bulk(
     app: tauri::AppHandle,
+    bot_id: String,
     job_ids: Vec<String>,
     mode: String,
     superbot: bool
@@ -984,13 +996,16 @@ async fn run_bot_bulk(
     let ids_str = job_ids.join(",");
     let superbot_str = if superbot { "true" } else { "false" };
 
-    let mut child = Command::new("bun")
-        .arg(script_path.to_str().unwrap())
+    let mut cmd = Command::new("bun");
+    cmd.arg(script_path.to_str().unwrap())
         .arg("bulk") // Trigger the bulk runner routine
         .arg(format!("--jobs={}", ids_str))
         .arg(format!("--mode={}", mode))
-        .arg(format!("--superbot={}", superbot_str))
-        .current_dir(&project_root)
+        .arg(format!("--superbot={}", superbot_str));
+
+    cmd.env("BOT_ID", &bot_id);
+
+    let mut child = cmd.current_dir(&project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -1006,17 +1021,31 @@ async fn run_bot_bulk(
     let stdout = child.stdout.take().ok_or("Failed to capture stdout")?;
     let reader = BufReader::new(stdout);
     let mut lines = reader.lines();
-    let app_handle = app.clone();
+    let app_clone = app.clone();
+    let bot_id_log = bot_id.clone();
 
     tauri::async_runtime::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
-            let _ = app_handle.emit("bot-log", line.clone());
+            // Forward ALL lines as bot-log with authoritative botId
+            let _ = app_clone.emit("bot-log", serde_json::json!({
+                "line": line,
+                "botId": bot_id_log
+            }));
+
+            // Additionally parse structured events with [BOT_EVENT] prefix
+            if line.starts_with("[BOT_EVENT]") {
+                let json_str = &line[11..]; // Remove prefix
+                if let Ok(event) = serde_json::from_str::<serde_json::Value>(json_str) {
+                    let _ = app_clone.emit("bot-progress", event);
+                }
+            }
             println!("[BOT BULK]: {}", line);
         }
     });
 
     let app_exit = app.clone();
     let bot_name_exit = bot_name.clone();
+    let bot_id_exit = bot_id.clone();
     tokio::spawn(async move {
         let status = child.wait().await;
         {
@@ -1025,6 +1054,7 @@ async fn run_bot_bulk(
         }
         let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
         let _ = app_exit.emit("bot-stopped", serde_json::json!({
+            "botId": bot_id_exit,
             "botName": bot_name_exit,
             "exitCode": exit_code
         }));
