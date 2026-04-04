@@ -213,31 +213,26 @@
             </a>
           </li>
           <li>
-            <details class="group" open={$page.url.pathname === '/jobs' || $page.url.pathname.endsWith('-job-tracker')}>
+            <details class="group" open={$page.url.pathname.endsWith('-job-tracker')}>
               <summary class="flex items-center gap-2 cursor-pointer">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
                 </svg>
                 <span>My Jobs</span>
               </summary>
-              <ul class="menu menu-compact pl-6 mt-1 space-y-1">
+              <ul class="mt-1 space-y-1 !p-0 !m-0 before:hidden">
                 <li>
-                  <a href="/jobs" class="{$page.url.pathname === '/jobs' ? 'active-tab' : ''}">
-                    All Platforms
-                  </a>
-                </li>
-                <li>
-                  <a href="/linkedin-job-tracker" class="{$page.url.pathname === '/linkedin-job-tracker' ? 'active-tab' : ''}">
+                  <a href="/linkedin-job-tracker" class="pl-11 {$page.url.pathname === '/linkedin-job-tracker' ? 'active-tab' : ''}">
                     LinkedIn
                   </a>
                 </li>
                 <li>
-                  <a href="/seek-job-tracker" class="{$page.url.pathname === '/seek-job-tracker' ? 'active-tab' : ''}">
+                  <a href="/seek-job-tracker" class="pl-11 {$page.url.pathname === '/seek-job-tracker' ? 'active-tab' : ''}">
                     Seek
                   </a>
                 </li>
                 <li>
-                  <a href="/indeed-job-tracker" class="{$page.url.pathname === '/indeed-job-tracker' ? 'active-tab' : ''}">
+                  <a href="/indeed-job-tracker" class="pl-11 {$page.url.pathname === '/indeed-job-tracker' ? 'active-tab' : ''}">
                     Indeed
                   </a>
                 </li>
@@ -326,19 +321,19 @@
                 </svg>
                 <span>Developer</span>
               </summary>
-              <ul class="menu menu-compact pl-6 mt-1 space-y-1">
+              <ul class="mt-1 space-y-1 !p-0 !m-0 before:hidden">
                 <li>
-                  <a href="/testfunctions" class="{$page.url.pathname === '/testfunctions' ? 'active-tab' : ''}">
+                  <a href="/testfunctions" class="pl-11 {$page.url.pathname === '/testfunctions' ? 'active-tab' : ''}">
                     Test Functions
                   </a>
                 </li>
                 <li>
-                  <a href="/generic-questions" class="{$page.url.pathname === '/generic-questions' ? 'active-tab' : ''}">
+                  <a href="/generic-questions" class="pl-11 {$page.url.pathname === '/generic-questions' ? 'active-tab' : ''}">
                     Generic Questions
                   </a>
                 </li>
                 <li>
-                  <a href="/api-test" class="{$page.url.pathname === '/api-test' ? 'active-tab' : ''}">
+                  <a href="/api-test" class="pl-11 {$page.url.pathname === '/api-test' ? 'active-tab' : ''}">
                     API Test
                   </a>
                 </li>
