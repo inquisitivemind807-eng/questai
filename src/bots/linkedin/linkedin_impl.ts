@@ -83,6 +83,30 @@ function normalizeComparableText(value: string): string {
     .trim();
 }
 
+function cleanLocation(location: string): { cleanedLocation: string, workplaceType?: string } {
+  if (!location) return { cleanedLocation: '' };
+  
+  const workplaceKeywords = [/Remote/i, /Hybrid/i, /On-site/i, /Onsite/i];
+  let workplaceType: string | undefined;
+  
+  let cleaned = location;
+  for (const kw of workplaceKeywords) {
+    if (kw.test(cleaned)) {
+      const match = cleaned.match(kw);
+      if (match) {
+        workplaceType = match[0];
+        // Remove the keyword and any surrounding separators (·, -, space)
+        cleaned = cleaned.replace(new RegExp(`\\s*(?:·|\\-|\\/|\\-|\\|)?\\s*${kw.source}\\s*(?:·|\\-|\\/|\\-|\\|)?\\s*`, 'i'), ' ').trim();
+      }
+    }
+  }
+  
+  // Clean up any double spaces or trailing separators
+  cleaned = cleaned.replace(/\s+/g, ' ').replace(/^[\s·\-\/]+|[\s·\-\/]+$/g, '').trim();
+  
+  return { cleanedLocation: cleaned, workplaceType };
+}
+
 function isLikelySameText(a: string, b: string): boolean {
   const left = normalizeComparableText(a);
   const right = normalizeComparableText(b);
@@ -955,7 +979,10 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
       }
       try {
         const locationEl = await card.findElement(By.css('.job-card-container__metadata-wrapper li span'));
-        location = (await locationEl.getText()).trim();
+        const rawLocation = (await locationEl.getText()).trim();
+        const { cleanedLocation, workplaceType } = cleanLocation(rawLocation);
+        location = cleanedLocation;
+        (card as any).workplaceType = workplaceType; // Temporary storage for refinement if needed
       } catch {
         // ignore
       }
@@ -1708,9 +1735,16 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract location
     try {
       const locationElement = await driver.findElement(By.xpath(selectors?.location_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--low-emphasis')][1]"));
-      jobDetails.location = (await locationElement.getText()).trim();
+      const rawLocation = (await locationElement.getText()).trim();
+      const { cleanedLocation, workplaceType } = cleanLocation(rawLocation);
+      jobDetails.location = cleanedLocation;
+      if (workplaceType) {
+        jobDetails.workMode = workplaceType;
+      }
     } catch (error) {
-      jobDetails.location = currentJob.work_location || '';
+      const { cleanedLocation, workplaceType } = cleanLocation(currentJob.work_location || '');
+      jobDetails.location = cleanedLocation;
+      if (workplaceType) jobDetails.workMode = workplaceType;
     }
 
     // Extract time posted
@@ -1736,6 +1770,12 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
       for (const tag of tagElements) {
         const tagText = (await tag.getText()).trim();
         if (tagText) tags.push(tagText);
+        
+        // Secondary check for workplace type in tags
+        if (!jobDetails.workMode) {
+          const { workplaceType } = cleanLocation(tagText);
+          if (workplaceType) jobDetails.workMode = workplaceType;
+        }
       }
       jobDetails.job_type_tags = tags;
     } catch (error) {
