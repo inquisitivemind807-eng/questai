@@ -8,6 +8,7 @@
   import { getManagedFiles } from "$lib/file-manager";
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
+  import { botProgressStore } from "$lib/stores/botProgressStore";
   import {
     Chart,
     Title,
@@ -646,7 +647,12 @@
           : app.platform === "linkedin"
             ? "linkedin_apply"
             : app.platform;
+      
+      const activeBotId = `bot_${Date.now()}`;
+      botProgressStore.startBot(activeBotId, mappedBotName, 0);
+
       const response = await invoke("run_bot_for_job", {
+        botId: activeBotId,
         botName: mappedBotName,
         jobUrl: app.url,
         jobId: app.platformJobId,
@@ -654,6 +660,7 @@
         keepOpen: selectedBotMode !== "bot",
       });
       console.log("Bot trigger response:", response);
+      await goto("/bot-logs");
     } catch (e) {
       console.error("Failed to trigger bot:", e);
       alert("Failed to trigger bot: " + e);
@@ -836,14 +843,19 @@
       }
       await persistSelectedResumeForBotRun();
       console.log(`Dispatching ${jobIdsStr.length} jobs to queue...`);
+      
+      const activeBotId = `bot_${Date.now()}`;
+      botProgressStore.startBot(activeBotId, "bulk_apply", jobIdsStr.length);
+
       const response = await invoke("run_bot_bulk", {
+        botId: activeBotId,
         jobIds: jobIdsStr,
         mode: selectedBotMode,
         superbot: isSuperbotActive,
       });
       console.log("Bulk Bot trigger response:", response);
-      alert(`Successfully dispatched ${jobIdsStr.length} jobs to the engine.`);
       selectedJobs = [];
+      await goto("/bot-logs");
     } catch (e) {
       console.error("Failed to trigger bulk bot:", e);
       alert("Failed to trigger bulk bot orchestration: " + e);
