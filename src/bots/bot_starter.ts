@@ -168,24 +168,6 @@ export class BotStarter {
       print_log(`[DEV] 🚀 Starting bot runner for: ${bot_name}`);
       logger.info('bot.start', 'Bot runner started', { bot_name, headless, keep_open });
 
-      // Indeed: run standalone Camoufox bot (same UI flow as Seek/LinkedIn)
-      if (bot_name === 'indeed') {
-        const { spawn } = await import('child_process');
-        const botsDir = path.dirname(fileURLToPath(import.meta.url));
-        const indeedBotDir = path.resolve(botsDir, 'indeed_bot');
-        print_log(`▶️ Running Indeed Camoufox bot from ${indeedBotDir}`);
-        const child = spawn('bun', ['run', 'dev'], {
-          cwd: indeedBotDir,
-          stdio: 'inherit',
-          shell: process.platform === 'win32'
-        });
-        await new Promise<void>((resolve, reject) => {
-          child.on('close', (code) => (code === 0 ? resolve() : reject(new Error(`indeed_bot exited with ${code}`))));
-          child.on('error', reject);
-        });
-        print_log(`✅ Indeed bot completed`);
-        return;
-      }
 
       // 1. Discover and validate bot
       this.registry.discover_bots();
@@ -500,13 +482,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         process.exit(1);
       }
     })();
-  } else if (job_url && (bot_name === 'linkedin' || bot_name === 'linkedin_apply')) {
+  } else if (job_url && (bot_name === 'linkedin' || bot_name === 'linkedin_apply' || bot_name === 'indeed' || bot_name === 'indeed_apply')) {
     (async () => {
       try {
-        print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
-        await run_bot('linkedin_apply', { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
+        const apply_bot_name = bot_name.startsWith('indeed') ? 'indeed_apply' : 'linkedin_apply';
+        const platform_name = bot_name.startsWith('indeed') ? 'Indeed' : 'LinkedIn';
+        print_log(`🚀 Starting DIRECT APPLY bot runner for ${platform_name} Job: ${job_url}`);
+        await run_bot(apply_bot_name, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
-        console.error('LinkedIn Direct Apply execution failed:', error);
+        console.error(`${bot_name.startsWith('indeed') ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
         process.exit(1);
       }
     })();

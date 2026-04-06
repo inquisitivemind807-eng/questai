@@ -1,0 +1,129 @@
+workflow_meta:
+  title: "Indeed Jobs"
+  description: "Search and extract jobs on Indeed."
+  start_step: "start"
+
+steps_config:
+  start:
+    step: 0
+    func: "step0"
+    transitions:
+      direct_apply_requested: "navigate_to_direct_apply_url"
+      step0_complete: "open_check_login"
+      ctx_failed: "start"
+    timeout: 30
+    on_timeout_event: "ctx_failed"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  open_check_login:
+    step: 1
+    func: "openCheckLogin"
+    transitions:
+      login_not_needed: "open_jobs_page"
+      user_needs_to_login: "show_manual_login_prompt"
+      failed_to_navigate: "show_manual_login_prompt"
+      failed_checking_login_status: "show_manual_login_prompt"
+    timeout: 30
+    on_timeout_event: "failed_to_navigate"
+
+  show_manual_login_prompt:
+    step: 4
+    func: "showManualLoginPrompt"
+    transitions:
+      prompt_displayed_to_user: "open_jobs_page"
+      error_showing_manual_login: "open_jobs_page"
+    timeout: 300
+    on_timeout_event: "prompt_displayed_to_user"
+
+  open_jobs_page:
+    step: 5
+    func: "openJobsPage"
+    transitions:
+      jobs_page_loaded: "set_search_keywords"
+      failed_opening_jobs_page: "open_jobs_page"
+    timeout: 30
+    on_timeout_event: "failed_opening_jobs_page"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  set_search_keywords:
+    step: 6
+    func: "setSearchKeywords"
+    transitions:
+      search_keywords_set: "set_search_location"
+      no_keywords_in_settings: "set_search_location"
+      keywords_input_not_found: "set_search_keywords"
+      failed_setting_search_keywords: "set_search_keywords"
+      jobs_page_missing: "set_search_keywords"
+    timeout: 30
+    on_timeout_event: "failed_setting_search_keywords"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  set_search_location:
+    step: 7
+    func: "setSearchLocation"
+    transitions:
+      search_location_set: "get_page_info"
+      no_search_location_in_settings: "get_page_info"
+      location_input_not_found: "get_page_info"
+      failed_setting_search_location: "get_page_info"
+      jobs_page_missing: "set_search_location"
+    timeout: 30
+    on_timeout_event: "failed_setting_search_location"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  get_page_info:
+    step: 9
+    func: "getPageInfo"
+    transitions:
+      page_info_extracted: "extract_job_details"
+      pagination_not_found: "extract_job_details"
+      failed_extracting_page_info: "get_page_info"
+      jobs_page_missing: "get_page_info"
+    timeout: 20
+    on_timeout_event: "failed_extracting_page_info"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  extract_job_details:
+    step: 10
+    func: "extractJobDetails"
+    transitions:
+      proceed_to_process_jobs: "process_jobs"
+      no_jobs_page_found: "open_jobs_page"
+      no_job_cards_found: "navigate_to_next_page"
+      failed_extracting_jobs: "extract_job_details"
+    timeout: 300
+    on_timeout_event: "failed_extracting_jobs"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  process_jobs:
+    step: 11
+    func: "processJobs"
+    transitions:
+      jobs_saved: "navigate_to_next_page"
+      no_jobs_to_process: "finish"
+      error_processing_jobs: "finish"
+    timeout: 30
+    on_timeout_event: "error_processing_jobs"
+    
+  navigate_to_next_page:
+    step: 23
+    func: "navigateToNextPage"
+    transitions:
+      extract_job_details: "extract_job_details"
+      finish: "finish"
+    timeout: 30
+    on_timeout_event: "finish"
+
+  finish:
+    step: 24
+    func: "finish"
+    transitions:
+      done: "done"
+    timeout: 10
+    on_timeout_event: "done"

@@ -792,10 +792,16 @@ async fn run_bot_streaming(
     }
 
     // Spawn bot process with piped stdout
-    let mut cmd = Command::new("bun");
-    cmd.arg("--no-cache")  // Always recompile; prevents stale bytecode missing new exports
-       .arg(script_path.to_str().unwrap())
-       .arg(&bot_name);
+    // Use tsx for Indeed because Camoufox strictly requires better-sqlite3 compiled against Node ABI.
+    let mut cmd = if bot_name.starts_with("indeed") {
+        let mut c = Command::new("npx");
+        c.arg("tsx").arg(script_path.to_str().unwrap()).arg(&bot_name);
+        c
+    } else {
+        let mut c = Command::new("bun");
+        c.arg("--no-cache").arg(script_path.to_str().unwrap()).arg(&bot_name);
+        c
+    };
 
     cmd.env("BOT_ID", &bot_id);
 

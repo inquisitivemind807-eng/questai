@@ -1,0 +1,32 @@
+{
+    "auth": {
+        "loginButton": "a:has-text(\"Sign in\"), a[href*=\"/auth\"]",
+        "emailInput": "input[type='email'], input[name='__email']",
+        "passwordInput": "input[type='password'], input[name='__password']",
+        "submitButton": "button[type='submit']"
+    },
+    "search": {
+        "keywordInput": "input#text-input-what, input[name='q']",
+        "locationInput": "input#text-input-where, input[name='l']",
+        "submitButton": "button.yosegi-InlineWhatWhere-primaryButton, button[type='submit']",
+        "sortDateButton": "a[href*='sort=date']",
+        "distanceFilter": "button[id*='filter-radius']",
+        "dateFilter": "button[id*='filter-dateposted']"
+    },
+    "jobCards": {
+        "container": "div.job_seen_beacon, div[data-testid='slider_item']",
+        "title": "h2.jobTitle, h2",
+        "company": "span[data-testid='company-name']",
+        "location": "div[data-testid='text-location']",
+        "applyButton": "button:has-text(\"Apply\"), [data-testid=\"indeedApply\"]"
+    },
+    "apply": {
+        "resumeCard": "[data-testid=\"FileResumeCardHeader-title\"]",
+        "continueButton": "button:has-text(\"Continue\"), button.ia-continueButton",
+        "submitButton": "button:has-text(\"Submit\"), button.ia-submitButton",
+        "questionInputs": ".ia-Questions-item input, .ia-Questions-item select, .ia-Questions-item textarea"
+    },
+    "pagination": {
+        "nextButton": "a[data-testid='pagination-page-next']"
+    }
+}
