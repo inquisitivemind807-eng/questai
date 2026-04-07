@@ -381,12 +381,18 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
 
       try {
         const platform = (job.platform || 'seek').toLowerCase();
-        const botToRun =
+        let botToRun =
           platform === 'seek'
             ? 'seek_apply'
             : platform === 'linkedin'
               ? 'linkedin_apply'
               : platform;
+
+        let botModeConfig = mode;
+        if (mode.includes('pauseconfirm')) {
+          botToRun += '_pauseconfirm';
+          botModeConfig = mode.replace('_pauseconfirm', '');
+        }
 
         // Build the specific bot configuration tailored to this job & user preference
         const normalizedDirectApplyUrl =
@@ -396,7 +402,7 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
 
         const bot_config = {
           directApplyUrl: normalizedDirectApplyUrl,
-          botMode: superbot ? 'bot' : mode, // Superbot explicitly forces 'bot' mode globally
+          botMode: superbot ? 'bot' : botModeConfig, // Superbot explicitly forces 'bot' mode globally
           targetJobId: job._id.toString()
         };
 
@@ -471,26 +477,36 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
 
   // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
-  if (job_url && (bot_name === 'seek' || bot_name === 'seek_apply')) {
+  if (job_url && bot_name.startsWith('seek')) {
     (async () => {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
         const normalizedUrl = normalizeSeekJobUrl(job_url);
-        await run_bot('seek_apply', { directApplyUrl: normalizedUrl, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
+        // Ensure "seek" maps to "seek_apply" but preserve suffixes like "_pauseconfirm"
+        const applyBotName = bot_name === 'seek' ? 'seek_apply' : bot_name;
+        await run_bot(applyBotName, { directApplyUrl: normalizedUrl, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
         console.error('Direct Apply execution failed:', error);
         process.exit(1);
       }
     })();
-  } else if (job_url && (bot_name === 'linkedin' || bot_name === 'linkedin_apply' || bot_name === 'indeed' || bot_name === 'indeed_apply')) {
+  } else if (job_url && (bot_name.startsWith('linkedin') || bot_name.startsWith('indeed'))) {
     (async () => {
       try {
-        const apply_bot_name = bot_name.startsWith('indeed') ? 'indeed_apply' : 'linkedin_apply';
-        const platform_name = bot_name.startsWith('indeed') ? 'Indeed' : 'LinkedIn';
-        print_log(`🚀 Starting DIRECT APPLY bot runner for ${platform_name} Job: ${job_url}`);
-        await run_bot(apply_bot_name, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
+        const isIndeed = bot_name.startsWith('indeed');
+        const platformName = isIndeed ? 'Indeed' : 'LinkedIn';
+        const defaultApplyName = isIndeed ? 'indeed_apply' : 'linkedin_apply';
+        
+        print_log(`🚀 Starting DIRECT APPLY bot runner for ${platformName} Job: ${job_url}`);
+        
+        // If it's just "linkedin" or "indeed", use the default apply name. 
+        // If it already has a suffix (like "_pauseconfirm"), keep it.
+        const applyBotName = (bot_name === 'linkedin' || bot_name === 'indeed') ? defaultApplyName : bot_name;
+        
+        await run_bot(applyBotName, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
-        console.error(`${bot_name.startsWith('indeed') ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
+        const isIndeed = bot_name.startsWith('indeed');
+        console.error(`${isIndeed ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
         process.exit(1);
       }
     })();
