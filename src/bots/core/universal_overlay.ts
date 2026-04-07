@@ -18,7 +18,7 @@ export interface OverlayConfig {
 
 interface OverlayState {
   botName: string;
-  type: 'job_progress' | 'sign_in' | 'notification' | 'step_progress' | 'custom' | 'manual_review';
+  type: 'job_progress' | 'sign_in' | 'notification' | 'step_progress' | 'custom' | 'manual_review' | 'pause_confirm';
   data: {
     appliedJobs?: number;
     totalJobs?: number;
@@ -641,6 +641,40 @@ export class UniversalOverlay {
             return;
           }
 
+          if (state.type === 'pause_confirm') {
+            const stepLabel = data.message || 'Next step';
+            refs.mainContent.innerHTML =
+              '<div style="text-align:center;padding:8px 0;">' +
+                '<div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:16px;">' +
+                  '<div style="width:10px;height:10px;border-radius:50%;background:#ffdd00;animation:pulse 1.5s ease-in-out infinite;flex-shrink:0;"></div>' +
+                  '<span style="color:#ffdd00;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;">Paused</span>' +
+                '</div>' +
+                '<p style="margin:0 0 8px 0;font-size:16px;line-height:1.7;color:#00ffff;font-weight:500;">' +
+                '<strong style="display:block;margin-bottom:4px;font-size:17px;">Step Complete</strong>' +
+                '<span style="color:#aabbcc;font-size:14px;">' + stepLabel + '</span></p>' +
+                '<button id="pause-confirm-btn" style="background:linear-gradient(135deg,#00dd88,#00bbcc);color:#1a1a1a;border:none;border-radius:10px;padding:14px 24px;font-size:16px;font-weight:bold;cursor:pointer;width:100%;max-width:100%;box-sizing:border-box;transition:all 0.2s ease;white-space:normal;box-shadow:0 4px 12px rgba(0,221,136,0.3);margin-top:12px;">Next \u25b6</button>' +
+              '</div>';
+            setTimeout(() => {
+              const button = document.getElementById('pause-confirm-btn');
+              if (!button) return;
+              button.onmouseover = () => {
+                button.style.background = 'linear-gradient(135deg,#00bb66,#009999)';
+                button.style.transform = 'translateY(-2px)';
+                button.style.boxShadow = '0 6px 16px rgba(0,221,136,0.4)';
+              };
+              button.onmouseout = () => {
+                button.style.background = 'linear-gradient(135deg,#00dd88,#00bbcc)';
+                button.style.transform = 'translateY(0)';
+                button.style.boxShadow = '0 4px 12px rgba(0,221,136,0.3)';
+              };
+              button.onclick = () => {
+                window.__overlayPauseConfirmClicked = true;
+                sessionStorage.setItem('overlay_pause_confirm_clicked', 'true');
+              };
+            }, 50);
+            return;
+          }
+
           if (data.html) {
             refs.mainContent.innerHTML = data.html;
             return;
@@ -1095,6 +1129,45 @@ export class UniversalOverlay {
         resolve();
       }, 30 * 60 * 1000);
     });
+  }
+
+  /**
+   * Show pause-confirm overlay (step-through mode).
+   * Renders a "Next ▶" button and waits for user click.
+   */
+  async showPauseConfirm(stepLabel: string): Promise<void> {
+    await this.initialize();
+
+    let existingLogs: string[] = [];
+    try {
+      const stateStr = await this.driver.executeScript(`
+        return window.__getOverlayState ? JSON.stringify(window.__getOverlayState()) : null;
+      `) as string | null;
+      if (stateStr) {
+        const currentState = JSON.parse(stateStr);
+        existingLogs = currentState?.data?.logs || [];
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    const state: OverlayState = {
+      botName: this.botName,
+      type: 'pause_confirm',
+      data: {
+        title: 'Paused — Waiting for confirmation',
+        message: stepLabel,
+        logs: existingLogs
+      }
+    };
+
+    await this.updateState(state);
+
+    // Reset the click flag
+    await this.driver.executeScript(`
+      window.__overlayPauseConfirmClicked = false;
+      sessionStorage.removeItem('overlay_pause_confirm_clicked');
+    `);
   }
 
   /**

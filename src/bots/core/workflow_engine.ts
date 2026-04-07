@@ -250,6 +250,10 @@ export class WorkflowEngine {
     while (currentStepName !== 'done' && stepCount < maxSteps && !this.aborted) {
       stepCount++;
 
+      // Stamp current step into context so step functions (e.g. waitForNextConfirm) can read it
+      this.context._currentStepName = currentStepName;
+      this.context._currentStepConfig = this.config.steps_config[currentStepName];
+
       const event = await this.executeStep(currentStepName);
       const stepConfig = this.config.steps_config[currentStepName];
 
