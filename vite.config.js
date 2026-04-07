@@ -16,7 +16,9 @@ export default defineConfig(async () => ({
   server: {
     port: 5173,
     strictPort: true,
-    host: host || '127.0.0.1',
+    // Listen on all local addresses so http://localhost (often IPv6 ::1) and
+    // http://127.0.0.1 both reach the dev server (Windows localhost mismatch fix).
+    host: host || true,
     hmr: host
       ? {
           protocol: "ws",
