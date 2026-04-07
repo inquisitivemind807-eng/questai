@@ -101,6 +101,35 @@ FinalBoss is a comprehensive job application automation platform with the follow
    - **indeed_bot/**: Standalone Camoufox Indeed bot (Active Indeed implementation)
    - Entry: `bot_starter.ts`; shared config: `user-bots-config.json`
 
+### 🤖 Running the Bots
+
+You can run the bots directly using the `bot_starter.ts` entry point with **bun**.
+
+**Basic Command:**
+```bash
+bun src/bots/bot_starter.ts <bot_variant> [options]
+```
+
+**Common Options:**
+- `--limit=N`: The maximum number of jobs to process (extract or apply) in this run. Default is usually set in config.
+- `--url="<job_url>"`: Run the bot for a specific job URL (used for "Apply" bots).
+
+**Pause & Confirm (Step-Through) Mode:**
+We've added special "Pause & Confirm" variants that pause after every major action, requiring you to click **"Next ▶"** in the browser overlay. This is perfect for manual oversight.
+
+- **Seek**:
+  - `seek_extract_pauseconfirm`: Extract jobs from Seek with manual confirmation.
+  - `seek_apply_pauseconfirm`: Apply for jobs on Seek with manual confirmation.
+- **LinkedIn**:
+  - `linkedin_extract_pauseconfirm`: Extract jobs from LinkedIn with manual confirmation.
+  - `linkedin_apply_pauseconfirm`: Apply for jobs on LinkedIn with manual confirmation.
+
+**Example:**
+```bash
+# Extract 3 jobs from LinkedIn with manual confirmation at each step
+bun src/bots/bot_starter.ts linkedin_extract_pauseconfirm --limit=3
+```
+
 3. **API Integration**
    - `corpus-rag-client.js`, `corpus-rag-auth.js`, `api-config.js`
    - JWT refresh and token persistence (e.g. `.cache/jwt_tokens.json`)
