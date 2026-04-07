@@ -1,0 +1,212 @@
+workflow_meta:
+  title: "Seek Extract (Pause & Confirm)"
+  description: "Search on seek.com.au, iterate job cards, and save job details — pauses after each key step for user confirmation"
+  start_step: "init_context"
+
+steps_config:
+  # 1) Setup and load homepage
+  init_context:
+    step: 1
+    func: "step0"
+    transitions:
+      ctx_ready: "open_homepage"
+      direct_apply_ready: "open_homepage"
+    timeout: 30
+    on_timeout_event: "ctx_ready"
+
+  open_homepage:
+    step: 2
+    func: "openHomepage"
+    transitions:
+      homepage_opened: "pc_after_homepage"
+      page_navigation_failed: "refresh_page"
+    timeout: 60
+    on_timeout_event: "page_navigation_failed"
+
+  pc_after_homepage:
+    step: 2.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "wait_for_load"
+    timeout: 360
+    on_timeout_event: "confirmed"
+
+  wait_for_load:
+    step: 3
+    func: "waitForPageLoad"
+    transitions:
+      page_loaded: "detect_page_state"
+      page_load_retry: "refresh_page"
+      page_load_failed_permanently: "done"
+    timeout: 40
+    on_timeout_event: "page_load_retry"
+
+  refresh_page:
+    step: 4
+    func: "refreshPage"
+    transitions:
+      page_refreshed: "wait_for_load"
+      no_page_to_refresh: "done"
+      page_reload_failed: "refresh_page"
+      refresh_failed_permanently: "done"
+    timeout: 60
+    on_timeout_event: "page_reload_failed"
+
+  # 2) Ensure search inputs are always filled from configuration
+  detect_page_state:
+    step: 5
+    func: "detectPageState"
+    transitions:
+      logged_in: "pc_after_detect"
+      sign_in_required: "show_sign_in_banner"
+      no_cards_found: "pc_after_detect"
+    timeout: 20
+    on_timeout_event: "perform_search"
+
+  pc_after_detect:
+    step: 5.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "perform_search"
+    timeout: 360
+    on_timeout_event: "confirmed"
+
+  fill_search_form:
+    step: 6
+    func: "fillSearchForm"
+    transitions:
+      search_form_filled: "click_search"
+      search_form_error: "click_search"
+    timeout: 20
+    on_timeout_event: "search_form_error"
+
+  click_search:
+    step: 7
+    func: "clickSearchButton"
+    transitions:
+      search_clicked: "perform_search"
+      search_failed: "fill_search_form"
+    timeout: 10
+    on_timeout_event: "search_failed"
+
+  show_sign_in_banner:
+    step: 8
+    func: "showSignInBanner"
+    transitions:
+      signin_banner_shown: "perform_search"
+      signin_banner_retry: "refresh_page"
+    timeout: 300
+    on_timeout_event: "signin_banner_retry"
+
+  # 3) Confirm results page and apply configured filters before collecting cards
+  perform_search:
+    step: 9
+    func: "performBasicSearch"
+    transitions:
+      search_completed: "apply_filters"
+      search_failed: "apply_filters"
+    timeout: 60
+    on_timeout_event: "apply_filters"
+
+  apply_filters:
+    step: 10
+    func: "applySeekFilters"
+    transitions:
+      filters_applied_successfully: "collect_job_cards"
+      filters_application_failed: "collect_job_cards"
+    timeout: 30
+    on_timeout_event: "filters_application_failed"
+
+  collect_job_cards:
+    step: 11
+    func: "collectJobCards"
+    transitions:
+      cards_collected: "pc_after_collect"
+      cards_collect_retry: "perform_search"
+      no_cards_found_permanently: "done"
+    timeout: 45
+    on_timeout_event: "perform_search"
+
+  pc_after_collect:
+    step: 11.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "click_job_card"
+    timeout: 360
+    on_timeout_event: "confirmed"
+
+  click_job_card:
+    step: 12
+    func: "clickJobCard"
+    transitions:
+      job_card_clicked: "detect_apply_type"
+      job_card_skipped: "click_job_card"
+      job_cards_finished: "click_next_page"
+      max_jobs_reached: "done"
+    timeout: 10
+    on_timeout_event: "job_card_skipped"
+
+  click_next_page:
+    step: 13
+    func: "clickNextPage"
+    transitions:
+      next_page_clicked: "perform_search"
+      no_more_pages: "done"
+    timeout: 15
+    on_timeout_event: "no_more_pages"
+
+  # 4) Parse + save only (never apply), then continue to next card
+  detect_apply_type:
+    step: 14
+    func: "detectApplyType"
+    transitions:
+      quick_apply_found: "parse_job_details"
+      regular_apply_found: "parse_external_job_details"
+      no_apply_found: "parse_external_job_details"
+      detect_apply_failed: "skip_to_next_card"
+    timeout: 10
+    on_timeout_event: "skip_to_next_card"
+
+  parse_job_details:
+    step: 15
+    func: "parseJobDetails"
+    transitions:
+      job_parsed: "save_scraped_job"
+      parse_failed: "skip_to_next_card"
+    timeout: 15
+    on_timeout_event: "parse_failed"
+
+  parse_external_job_details:
+    step: 16
+    func: "parseExternalJobDetails"
+    transitions:
+      external_job_parsed: "save_scraped_job"
+      parse_failed: "skip_to_next_card"
+    timeout: 10
+    on_timeout_event: "parse_failed"
+
+  save_scraped_job:
+    step: 17
+    func: "saveScrapedJob"
+    transitions:
+      job_saved_quick_apply: "pc_after_save"
+      job_saved: "pc_after_save"
+      save_failed: "skip_to_next_card"
+    timeout: 10
+    on_timeout_event: "save_failed"
+
+  pc_after_save:
+    step: 17.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "skip_to_next_card"
+    timeout: 360
+    on_timeout_event: "confirmed"
+
+  skip_to_next_card:
+    step: 18
+    func: "skipToNextCard"
+    transitions:
+      card_skipped: "click_job_card"
+    timeout: 5
+    on_timeout_event: "card_skipped"

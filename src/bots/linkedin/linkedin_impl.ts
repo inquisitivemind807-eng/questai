@@ -4,6 +4,7 @@ import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/hu
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
+import { waitForNextConfirm } from '../core/pause_confirm';
 import { recordJobApplicationToBackend } from '../core/job_application_recorder';
 import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
 import { logger } from '../core/logger';
@@ -2849,5 +2850,6 @@ export const linkedinStepFunctions = {
   applicationFailed,
   continueProcessing,
   navigateToNextPage,
-  finish
+  finish,
+  waitForNextConfirm
 };

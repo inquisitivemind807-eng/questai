@@ -4,6 +4,7 @@ import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/hu
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
+import { waitForNextConfirm } from '../core/pause_confirm';
 import { apiRequest } from '../core/api_client';
 import { handleResumeSelection } from './handlers/resume_handler';
 import { handleCoverLetter } from './handlers/cover_letter_handler';
@@ -2935,5 +2936,6 @@ export const seekStepFunctions = {
   skipToNextCard,
   skipResume,
   skipDocuments,
-  clickNextPage
+  clickNextPage,
+  waitForNextConfirm
 };
