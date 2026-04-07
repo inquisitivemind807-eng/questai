@@ -3,16 +3,18 @@
   
   interface Props {
     template: TemplateMetadata;
+    /** thumb: gallery card | thumb-detail: larger detail pane — both no scroll, scaled snapshot */
+    variant?: 'default' | 'embed' | 'thumb' | 'thumb-detail';
   }
-  
-  let { template }: Props = $props();
-  
-  // Layout helpers
-  const layoutType = template.style.layoutType || 'single-column';
-  const isTwoColumn =
-    layoutType === 'two-column-split' || layoutType === 'two-column-sidebar';
-  const leftColumnWidth = template.style.leftColumnWidth ?? 30;
-  const rightColumnWidth = template.style.rightColumnWidth ?? 70;
+
+  let { template, variant = 'default' }: Props = $props();
+
+  const layoutType = $derived(template.style.layoutType || 'single-column');
+  const isTwoColumn = $derived(
+    layoutType === 'two-column-split' || layoutType === 'two-column-sidebar',
+  );
+  const leftColumnWidth = $derived(template.style.leftColumnWidth ?? 30);
+  const rightColumnWidth = $derived(template.style.rightColumnWidth ?? 70);
   
   // Sample data for full resume preview
   const sampleData = {
@@ -59,7 +61,13 @@
   };
 </script>
 
-<div class="template-preview" style:background-color={template.style.backgroundColor || '#ffffff'}>
+<div
+  class="template-preview"
+  class:template-preview--embed={variant === 'embed'}
+  class:template-preview--thumb={variant === 'thumb'}
+  class:template-preview--thumb-detail={variant === 'thumb-detail'}
+  style:background-color={template.style.backgroundColor || '#ffffff'}
+>
   <!-- Header Preview -->
   <div class="preview-header" 
        style:color={template.style.primaryColor}
@@ -347,6 +355,50 @@
     transform-origin: top center;
     width: 200%;
     margin-left: -50%;
+  }
+
+  .template-preview--embed {
+    transform: scale(0.44);
+    transform-origin: top center;
+    width: 228%;
+    max-width: none;
+    margin-left: -64%;
+    min-height: 520px;
+    max-height: 900px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  }
+
+  /* Gallery “thumbnail”: whole resume visible, no scrollbars, scaled like a doc snapshot */
+  .template-preview--thumb {
+    transform: scale(0.22);
+    transform-origin: top center;
+    width: 455%;
+    max-width: none;
+    margin-left: -177.5%;
+    min-height: 1680px;
+    max-height: none;
+    overflow: hidden;
+    overflow-y: hidden;
+    padding: 18px;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    box-shadow: none;
+  }
+
+  .template-preview--thumb-detail {
+    transform: scale(0.36);
+    transform-origin: top center;
+    width: 278%;
+    max-width: none;
+    margin-left: -89%;
+    min-height: 1280px;
+    max-height: none;
+    overflow: hidden;
+    overflow-y: hidden;
+    padding: 18px;
+    border: 1px solid #e8e8e8;
+    border-radius: 6px;
+    box-shadow: none;
   }
   
   .preview-header {
