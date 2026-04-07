@@ -35,15 +35,26 @@
   $: displayCurrentStep = storeBot?.currentStep || currentStep;
   $: displayLogs = storeBot?.logs || logs;
 
-  $: progressTarget = displayExtractLimit || displayTotalJobs || 0;
-  $: progressPercent = progressTarget > 0 ? Math.min(100, Math.round((displayJobsProcessed / progressTarget) * 100)) : 0;
-
   $: statusBadgeClass =
     displayStatus === 'completed' ? 'badge-success'
     : displayStatus === 'failed' ? 'badge-error'
     : displayStatus === 'stopping' ? 'badge-warning'
     : displayStatus === 'stopped' ? 'badge-ghost border-base-content/20'
     : 'badge-info';
+
+  $: isApplyBot = displayName.toLowerCase().includes('apply') || displayAppliedJobs > 0;
+  $: progressValue = isApplyBot ? displayAppliedJobs : displayJobsProcessed;
+  $: progressTarget = isApplyBot ? (displayTotalJobs || 1) : (displayExtractLimit || displayTotalJobs || 0);
+  $: progressPercent = progressTarget > 0 ? Math.min(100, Math.round((progressValue / progressTarget) * 100)) : 0;
+
+  $: platform = (storeBot?.name || botName || '').toLowerCase();
+  $: jobsLink = platform.includes('linkedin') ? '/linkedin-job-tracker' :
+                platform.includes('seek') ? '/seek-job-tracker' :
+                platform.includes('indeed') ? '/indeed-job-tracker' :
+                '/linkedin-job-tracker'; // Default fallback
+
+  $: completionTitle = isApplyBot ? 'Application Batch Complete!' : 'Extraction Complete!';
+  $: completionActionText = isApplyBot ? 'View Application Status' : 'View Extracted Jobs';
 
   function formatTime(ts) {
     if (!ts) return '';
@@ -72,6 +83,23 @@
       logContainer.scrollTop = logContainer.scrollHeight;
     }
   });
+
+  // Expand/collapse logic for the logs panel
+  let isExpanded = (displayStatus === 'running' || displayStatus === 'stopping');
+  let prevStatus = displayStatus;
+  $: if (displayStatus !== prevStatus) {
+    isExpanded = (displayStatus === 'running' || displayStatus === 'stopping');
+    prevStatus = displayStatus;
+  }
+
+  let copied = false;
+  function copyLogs() {
+    const text = displayLogs.map(l => `[${formatTime(l.timestamp)}] ${l.text}`).join('\n');
+    navigator.clipboard.writeText(text).then(() => {
+      copied = true;
+      setTimeout(() => copied = false, 2000);
+    });
+  }
 </script>
 
 <div class="card bg-base-200 shadow-xl border border-base-300 w-full">
@@ -89,90 +117,129 @@
     <div class="flex items-center justify-between gap-3">
       <div class="flex items-center gap-3 min-w-0 flex-1">
         <div class="avatar placeholder flex-shrink-0">
-          <div class="bg-primary text-primary-content rounded-full w-10 h-10">
-            <span class="text-lg">🤖</span>
+          <div class="bg-primary text-primary-content rounded-full w-10 h-10 flex items-center justify-center">
+            <span class="text-lg leading-none">🤖</span>
           </div>
         </div>
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2 flex-wrap">
             <h3 class="font-bold text-lg uppercase truncate">{displayName}</h3>
-            <span class="badge {statusBadgeClass} badge-sm">{displayStatus}</span>
           </div>
           <p class="text-sm text-base-content/60 truncate">{displayCurrentStep}</p>
         </div>
       </div>
-      {#if displayStatus === 'running' || displayStatus === 'stopping'}
+      <div class="flex items-center gap-2">
         <button
           type="button"
-          class="btn btn-error btn-sm gap-1 flex-shrink-0"
-          on:click={onStop}
-          disabled={displayStatus === 'stopping'}
-          title="Stop bot"
-          aria-label="Stop bot"
+          class="btn btn-ghost btn-sm btn-circle"
+          on:click={() => isExpanded = !isExpanded}
+          title={isExpanded ? 'Collapse logs' : 'Expand logs'}
+          aria-label={isExpanded ? 'Collapse logs' : 'Expand logs'}
         >
-          {displayStatus === 'stopping' ? 'STOPPING...' : 'STOP ✕'}
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 transition-transform duration-200 {isExpanded ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
+            <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+          </svg>
         </button>
-      {/if}
+
+        {#if displayStatus === 'running' || displayStatus === 'stopping'}
+          <button
+            type="button"
+            class="btn btn-error btn-sm gap-1 flex-shrink-0"
+            on:click={onStop}
+            disabled={displayStatus === 'stopping'}
+            title="Stop bot"
+            aria-label="Stop bot"
+          >
+            {displayStatus === 'stopping' ? 'STOPPING...' : 'STOP ✕'}
+          </button>
+        {/if}
+      </div>
     </div>
 
     <!-- Progress Section -->
     <div class="mt-3">
       <div class="flex justify-between items-baseline mb-1">
-        <span class="text-sm font-medium text-base-content/70">Extracted</span>
+        <span class="text-sm font-medium text-base-content/70">
+          {isApplyBot ? (displayStatus === 'running' || displayStatus === 'stopping' ? 'Applying' : 'Applied') : 'Extracted'}
+        </span>
         <span class="font-bold text-2xl tabular-nums">
-          {displayJobsProcessed}<span class="text-base-content/40 text-lg">/{progressTarget}</span>
+          {progressValue}<span class="text-base-content/40 text-lg">/{progressTarget}</span>
         </span>
       </div>
       <progress
         class="progress progress-primary w-full h-3"
-        value={displayJobsProcessed}
+        value={progressValue}
         max={progressTarget || 1}
       ></progress>
       <div class="text-right text-xs text-base-content/50 mt-0.5">{progressPercent}%</div>
     </div>
   </div>
 
-  <!-- Tabs -->
-  <div class="border-t border-base-300">
-    <div role="tablist" class="tabs tabs-bordered px-4">
-      <button
-        role="tab"
-        class="tab tab-active"
-      >
-        Logs
-        <span class="badge badge-ghost badge-xs ml-1">{displayLogs.length}</span>
-      </button>
+  <!-- Tabs & Content -->
+  {#if isExpanded}
+    <div class="border-t border-base-300">
+      <div role="tablist" class="tabs tabs-bordered px-4 flex items-center justify-between">
+        <div class="flex">
+          <button
+            role="tab"
+            class="tab tab-active"
+          >
+            Logs
+          </button>
+        </div>
+        {#if displayLogs.length > 0}
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs gap-1 text-base-content/40 hover:text-primary transition-colors"
+            on:click={copyLogs}
+            title="Copy logs to clipboard"
+          >
+            {#if copied}
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+              </svg>
+              <span class="text-[10px] font-medium uppercase tracking-wider">Copied</span>
+            {:else}
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              <span class="text-[10px] font-medium uppercase tracking-wider">Copy</span>
+            {/if}
+          </button>
+        {/if}
+      </div>
     </div>
-  </div>
 
-  <!-- Tab Content -->
-  <div class="px-4 pb-4 pt-2">
-    <div
-      bind:this={logContainer}
-      on:scroll={handleLogScroll}
-      class="log-area bg-base-300 rounded-lg font-mono text-xs leading-relaxed overflow-y-auto overflow-x-hidden"
-      style="height: 400px; max-height: 60vh;"
-    >
-      {#if displayLogs.length === 0}
-        <div class="p-4 text-base-content/40 italic">Waiting for events...</div>
-      {:else}
-        {#each displayLogs as log}
-          <div class="px-3 py-0.5 flex gap-2 hover:bg-base-100/30">
-            <span class="text-base-content/40 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
-            <span class="{getLogClass(log.type)} break-all">{log.text}</span>
-          </div>
-        {/each}
+    <!-- Tab Content -->
+    <div class="px-4 pb-4 pt-2">
+      <div
+        bind:this={logContainer}
+        on:scroll={handleLogScroll}
+        class="log-area bg-base-300 rounded-lg font-mono text-xs leading-relaxed overflow-y-auto overflow-x-hidden"
+        style="height: 400px; max-height: 60vh;"
+      >
+        {#if displayLogs.length === 0}
+          <div class="p-4 text-base-content/40 italic">Waiting for events...</div>
+        {:else}
+          {#each displayLogs as log}
+            <div class="px-3 py-0.5 flex gap-2 hover:bg-base-100/30">
+              <span class="text-base-content/40 flex-shrink-0 select-none">{formatTime(log.timestamp)}</span>
+              <span class="{getLogClass(log.type)} break-all">{log.text}</span>
+            </div>
+          {/each}
+        {/if}
+      </div>
+      {#if !autoScroll && displayLogs.length > 0}
+        <button
+          class="btn btn-xs btn-ghost mt-1 w-full"
+          on:click={() => { autoScroll = true; if (logContainer) logContainer.scrollTop = logContainer.scrollHeight; }}
+        >
+          ↓ Scroll to bottom
+        </button>
       {/if}
     </div>
-    {#if !autoScroll && displayLogs.length > 0}
-      <button
-        class="btn btn-xs btn-ghost mt-1 w-full"
-        on:click={() => { autoScroll = true; if (logContainer) logContainer.scrollTop = logContainer.scrollHeight; }}
-      >
-        ↓ Scroll to bottom
-      </button>
-    {/if}
-  </div>
+  {/if}
 
   <!-- Activity indicator / Completion CTA -->
   {#if displayStatus === 'running' || displayStatus === 'stopping'}
@@ -186,10 +253,10 @@
         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
         </svg>
-        Extraction Complete!
+        {completionTitle}
       </div>
-      <a href="/jobs" class="btn btn-primary btn-wide shadow-lg shadow-primary/20">
-        View Extracted Jobs
+      <a href={jobsLink} class="btn btn-primary btn-wide shadow-lg shadow-primary/20">
+        {completionActionText}
         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6" />
         </svg>

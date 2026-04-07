@@ -195,8 +195,10 @@ steps_config:
 
   submit_application:
     step: 12
-    func: "submitApplication"
+    # func: "submitApplication"
+    func: "stayPutForInspection"
     transitions:
+      inspection_complete: "done"
       application_submitted: "close_quick_apply_and_end"
       submit_not_found: "pause_for_manual_review"
       submit_failed: "pause_for_manual_review"
