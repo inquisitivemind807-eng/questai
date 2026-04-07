@@ -648,12 +648,14 @@
             ? "linkedin_apply"
             : app.platform;
       
+      const configuredBotName = isPauseConfirmMode ? mappedBotName + "_pauseconfirm" : mappedBotName;
+
       const activeBotId = `bot_${Date.now()}`;
-      botProgressStore.startBot(activeBotId, mappedBotName, 0);
+      botProgressStore.startBot(activeBotId, configuredBotName, 0);
 
       const response = await invoke("run_bot_for_job", {
         botId: activeBotId,
-        botName: mappedBotName,
+        botName: configuredBotName,
         jobUrl: app.url,
         jobId: app.platformJobId,
         mode: selectedBotMode,
@@ -749,6 +751,7 @@
   // Modal State
   let showBotOverlay = false;
   let selectedBotMode = "review"; // "manual" | "review" | "bot"
+  let isPauseConfirmMode = false;
   let isSuperbotActive = false;
   let availableResumeFiles = [];
   let selectedResumeFile = "";
@@ -850,7 +853,7 @@
       const response = await invoke("run_bot_bulk", {
         botId: activeBotId,
         jobIds: jobIdsStr,
-        mode: selectedBotMode,
+        mode: isPauseConfirmMode ? `${selectedBotMode}_pauseconfirm` : selectedBotMode,
         superbot: isSuperbotActive,
       });
       console.log("Bulk Bot trigger response:", response);
@@ -984,6 +987,14 @@
                   {/each}
                 </ul>
               </div>
+            </div>
+
+            <!-- Pause & Confirm Mode Toggle -->
+            <div class="form-control ml-auto">
+              <label class="label cursor-pointer gap-2 bg-base-100 shadow-sm border border-base-300 rounded-lg px-4 py-2 hover:bg-base-200 transition-colors tooltip tooltip-top" data-tip="Bot pauses and confirms with you before taking action">
+                <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={isPauseConfirmMode} />
+                <span class="label-text font-semibold">Step-Through Mode</span>
+              </label>
             </div>
           </div>
 

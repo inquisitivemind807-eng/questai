@@ -13,6 +13,7 @@
 
   let showConfigError = false;
   let extractCount = 10;
+  let isPauseConfirmMode = false;
 
   onMount(async () => {
     // Simplified 3-bot list for UI clarity
@@ -39,6 +40,10 @@
       // Ensure we map to the correct internal bot names
       if (cleanBotName === "linkedin") finalBotName = "linkedin_extract";
       if (cleanBotName === "seek") finalBotName = "seek_extract";
+
+      if (isPauseConfirmMode && finalBotName.includes("extract")) {
+        finalBotName += "_pauseconfirm";
+      }
 
       const params = /** @type {any} */ ({ botName: finalBotName });
       let limit = 10; // Default as requested
@@ -104,14 +109,20 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
           </svg>
         </div>
-        <div>
+        <div class="flex flex-col gap-1">
           <h3 class="font-bold text-base text-base-content">Need to change keywords?</h3>
           <p class="text-xs text-base-content/60">Update your search criteria in the Configuration settings.</p>
         </div>
       </div>
-      <button class="btn btn-outline btn-sm" on:click={goToConfig}>
-        Configuration settings
-      </button>
+      <div class="flex items-center gap-6">
+        <label class="label cursor-pointer gap-2 bg-base-100 shadow-sm border border-base-300 rounded-lg px-4 py-2 hover:bg-base-200 transition-colors tooltip tooltip-top" data-tip="Bot pauses and confirms with you before taking action">
+          <input type="checkbox" class="toggle toggle-primary toggle-sm" bind:checked={isPauseConfirmMode} />
+          <span class="label-text font-semibold">Step-Through Mode</span>
+        </label>
+        <button class="btn btn-outline btn-sm" on:click={goToConfig}>
+          Configuration settings
+        </button>
+      </div>
     </div>
   </div>
 </div>
