@@ -3,7 +3,7 @@
   import BotDashboard from '$lib/components/BotDashboard.svelte';
   import { botProgressStore, allBots } from '$lib/stores/botProgressStore';
 
-  $: storeBots = $allBots;
+  $: storeBots = [...$allBots].sort((a, b) => b.startedAt - a.startedAt);
 
   async function stopBot(botId) {
     await botProgressStore.stopBot(botId);
