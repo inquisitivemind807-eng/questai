@@ -395,22 +395,23 @@ export async function* openJobUrl(ctx: WorkflowContext): AsyncGenerator<string, 
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, 'Seek');
 
-    // Show overlay immediately — before any navigation so the user sees it right away
-    await ctx.overlay.initialize();
-    await ctx.overlay.showJobProgress(0, 1, 'Starting Seek bot...', 0);
+    await StealthFeatures.hideWebDriver(driver);
+    await StealthFeatures.randomizeUserAgent(driver);
 
+    printLog(`Opening Direct Job URL (prio): ${ctx.seek_url}`);
+    // Start navigation BEFORE initializing overlay to avoid clear & flicker
+    await driver.get(ctx.seek_url);
+
+    // Now initialize overlay — it will show up on the loading/loaded page
     try {
+      await ctx.overlay.initialize();
+      await ctx.overlay.showJobProgress(0, 1, 'Starting Seek bot...', 0);
+      
       await driver.executeScript(`
         sessionStorage.removeItem('universal_overlay_state');
         window.__overlaySystemInitialized = false;
       `);
-    } catch (e) { /* ignore if page not loaded yet */ }
-
-    await StealthFeatures.hideWebDriver(driver);
-    await StealthFeatures.randomizeUserAgent(driver);
-
-    printLog(`Opening Direct Job URL: ${ctx.seek_url}`);
-    await driver.get(ctx.seek_url);
+    } catch (e) { /* overlay not critical */ }
 
     await driver.sleep(5000);
 
@@ -497,23 +498,24 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
       return await recreateDriverAndRestoreContext(ctx);
     };
 
-    // Show overlay immediately — before any navigation so the user sees it right away
-    await ctx.overlay.initialize();
-    await ctx.overlay.showJobProgress(0, 0, 'Starting Seek bot...', 0);
+    await StealthFeatures.hideWebDriver(driver);
+    await StealthFeatures.randomizeUserAgent(driver);
 
-    // Clear stale overlay state from any previous run so the fresh overlay shows correctly
+    printLog(`Opening URL (prio): ${ctx.seek_url || `${BASE_URL}/jobs`}`);
+    // Start navigation BEFORE initializing overlay to avoid clear & flicker
+    await driver.get(ctx.seek_url || `${BASE_URL}/jobs`);
+
+    // Now initialize overlay — it will show up on the loading/loaded page
     try {
+      await ctx.overlay.initialize();
+      await ctx.overlay.showJobProgress(0, 0, 'Starting Seek bot...', 0);
+      
+      // Clear stale overlay state from any previous run so the fresh overlay shows correctly
       await driver.executeScript(`
         sessionStorage.removeItem('universal_overlay_state');
         window.__overlaySystemInitialized = false;
       `);
-    } catch (e) { /* ignore if page not loaded yet */ }
-
-    await StealthFeatures.hideWebDriver(driver);
-    await StealthFeatures.randomizeUserAgent(driver);
-
-    printLog(`Opening URL: ${ctx.seek_url || `${BASE_URL}/jobs`}`);
-    await driver.get(ctx.seek_url || `${BASE_URL}/jobs`);
+    } catch (e) { /* overlay not critical */ }
 
     // Wait longer for slow networks
     printLog("Waiting for page to load...");

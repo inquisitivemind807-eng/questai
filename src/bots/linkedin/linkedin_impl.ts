@@ -400,10 +400,6 @@ export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<stri
       ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.linkedin);
       ctx.overlay = new UniversalOverlay(driver, 'LinkedIn');
 
-      // Show overlay immediately — before any navigation so the user sees it right away
-      await ctx.overlay.initialize();
-      await ctx.overlay.showJobProgress(0, 0, 'Starting LinkedIn bot...', 0);
-
       await StealthFeatures.hideWebDriver(driver);
       await StealthFeatures.randomizeUserAgent(driver);
     }
@@ -415,11 +411,24 @@ export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<stri
 
     if (!currentUrl.includes('linkedin.com') || currentUrl === 'data:,') {
       printLog(`Navigating to: ${jobsUrl}`);
+      // Start navigation BEFORE initializing overlay to avoid flicker
       await ctx.driver.get(jobsUrl);
+      
+      // Now initialize and show overlay if navigation was needed
+      try {
+        await ctx.overlay.initialize();
+        await ctx.overlay.showJobProgress(0, 0, 'Starting LinkedIn bot...', 0);
+      } catch (e) { /* overlay not critical */ }
+
       await ctx.driver.sleep(2000);
       currentUrl = await ctx.driver.getCurrentUrl();
     } else {
       printLog(`Already on LinkedIn: ${currentUrl}`);
+      // If already there, just ensure overlay is initialized
+      try {
+        await ctx.overlay.initialize();
+        await ctx.overlay.showJobProgress(0, 0, 'Continuing LinkedIn bot...', 0);
+      } catch (e) { /* overlay not critical */ }
     }
 
     const title = await ctx.driver.getTitle();
@@ -2363,7 +2372,8 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         });
 
         if (answer !== null && answer !== undefined) {
-          const modalScope = "[data-test-modal-id='easy-apply-modal']";
+          const configuredModalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal']";
+          const modalScope = `:is(${configuredModalCss})`;
           const fillResult = await fillQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, modalScope);
           const filled = fillResult.success;
           const options = q.options || q.opts || [];
