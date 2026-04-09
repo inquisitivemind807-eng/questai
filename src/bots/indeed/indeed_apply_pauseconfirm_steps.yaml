@@ -1,0 +1,132 @@
+workflow_meta:
+  title: "Indeed Direct Apply (Pause & Confirm)"
+  description: "Apply directly to a single Indeed job URL. Pauses between steps for manual intervention."
+  start_step: "start"
+
+steps_config:
+  start:
+    step: 0
+    func: "step0"
+    transitions:
+      direct_apply_requested: "navigate_to_direct_apply_url"
+      ctx_failed: "start"
+    timeout: 30
+    on_timeout_event: "ctx_failed"
+    max_retries: 3
+    on_max_retries: "finish"
+
+  navigate_to_direct_apply_url:
+    step: 0.5
+    func: "navigateToDirectApplyUrl"
+    transitions:
+      navigated: "open_check_login"
+      navigation_failed: "finish"
+    timeout: 30
+    on_timeout_event: "navigation_failed"
+
+  open_check_login:
+    step: 1
+    func: "openCheckLogin"
+    transitions:
+      login_not_needed: "pc_before_attempt_easy_apply"
+      user_needs_to_login: "show_manual_login_prompt"
+      failed_to_navigate: "show_manual_login_prompt"
+      failed_checking_login_status: "show_manual_login_prompt"
+    timeout: 30
+    on_timeout_event: "failed_to_navigate"
+
+  show_manual_login_prompt:
+    step: 4
+    func: "showManualLoginPrompt"
+    transitions:
+      prompt_displayed_to_user: "pc_before_attempt_easy_apply"
+      error_showing_manual_login: "pc_before_attempt_easy_apply"
+    timeout: 20
+    on_timeout_event: "prompt_displayed_to_user"
+
+  pc_before_attempt_easy_apply:
+    step: 13
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "attempt_easy_apply"
+
+  attempt_easy_apply:
+    step: 14
+    func: "attemptEasyApply"
+    transitions:
+      modal_opened_successfully: "pc_before_answer_questions"
+      modal_failed_to_open: "application_failed"
+      no_easy_apply_button_found: "external_apply"
+      failed_to_click_easy_apply: "external_apply"
+      easy_apply_process_error: "application_failed"
+    timeout: 30
+    on_timeout_event: "easy_apply_process_error"
+    max_retries: 3
+    on_max_retries: "application_failed"
+
+  pc_before_answer_questions:
+    step: 15
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "answer_questions"
+
+  answer_questions:
+    step: 16
+    func: "answerQuestions"
+    transitions:
+      finished_answering_questions: "pc_before_submit_application"
+      next_stage: "answer_questions"
+      error_answering_questions: "answer_questions"
+    timeout: 60
+    on_timeout_event: "error_answering_questions"
+    max_retries: 3
+    on_max_retries: "application_failed"
+
+  pc_before_submit_application:
+    step: 16.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "submit_application"
+
+  submit_application:
+    step: 17
+    func: "submitApplication"
+    transitions:
+      save_applied_job: "pc_after_submit"
+      application_failed: "application_failed"
+      submit_application_error: "submit_application"
+    timeout: 30
+    on_timeout_event: "submit_application_error"
+    max_retries: 3
+    on_max_retries: "application_failed"
+    
+  pc_after_submit:
+    step: 18
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "finish"
+
+  external_apply:
+    step: 19
+    func: "externalApply"
+    transitions:
+      application_failed: "application_failed"
+    timeout: 30
+    on_timeout_event: "application_failed"
+
+  application_failed:
+    step: 21
+    func: "applicationFailed"
+    transitions:
+      application_marked_failed: "finish"
+      mark_failed_error: "finish"
+    timeout: 20
+    on_timeout_event: "mark_failed_error"
+
+  finish:
+    step: 24
+    func: "finish"
+    transitions:
+      done: "done"
+    timeout: 10
+    on_timeout_event: "done"

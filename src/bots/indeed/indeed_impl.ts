@@ -13,10 +13,26 @@ import { UniversalOverlay } from '../core/universal_overlay';
 class PlaywrightDriverAdapter {
     constructor(private page: any) { }
     async executeScript(script: string, ...args: any[]) {
+        if (this.page.isClosed()) throw new Error("Target closed");
         try {
-            return await this.page.evaluate(`(() => { ${script} })()`);
-        } catch (e) {
-            return await this.page.evaluate(script).catch(() => null);
+            // Selenium scripts often expect 'arguments' array to be available globally or in scope
+            // We wrap the script in a function that receives the arguments.
+            return await this.page.evaluate(({ s, a }: { s: string, a: any[] }) => {
+                try {
+                    const fn = new Function('...arguments', s);
+                    return fn(...a);
+                } catch (innerError) {
+                    // If not a return-based script, try just executing it
+                    return new Function(s)();
+                }
+            }, { s: script, a: args });
+        } catch (e: any) {
+            const msg = e?.message || "";
+            if (msg.includes('closed') || msg.includes('disconnected') || msg.includes('Target page') || msg.includes('context destroyed')) {
+                throw e; // Rethrow to let the caller know the browser is dead
+            }
+            console.error('[DEV] adapter.executeScript error:', e);
+            return null;
         }
     }
 }
@@ -32,30 +48,42 @@ export async function* step0(ctx: any) {
             fs.mkdirSync(sessionsDir, { recursive: true });
         }
 
+        // Fallback to software rendering for systems without proper graphics drivers (e.g. Pop!_OS Mac)
+        process.env.MOZ_DISABLE_CONTENT_SANDBOX = '1';
+        process.env.LIBGL_ALWAYS_SOFTWARE = '1';
+        process.env.MOZ_ACCELERATED = '0';
+
         ctx.sessionExists = fs.readdirSync(sessionsDir).filter(file => !['screenshots', 'logs', 'resume', 'temp'].includes(file)).length > 0;
 
         try {
             const browser = await Camoufox({
                 headless: ctx.config?.headless === true,
-                user_data_dir: sessionsDir
+                user_data_dir: sessionsDir,
+                window: [1920, 1080]
             });
             ctx.browser = browser;
 
+            // Handle browser closure immediately (BrowserContext uses 'close')
+            browser.on('close', () => {
+                console.error('[DEV] 🛑 Indeed Browser was closed. Exiting...');
+                process.exit(1);
+            });
+
             // Camoufox with user_data_dir persists context, so it returns a BrowserContext.
-            // If it returns a standard browser, use newPage(), if it returns context wrapper:
             const pages = await browser.pages();
             ctx.page = pages.length > 0 ? pages[0] : await browser.newPage();
 
-            // Try to maximize window via JS
+            // Try to maximize window via JS and set viewport
             try {
-                await ctx.page.evaluate(() => window.moveTo(0, 0));
-                await ctx.page.evaluate(() => window.resizeTo(screen.availWidth, screen.availHeight));
+                await ctx.page.setViewportSize({ width: 1920, height: 1080 });
             } catch (e) { }
 
             ctx.overlay = new UniversalOverlay(new PlaywrightDriverAdapter(ctx.page) as any, 'Indeed');
-            await ctx.overlay.initialize().catch(() => { });
+            
+            // NOTE: We don't initialize overlay yet because we might be on about:blank
+            // We'll initialize it in openCheckLogin or showManualLoginPrompt
 
-            console.log('indeed.step0', `Camoufox stealth session loaded: ${sessionsDir}`);
+            console.log('indeed.step0', `Camoufox stealth engine ready. Profile: ${sessionsDir}`);
         } catch (error) {
             console.error('indeed.step0', 'Critical fatal error launching Camoufox', error);
             throw error;
@@ -77,6 +105,13 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         if (!jobUrl) throw new Error("No Direct Apply URL provided");
         await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
         await ctx.page.waitForTimeout(3000);
+        
+        // Ensure overlay is ready on the job page
+        if (ctx.overlay) {
+            await ctx.overlay.initialize().catch(() => {});
+            await ctx.overlay.addLogEvent(`🎯 Direct Apply: Page loaded`).catch(() => {});
+        }
+        
         yield 'navigated';
     } catch (error) {
         console.error('indeed.navigate', 'Failed to navigate to direct apply', error);
@@ -99,15 +134,32 @@ export async function* openCheckLogin(ctx: any) {
             await ctx.page.waitForTimeout(3000);
         }
 
-        // Equivalent DOM/Cookie polling
+        // Initialize/Refresher Overlay on the real page
+        if (ctx.overlay) {
+            await ctx.overlay.initialize().catch(() => {});
+            await ctx.overlay.addLogEvent('✅ Indeed page loaded. Checking login...').catch(() => {});
+        }
+
+        // Wait a few seconds for the page to fully render before checking DOM elements
+        await ctx.page.waitForTimeout(5000);
+
+        // A simple count is safer than isVisible(), because a smaller viewport
+        // might hide the 'Sign in' button inside a hamburger menu, making it "invisible"
+        // and falsely triggering a "logged in" state.
+        const loginBtnSelector = "a[href*='/auth'], a[href*='/account/login'], a:has-text('Sign in'), a:has-text('Sign In')";
+        const signInBtnCount = await ctx.page.locator(loginBtnSelector).count();
+        
+        // Also check for Indeed specific auth cookies
         const cookies = await ctx.page.context().cookies();
-        const isLoggedIn = cookies.some((c: any) => c.name.includes('CTK') || c.name.includes('SHOE') || c.name.includes('PassportAuthProxy'));
+        const hasAuthCookies = cookies.some((c: any) => c.name === 'SHOE' || c.name.includes('PassportAuthProxy'));
+
+        const isLoggedIn = (signInBtnCount === 0) && hasAuthCookies;
 
         if (isLoggedIn) {
             console.log('indeed.checkLogin', 'Session is authenticated.');
             yield 'login_not_needed';
         } else {
-            console.log('indeed.checkLogin', 'User is not logged in.');
+            console.log('indeed.checkLogin', `User is not logged in. (Sign-in buttons found: ${signInBtnCount}, Auth Cookies: ${hasAuthCookies})`);
             yield 'user_needs_to_login';
         }
     } catch (error) {
@@ -121,50 +173,80 @@ export async function* showManualLoginPrompt(ctx: any) {
     console.warn('indeed.login', 'ACTION REQUIRED: Please enter your credentials and log in to Indeed.');
 
     try {
-        const loginBtnSelector = ctx.selectors.auth?.loginButton || "a[href*='/auth']";
+        // Ensure overlay is initialized
+        if (ctx.overlay) {
+            await ctx.overlay.initialize().catch(() => {});
+        }
+
+        const loginBtnSelector = "a[href*='/auth'], a[href*='/account/login'], a:has-text('Sign in'), a:has-text('Sign In')";
         const btn = ctx.page.locator(loginBtnSelector).first();
         if (await btn.count() > 0) {
             await btn.click({ force: true }).catch(() => { });
         }
 
-        // Universal Banner Injection Port
-        await ctx.page.evaluate(() => {
-            const id = 'universal-login-banner';
-            if (document.getElementById(id)) return;
-            const banner = document.createElement('div');
-            banner.id = id;
-            banner.innerHTML = '🔴 PLEASE LOG IN TO INDEED 🔴<br>The bot is waiting for you...';
-            Object.assign(banner.style, {
-                position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
-                background: '#ff4444', color: 'white', padding: '15px 20px',
-                borderRadius: '8px', fontSize: '16px', fontWeight: 'bold',
-                textAlign: 'center', zIndex: '999999', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-                fontFamily: 'Arial, sans-serif'
-            });
-            document.body.appendChild(banner);
-        }).catch(() => { });
+        // Trigger the Universal Overlay's Sign In banner format
+        if (ctx.overlay) {
+            await ctx.overlay.showSignInOverlay().catch(() => {});
+        } else {
+            // Fallback Banner just in case overlay failed
+            await ctx.page.evaluate(() => {
+                const id = 'universal-login-banner';
+                if (document.getElementById(id)) return;
+                const banner = document.createElement('div');
+                banner.id = id;
+                banner.innerHTML = '🔴 PLEASE LOG IN TO INDEED 🔴<br>The bot is waiting for you...';
+                Object.assign(banner.style, {
+                    position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
+                    background: '#ff4444', color: 'white', padding: '15px 20px',
+                    borderRadius: '8px', fontSize: '16px', fontWeight: 'bold',
+                    textAlign: 'center', zIndex: '999999', boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                    fontFamily: 'Arial, sans-serif'
+                });
+                document.body.appendChild(banner);
+            }).catch(() => { });
+        }
 
         let authenticated = false;
-        for (let i = 0; i < 60; i++) { // wait up to ~3 mins
+        
+        // Wait up to ~6 minutes (120 iterations * 3s)
+        for (let i = 0; i < 120; i++) {
+            if (ctx.page.isClosed()) throw new Error('Browser closed during login pause');
+            
             await ctx.page.waitForTimeout(3000);
+            
+            // Check if user clicked the "✅ I have logged in - Continue" button on the Overlay
+            const isClickConfirmed = await ctx.page.evaluate(() => {
+                return (window as any).__overlaySignInComplete === true || sessionStorage.getItem('overlay_signin_complete') === 'true';
+            }).catch(() => false);
+
+            // Also passively check for secure auth cookies if they fully log in but forget to click the button
             const cookies = await ctx.page.context().cookies();
-            if (cookies.some((c: any) => c.name.includes('CTK') || c.name.includes('PassportAuthProxy') || c.name.includes('SHOE'))) {
+            const hasAuthCookies = cookies.some((c: any) => c.name.includes('PassportAuthProxy') || c.name.includes('SHOE'));
+
+            if (isClickConfirmed || hasAuthCookies) {
                 authenticated = true;
+                
+                // Clear the state so it doesn't instantly trigger on future steps
+                await ctx.page.evaluate(() => {
+                    (window as any).__overlaySignInComplete = false;
+                    sessionStorage.removeItem('overlay_signin_complete');
+                    const b = document.getElementById('universal-login-banner');
+                    if (b) b.remove();
+                }).catch(() => {});
+                
                 break;
             }
         }
 
-        // Clean Banner
-        await ctx.page.evaluate(() => {
-            const b = document.getElementById('universal-login-banner');
-            if (b) b.remove();
-        }).catch(() => { });
-
         if (authenticated) {
             console.log('indeed.login', 'Login confirmed! Proceeding...');
+            if (ctx.overlay) {
+                await ctx.overlay.updateJobProgress(0, 0, 'Login confirmed, proceeding...', 1).catch(() => {});
+            }
         } else {
             console.warn('indeed.login', 'Login timed out. Actions may fail.');
         }
+        
         yield 'prompt_displayed_to_user';
     } catch (error) {
         console.error('indeed.login', 'Error during manual login flow', error);
@@ -172,22 +254,113 @@ export async function* showManualLoginPrompt(ctx: any) {
     }
 }
 
+// --- Filter helpers ---
+
+function normalizeJobType(jt: string): string {
+    const map: Record<string, string> = {
+        'full-time': 'fulltime', 'fulltime': 'fulltime',
+        'part-time': 'parttime', 'parttime': 'parttime',
+        'contract': 'contract', 'temporary': 'temporary',
+        'internship': 'internship'
+    };
+    return map[jt?.toLowerCase()] || '';
+}
+
+function normalizeFromage(listed: string): string {
+    const map: Record<string, string> = {
+        '1d': '1', '3d': '3', '7d': '7', '14d': '14',
+        '1': '1', '3': '3', '7': '7', '14': '14'
+    };
+    return map[listed?.toLowerCase()] || '';
+}
+
+function normalizeExperienceLevel(lvl: string): string {
+    const map: Record<string, string> = {
+        'entry': 'entry_level', 'entry_level': 'entry_level',
+        'mid': 'mid_level', 'mid_level': 'mid_level',
+        'senior': 'senior_level', 'senior_level': 'senior_level'
+    };
+    return map[lvl?.toLowerCase()] || '';
+}
+
+async function handleLocationDialog(page: any): Promise<void> {
+    try {
+        console.log('indeed.openJobs', 'Checking for location confirmation dialog...');
+        // Wait up to 5s for the dialog to potentially show up (Indeed loads it asynchronously)
+        const yesBtnSelector = 'div.eofpmnx1 button:has-text("Yes"), button.css-1ua5vtl:has-text("Yes")';
+        const yesBtn = page.locator(yesBtnSelector).first();
+        
+        try {
+            await yesBtn.waitFor({ state: 'visible', timeout: 5000 });
+        } catch (e) {
+            // Dialog didn't show within 5s, that's fine
+            return;
+        }
+
+        if (await yesBtn.count() > 0) {
+            console.log('indeed.openJobs', 'Location dialog found — clicking Yes');
+            await yesBtn.click({ force: true });
+            await page.waitForTimeout(2000);
+        }
+    } catch (e) {
+        console.warn('indeed.openJobs', 'Error handling location dialog', e);
+    }
+}
+
 export async function* openJobsPage(ctx: any) {
     console.log('indeed.openJobs', 'Navigating to search page...');
     try {
-        const keywords = ctx.config?.formData?.keywords || '';
-        const location = ctx.config?.formData?.locations || '';
+        const fd = ctx.config?.formData || {};
+        const keywords  = fd.keywords  || '';
+        const location  = fd.locations || '';
+        const jobType   = normalizeJobType(fd.jobType || '');
+        const fromage   = normalizeFromage(fd.listedDate || '');
+        const isRemote  = (fd.remotePreference || '').toLowerCase() === 'remote';
+        const radius    = fd.radius || '';
+        const explvl    = normalizeExperienceLevel(fd.experienceLevel || '');
+        const minSalary = fd.minSalary || '';
+        // User can drop a raw Indeed sc= string in config for advanced taxo* filters
+        const sc        = fd.indeedSc || '';
 
-        let url = 'https://www.indeed.com/jobs';
-        if (keywords || location) {
-            url += `?q=${encodeURIComponent(keywords)}&l=${encodeURIComponent(location)}`;
+        const params = new URLSearchParams();
+        
+        // Indeed often handles salary best when appended to the query, e.g. "Software Engineer $100,000"
+        let searchQuery = keywords;
+        if (minSalary) {
+            const formattedSalary = minSalary.includes('$') ? minSalary : `$${minSalary}`;
+            searchQuery += ` ${formattedSalary}`;
+        }
+        params.set('q', searchQuery);
+
+        if (location) params.set('l', location);
+        if (jobType)  params.set('jt', jobType);
+        if (fromage)  params.set('fromage', fromage);
+        if (isRemote) params.set('remotejob', '1');
+        if (radius)   params.set('radius', String(radius));
+        if (explvl)   params.set('explvl', explvl);
+        if (sc)       params.set('sc', sc);
+
+        const url = `https://www.indeed.com/jobs?${params.toString()}`;
+        console.log('indeed.openJobs', `Search URL: ${url}`);
+
+        // Initial navigation
+        await ctx.page.goto(url, { waitUntil: 'domcontentloaded' });
+        
+        // Indeed often does a series of redirects or loads filters via JS. 
+        // Wait for results to actually land.
+        await ctx.page.waitForTimeout(4000);
+
+        // Auto-handle the "Do you want to see results in [location] only?" dialog
+        await handleLocationDialog(ctx.page);
+
+        if (ctx.overlay) {
+            await ctx.overlay.initialize().catch(() => {});
+            await ctx.overlay.showJobProgress(0, 0, `Searching: ${searchQuery} in ${location || 'Anywhere'}`, 1).catch(() => { });
         }
 
-        await ctx.page.goto(url, { waitUntil: 'domcontentloaded' });
-        await ctx.page.waitForTimeout(3000);
-        ctx.overlay?.showJobProgress(0, 0, 'Navigating to Jobs...', 1).catch(() => { });
         yield 'jobs_page_loaded';
     } catch (error) {
+        console.error('indeed.openJobs', error);
         yield 'failed_opening_jobs_page';
     }
 }
@@ -424,3 +597,5 @@ export async function* finish(ctx: any) {
     }
     yield 'done';
 }
+
+export { waitForNextConfirm } from '../core/pause_confirm';

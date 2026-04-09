@@ -28,5 +28,11 @@
     },
     "pagination": {
         "nextButton": "a[data-testid='pagination-page-next']"
+    },
+    "filters": {
+        "locationDialog": "div.eofpmnx1",
+        "locationDialogYes": "div.eofpmnx1 button:has-text('Yes')",
+        "filterBar": ".yosegi-FilterPill-pillList",
+        "anyFilterButton": "button[id$='_filter_button'], button[aria-label$=' filter']"
     }
 }

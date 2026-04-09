@@ -1,6 +1,6 @@
 workflow_meta:
-  title: "Indeed Jobs"
-  description: "Search and extract jobs on Indeed."
+  title: "Indeed Extract Jobs (Pause & Confirm)"
+  description: "Search and extract jobs on Indeed. Pauses between processing steps for manual intervention."
   start_step: "start"
 
 steps_config:
@@ -8,7 +8,7 @@ steps_config:
     step: 0
     func: "step0"
     transitions:
-      direct_apply_requested: "navigate_to_direct_apply_url"
+      direct_apply_requested: "finish"
       step0_complete: "open_check_login"
       ctx_failed: "start"
     timeout: 30
@@ -79,20 +79,26 @@ steps_config:
     step: 9
     func: "getPageInfo"
     transitions:
-      page_info_extracted: "extract_job_details"
-      pagination_not_found: "extract_job_details"
-      failed_extracting_page_info: "get_page_info"
+      page_info_extracted: "pc_before_extract_job_details"
+      pagination_not_found: "pc_before_extract_job_details"
+      failed_extracting_page_info: "pc_before_extract_job_details"
       jobs_page_missing: "get_page_info"
     timeout: 20
     on_timeout_event: "failed_extracting_page_info"
     max_retries: 3
     on_max_retries: "finish"
 
+  pc_before_extract_job_details:
+    step: 9.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "extract_job_details"
+
   extract_job_details:
     step: 10
     func: "extractJobDetails"
     transitions:
-      proceed_to_process_jobs: "process_jobs"
+      proceed_to_process_jobs: "pc_before_process_jobs"
       no_jobs_page_found: "open_jobs_page"
       no_job_cards_found: "navigate_to_next_page"
       failed_extracting_jobs: "extract_job_details"
@@ -101,16 +107,28 @@ steps_config:
     max_retries: 3
     on_max_retries: "finish"
 
+  pc_before_process_jobs:
+    step: 10.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "process_jobs"
+
   process_jobs:
     step: 11
     func: "processJobs"
     transitions:
-      jobs_saved: "navigate_to_next_page"
+      jobs_saved: "pc_before_navigate_to_next_page"
       no_jobs_to_process: "finish"
       error_processing_jobs: "finish"
     timeout: 30
     on_timeout_event: "error_processing_jobs"
     
+  pc_before_navigate_to_next_page:
+    step: 11.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "navigate_to_next_page"
+
   navigate_to_next_page:
     step: 23
     func: "navigateToNextPage"
