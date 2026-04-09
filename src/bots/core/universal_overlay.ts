@@ -1030,7 +1030,7 @@ export class UniversalOverlay {
 
     console.log('🔐 Please sign in manually and click "Continue" when done');
 
-    // Wait for continue button
+    // Wait for continue button — no timeout, waits indefinitely
     return new Promise<void>((resolve) => {
       const checkInterval = setInterval(async () => {
         try {
@@ -1049,13 +1049,6 @@ export class UniversalOverlay {
           // Continue checking
         }
       }, 500);
-
-      // Timeout after 10 minutes
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        console.log('⏰ Sign-in timeout reached');
-        resolve();
-      }, 10 * 60 * 1000);
     });
   }
 
@@ -1098,7 +1091,7 @@ export class UniversalOverlay {
 
     console.log('⏸️ Pausing for manual review to submit application...');
 
-    // Wait for continue button
+    // Wait for continue button — no timeout, waits indefinitely
     return new Promise<void>((resolve) => {
       const checkInterval = setInterval(async () => {
         try {
@@ -1121,13 +1114,6 @@ export class UniversalOverlay {
           // Continue checking
         }
       }, 500);
-
-      // Auto-timeout after 30 minutes
-      setTimeout(() => {
-        clearInterval(checkInterval);
-        console.log('⏰ Manual review timeout reached (30 minutes) - auto proceeding');
-        resolve();
-      }, 30 * 60 * 1000);
     });
   }
 
