@@ -262,7 +262,7 @@ These env vars (from `.env` or Tauri) take priority over CLI flags:
 
 ## 🟡 Indeed Bot — Current Status
 
-> Based on [`docs/indeed_bot_minimum_requirements.md`](./docs/indeed_bot_minimum_requirements.md)
+> Based on [`docs/indeed_minimum_requirements.md`](./docs/indeed_minimum_requirements.md)
 
 The Indeed bot uses **Playwright + Camoufox** (stealthy Firefox) instead of Selenium/Chrome, making it more resilient against Indeed's aggressive anti-bot protections.
 

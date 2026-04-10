@@ -8,7 +8,7 @@
   let bots = [
     { id: "linkedin_extract_bot", name: "LinkedIn Bot", image: "/finallinkedin.png" },
     { id: "seek_extract_bot", name: "Seek Bot", image: "/finalseek.png" },
-    { id: "indeed_bot", name: "Indeed Bot", image: "/finalindeed.png" },
+    { id: "indeed", name: "Indeed Bot", image: "/finalindeed.png" },
   ];
 
   let showConfigError = false;
@@ -48,7 +48,7 @@
       const params = /** @type {any} */ ({ botName: finalBotName });
       let limit = 10; // Default as requested
       
-      if (finalBotName.includes("extract") || finalBotName === "indeed_bot") {
+      if (finalBotName.includes("extract") || finalBotName === "indeed" || finalBotName === "indeed_bot") {
         params.extractLimit = limit;
         params.extract_limit = limit;
       }

@@ -26,7 +26,7 @@ The migration affects how the Tauri desktop application starts and communicates 
 
 *   **Tauri Integration (`src-tauri/src/lib.rs`):** The `run_bot_streaming` command is hardcoded to execute `bun src/bots/bot_starter.ts`. This must be updated to support `python` execution and handle environment setups (e.g., virtual environments).
 *   **Workflow Orchestration (`src/bots/core/workflow_engine.ts`):** The engine currently expects TypeScript `AsyncGenerator` functions for steps. A Python equivalent must be built to parse the existing YAML step configurations.
-*   **Bot Registry (`src/bots/core/registry.ts`):** Discovery logic must be updated to recognize Python-based bot directories (similar to the existing `indeed_bot` structure).
+*   **Bot Registry (`src/bots/core/registry.ts`):** Discovery logic recognizes the unified bot directory structure (e.g., `src/bots/indeed/`).
 *   **Backend API Client (`src/bots/core/api_client.ts`):** Shared logic for recording successful applications and fetching AI answers must be ported to a Python `api_client.py`.
 
 ## 4. Hardest Components to Migrate

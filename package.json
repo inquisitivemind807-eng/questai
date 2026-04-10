@@ -16,11 +16,7 @@
     "logs:bundle": "node scripts/bundle-logs.mjs",
     "logs:tail": "node scripts/tail-logs.mjs",
     "tauri": "tauri",
-    "tauri:dev": "bun --env-file=.env run tauri dev",
-    "indeed:install": "cd src/bots/indeed_bot && npm install",
-    "indeed:build": "cd src/bots/indeed_bot && npm run build",
-    "indeed:dev": "cd src/bots/indeed_bot && npm run dev",
-    "indeed:start": "cd src/bots/indeed_bot && npm start"
+    "tauri:dev": "bun --env-file=.env run tauri dev"
   },
   "license": "MIT",
   "dependencies": {

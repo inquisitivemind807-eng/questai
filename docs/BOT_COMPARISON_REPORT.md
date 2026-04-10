@@ -46,7 +46,7 @@ The Indeed bot appears to be a separate contribution or a port of a standalone t
 ### Key Characteristics:
 *   **Independence:** It does **not** use any files from `src/bots/core/`. It has its own `logger.ts`, `config.ts`, and `types.ts` within its own directory.
 *   **Camoufox Integration:** Unlike the other bots that use Selenium with stealth plugins, the Indeed bot uses **Camoufox**, a specialized Playwright-based browser designed for advanced anti-bot bypass.
-*   **Dual-Language Support:** The directory contains both a Python implementation (`indeed_bot.py`) and a TypeScript implementation (`src/indeed_bot.ts`). The main application currently triggers the TypeScript version via `bun run dev`.
+*   **Dual-Language Support:** The directory contains both a Python implementation (`indeed_impl.py`) and a TypeScript implementation (`indeed_impl.ts`). The main application currently triggers the TypeScript version via `bun run dev`.
 *   **Workflow:** It does not use the project's `WorkflowEngine`. Instead, it uses a standard procedural loop (e.g., `collect_indeed_apply_links` -> `apply_to_job`) found directly in the source code.
 *   **Packaging:** It has its own `package.json` and `node_modules`, making it easier to run and update independently of the main project's SvelteKit/Tauri environment.
 
