@@ -9,6 +9,7 @@ steps_config:
     func: "step0"
     transitions:
       direct_apply_requested: "navigate_to_direct_apply_url"
+      step0_complete: "navigate_to_direct_apply_url"
       ctx_failed: "start"
     timeout: 30
     on_timeout_event: "ctx_failed"
@@ -39,10 +40,11 @@ steps_config:
     step: 4
     func: "showManualLoginPrompt"
     transitions:
-      prompt_displayed_to_user: "pc_before_attempt_easy_apply"
-      error_showing_manual_login: "pc_before_attempt_easy_apply"
-    timeout: 20
-    on_timeout_event: "prompt_displayed_to_user"
+      login_successful: "pc_before_attempt_easy_apply"
+      login_failed: "finish"
+      error_showing_manual_login: "finish"
+    timeout: 300
+    on_timeout_event: "login_failed"
 
   pc_before_attempt_easy_apply:
     step: 13

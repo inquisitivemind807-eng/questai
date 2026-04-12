@@ -50,10 +50,11 @@ steps_config:
     step: 4
     func: "showManualLoginPrompt"
     transitions:
-      prompt_displayed_to_user: "open_jobs_page"
-      error_showing_manual_login: "open_jobs_page"
-    timeout: 20
-    on_timeout_event: "prompt_displayed_to_user"
+      login_successful: "open_jobs_page"
+      login_failed: "finish"
+      error_showing_manual_login: "finish"
+    timeout: 300
+    on_timeout_event: "login_failed"
 
   open_jobs_page:
     step: 5

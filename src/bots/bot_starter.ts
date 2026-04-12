@@ -24,7 +24,7 @@ try {
       const val = trimmed.slice(eqIdx + 1).trim();
       if (!process.env[key]) process.env[key] = val;
     }
-    console.log(`[DEV] [bot_starter] Loaded .env from: ${resolvedEnvPath}`);
+    // console.log(`[DEV] [bot_starter] Loaded .env from: ${resolvedEnvPath}`);
   }
 } catch (e) {
   console.warn('[bot_starter] Could not load .env:', e);
@@ -440,67 +440,91 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
 // CLI usage when run directly
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const args = process.argv.slice(2);
+  const bot_starter = new BotStarter();
+  const available_bots = bot_starter.get_available_bots();
 
-  if (args.length === 0) {
-    console.log('Usage: bun bot_starter.ts <bot_name> [options]');
-    console.log('Example: bun bot_starter.ts seek');
-    console.log('Example: bun bot_starter.ts seek test');
+  const showHelpMenu = async () => {
+    try {
+      // @ts-ignore - dynamic import for prompts
+      const prompts = (await import('prompts')).default;
+      
+      const choices = available_bots.map(name => ({ title: name, value: name }));
+      if (!available_bots.includes('bulk')) {
+        choices.push({ title: 'bulk', value: 'bulk' });
+      }
 
-    const bot_starter = new BotStarter();
-    const available_bots = bot_starter.get_available_bots();
-    console.log(`Available bots: ${available_bots.join(', ')}`);
-    process.exit(1);
-  }
+      const response = await prompts({
+        type: 'select',
+        name: 'bot',
+        message: 'Select a bot to run:',
+        choices: choices,
+        initial: 0
+      });
 
-  const bot_name = args[0];
-  const is_test_mode = args.includes('test');
-  const is_quicktest_mode = args.includes('quicktest');
-  const headless = args.includes('--headless');
-  const keep_open = args.includes('--keep-open') || args.includes('--review');
+      if (response.bot) {
+        let jobUrl: string | undefined;
+        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'indeed' || response.bot === 'seek') {
+          const urlResponse = await prompts({
+            type: 'text',
+            name: 'url',
+            message: 'Enter the job URL to apply to (leave blank for search & apply if supported):'
+          });
+          jobUrl = urlResponse.url;
+        }
 
-  // Extract optional extraction limit — env var (from Tauri) takes priority, CLI arg is fallback
-  const env_limit = process.env.BOT_EXTRACT_LIMIT;
-  const limit_arg = args.find(a => a.startsWith('--limit='));
-  const maxJobsToProcess = env_limit
-    ? parseInt(env_limit, 10)
-    : limit_arg ? parseInt(limit_arg.split('=')[1], 10) : undefined;
+        const remaining_args = [];
+        if (jobUrl) {
+          remaining_args.push(`--url=${jobUrl}`);
+        }
+        await run_bot_by_name(response.bot, remaining_args);
+      }
+    } catch (e) {
+      process.exit(1);
+    }
+  };
 
-  // Extract specific --url= parameter for Direct Apply from the UI
-  const url_arg = args.find(a => a.startsWith('--url='));
-  const job_url = url_arg ? url_arg.split('=')[1] : null;
+  const run_bot_by_name = async (bot_name: string, remaining_args: string[]) => {
+    const is_test_mode = remaining_args.includes('test');
+    const is_quicktest_mode = remaining_args.includes('quicktest');
+    const headless = remaining_args.includes('--headless');
+    const keep_open = remaining_args.includes('--keep-open') || remaining_args.includes('--review');
 
-  // Extract explicit --jobId= parameter for targeting exact existing jobs
-  const jobId_arg = args.find(a => a.startsWith('--jobId='));
-  const target_job_id = jobId_arg ? jobId_arg.split('=')[1] : null;
+    // Extract optional extraction limit — env var (from Tauri) takes priority, CLI arg is fallback
+    const env_limit = process.env.BOT_EXTRACT_LIMIT;
+    const limit_arg = remaining_args.find(a => a.startsWith('--limit='));
+    const maxJobsToProcess = env_limit
+      ? parseInt(env_limit, 10)
+      : limit_arg ? parseInt(limit_arg.split('=')[1], 10) : undefined;
 
-  const mode_arg = args.find(a => a.startsWith('--mode='));
-  const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
+    // Extract specific --url= parameter for Direct Apply from the UI
+    const url_arg = remaining_args.find(a => a.startsWith('--url='));
+    const job_url = url_arg ? url_arg.split('=')[1] : null;
 
-  // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
-  if (job_url && bot_name.startsWith('seek')) {
-    (async () => {
+    // Extract explicit --jobId= parameter for targeting exact existing jobs
+    const jobId_arg = remaining_args.find(a => a.startsWith('--jobId='));
+    const target_job_id = jobId_arg ? jobId_arg.split('=')[1] : null;
+
+    const mode_arg = remaining_args.find(a => a.startsWith('--mode='));
+    const mode = mode_arg ? mode_arg.split('=')[1] : 'review';
+
+    // Handle direct URL apply for Seek (Triggered via JobAnalytics UI)
+    if (job_url && bot_name.startsWith('seek')) {
       try {
         print_log(`🚀 Starting DIRECT APPLY bot runner for Seek Job: ${job_url}`);
         const normalizedUrl = normalizeSeekJobUrl(job_url);
-        // Ensure "seek" maps to "seek_apply" but preserve suffixes like "_pauseconfirm"
         const applyBotName = bot_name === 'seek' ? 'seek_apply' : bot_name;
         await run_bot(applyBotName, { directApplyUrl: normalizedUrl, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
         console.error('Direct Apply execution failed:', error);
         process.exit(1);
       }
-    })();
-  } else if (job_url && (bot_name.startsWith('linkedin') || bot_name.startsWith('indeed'))) {
-    (async () => {
+    } else if (job_url && (bot_name.startsWith('linkedin') || bot_name.startsWith('indeed'))) {
       try {
         const isIndeed = bot_name.startsWith('indeed');
         const platformName = isIndeed ? 'Indeed' : 'LinkedIn';
         const defaultApplyName = isIndeed ? 'indeed_apply' : 'linkedin_apply';
         
         print_log(`🚀 Starting DIRECT APPLY bot runner for ${platformName} Job: ${job_url}`);
-        
-        // If it's just "linkedin" or "indeed", use the default apply name. 
-        // If it already has a suffix (like "_pauseconfirm"), keep it.
         const applyBotName = (bot_name === 'linkedin' || bot_name === 'indeed') ? defaultApplyName : bot_name;
         
         await run_bot(applyBotName, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
@@ -509,9 +533,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         console.error(`${isIndeed ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
         process.exit(1);
       }
-    })();
-  } else if (is_test_mode && bot_name === 'seek') {
-    (async () => {
+    } else if (is_test_mode && bot_name === 'seek') {
       try {
         const { runQuickApplyTests } = await import('./seek/tests/seek_quick_apply_test');
         await runQuickApplyTests();
@@ -519,23 +541,18 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         console.error('Test execution failed:', error);
         process.exit(1);
       }
-    })();
-  } else if (is_quicktest_mode && bot_name === 'seek') {
-    (async () => {
+    } else if (is_quicktest_mode && bot_name === 'seek') {
       try {
         const { runQuickApplyE2ETest } = await import('./seek/tests/seek_quick_apply_e2e_test');
-        // await runQuickApplyE2ETest('https://www.seek.com.au/job/87057769');
         await runQuickApplyE2ETest('https://www.seek.com.au/job/87457750');
       } catch (error) {
         console.error('Quick Apply E2E test execution failed:', error);
         process.exit(1);
       }
-    })();
-  } else if (bot_name === 'bulk') {
-    (async () => {
+    } else if (bot_name === 'bulk') {
       try {
-        const jobs_arg = args.find(a => a.startsWith('--jobs='));
-        const superbot_arg = args.find(a => a.startsWith('--superbot='));
+        const jobs_arg = remaining_args.find(a => a.startsWith('--jobs='));
+        const superbot_arg = remaining_args.find(a => a.startsWith('--superbot='));
 
         const job_ids_csv = jobs_arg ? jobs_arg.split('=')[1] : '';
         const superbot = superbot_arg ? superbot_arg.split('=')[1] === 'true' : false;
@@ -547,19 +564,30 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         }
 
         await bulk_run_jobs(jobIdsArray, mode, superbot);
-        process.exit(0); // Safely exit when whole queue concludes
       } catch (error) {
         console.error('Bulk orchestration failed:', error);
         process.exit(1);
       }
-    })();
+    } else {
+      await run_bot(bot_name, { maxJobsToProcess, botMode: mode }, {
+        headless,
+        keep_open
+      }).catch(error => {
+        console.error('Bot execution failed:', error);
+        process.exit(1);
+      });
+    }
+  };
+
+  if (args.length === 0 || args.includes('--help') || args.includes('-h')) {
+    showHelpMenu();
   } else {
-    run_bot(bot_name, { maxJobsToProcess, botMode: mode }, {
-      headless,
-      keep_open
-    }).catch(error => {
-      console.error('Bot execution failed:', error);
+    const bot_name = args[0];
+    const valid_commands = [...available_bots, 'bulk'];
+    if (!valid_commands.includes(bot_name)) {
+      console.log('command not found please try -h or --help to list availabel commands. u can check @README.md for currently available commands.');
       process.exit(1);
-    });
+    }
+    run_bot_by_name(bot_name, args.slice(1));
   }
 }

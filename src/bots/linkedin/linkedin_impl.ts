@@ -479,8 +479,39 @@ export async function* showManualLoginPrompt(ctx: WorkflowContext): AsyncGenerat
 
   try {
     await ctx.overlay.showSignInOverlay();
-    printLog("Manual login prompt shown");
-    yield "prompt_displayed_to_user";
+    
+    let authenticated = false;
+    // Wait up to ~6 minutes (120 iterations * 3s)
+    for (let i = 0; i < 120; i++) {
+      await ctx.driver.sleep(3000);
+      
+      // Check if user clicked the "✅ I have logged in - Continue" button on the Overlay
+      const isClickConfirmed = await ctx.driver.executeScript(`
+        return window.__overlaySignInComplete === true || sessionStorage.getItem('overlay_signin_complete') === 'true';
+      `).catch(() => false);
+
+      // Check for LinkedIn auth cookies
+      const cookies = await ctx.driver.manage().getCookies();
+      const hasAuthCookies = cookies.some((c: any) => c.name === 'li_at' || c.name === 'jsessionid');
+
+      if (isClickConfirmed || hasAuthCookies) {
+        authenticated = true;
+        // Clear the state
+        await ctx.driver.executeScript(`
+          window.__overlaySignInComplete = false;
+          sessionStorage.removeItem('overlay_signin_complete');
+        `).catch(() => {});
+        break;
+      }
+    }
+
+    if (authenticated) {
+      printLog("Login confirmed! Proceeding...");
+      yield "login_successful";
+    } else {
+      printLog("Login timed out.");
+      yield "login_failed";
+    }
   } catch (error) {
     printLog(`Error showing manual login prompt: ${error}`);
     yield "error_showing_manual_login";

@@ -78,7 +78,7 @@ steps_config:
     func: "showSignInBanner"
     transitions:
       signin_banner_shown: "perform_search"
-      signin_banner_retry: "refresh_page"
+      signin_banner_retry: "done"
     timeout: 300
     on_timeout_event: "signin_banner_retry"
 

@@ -243,11 +243,11 @@ export async function* showManualLoginPrompt(ctx: any) {
             if (ctx.overlay) {
                 await ctx.overlay.updateJobProgress(0, 0, 'Login confirmed, proceeding...', 1).catch(() => {});
             }
+            yield 'login_successful';
         } else {
-            console.warn('indeed.login', 'Login timed out. Actions may fail.');
+            console.warn('indeed.login', 'Login timed out.');
+            yield 'login_failed';
         }
-        
-        yield 'prompt_displayed_to_user';
     } catch (error) {
         console.error('indeed.login', 'Error during manual login flow', error);
         yield 'error_showing_manual_login';
@@ -283,27 +283,153 @@ function normalizeExperienceLevel(lvl: string): string {
     return map[lvl?.toLowerCase()] || '';
 }
 
-async function handleLocationDialog(page: any): Promise<void> {
+async function handleLocationDialog(ctx: any): Promise<void> {
+    const page = ctx.page;
+    const userLocation = ctx.config?.locations || "";
     try {
         console.log('indeed.openJobs', 'Checking for location confirmation dialog...');
-        // Wait up to 5s for the dialog to potentially show up (Indeed loads it asynchronously)
-        const yesBtnSelector = 'div.eofpmnx1 button:has-text("Yes"), button.css-1ua5vtl:has-text("Yes")';
+        // Dialog can appear with specific selectors
+        const dialogSelector = 'div.eofpmnx1, div[aria-live="polite"]:has-text("only")';
+        const yesBtnSelector = 'div.eofpmnx1 button:has-text("Yes"), button.css-1ua5vtl:has-text("Yes"), button:has-text("Yes")';
+        
+        const dialog = page.locator(dialogSelector).first();
         const yesBtn = page.locator(yesBtnSelector).first();
         
         try {
-            await yesBtn.waitFor({ state: 'visible', timeout: 5000 });
+            await dialog.waitFor({ state: 'visible', timeout: 3000 });
         } catch (e) {
-            // Dialog didn't show within 5s, that's fine
             return;
         }
 
-        if (await yesBtn.count() > 0) {
-            console.log('indeed.openJobs', 'Location dialog found — clicking Yes');
+        const dialogText = await dialog.innerText();
+        console.log('indeed.openJobs', `Location dialog found: "${dialogText.substring(0, 50)}..."`);
+        
+        // If the location in the dialog matches our preferred location, click Yes
+        if (userLocation && dialogText.toLowerCase().includes(userLocation.toLowerCase())) {
+            console.log('indeed.openJobs', `Location matches preference ("${userLocation}") — clicking Yes`);
             await yesBtn.click({ force: true });
             await page.waitForTimeout(2000);
+        } else {
+            console.log('indeed.openJobs', 'Location does not match preference — ignoring dialog');
         }
     } catch (e) {
         console.warn('indeed.openJobs', 'Error handling location dialog', e);
+    }
+}
+
+/**
+ * Dynamically discover and interact with Indeed's search filters.
+ */
+async function handleDynamicFilters(ctx: any): Promise<void> {
+    const page = ctx.page;
+    const config = ctx.config;
+    
+    try {
+        console.log('indeed.filters', 'Starting dynamic filter discovery...');
+        
+        // Scan for common filter buttons (ids like taxo1_filter_button, fromAge_filter_button, etc.)
+        const filterButtonSelector = 'button[id$="_filter_button"], button[aria-label$=" filter"]';
+        const filterButtons = page.locator(filterButtonSelector);
+        const count = await filterButtons.count();
+        
+        console.log('indeed.filters', `Found ${count} potentially dynamic filter buttons.`);
+        
+        for (let i = 0; i < count; i++) {
+            const btn = filterButtons.nth(i);
+            const label = await btn.innerText();
+            const id = await btn.getAttribute('id') || '';
+            const ariaLabel = await btn.getAttribute('aria-label') || '';
+            
+            console.log('indeed.filters', `Filter index ${i}: label="${label}", id="${id}", ariaLabel="${ariaLabel}"`);
+            
+            // 1. Handle "Date posted" filter (fromAge)
+            if ((label.includes('Date posted') || ariaLabel.includes('Date posted')) && config.listedDate) {
+                await applyFilterOption(page, btn, config.listedDate, ['Last 24 hours', 'Last 3 days', 'Last 7 days', 'Last 14 days'], 'Date posted');
+            }
+            // 2. Handle "Remote" filter
+            else if ((label.includes('Remote') || ariaLabel.includes('Remote')) && config.remotePreference) {
+                await applyFilterOption(page, btn, config.remotePreference, ['Remote', 'Hybrid', 'On-site'], 'Remote');
+            }
+            // 3. Handle "Developer skill" or "Specialty" or "Shift and schedule" (Generic Dynamic Filters)
+            else if (config.keywords && (id.includes('taxo') || label.includes('skill') || label.includes('Specialty'))) {
+                // For skills, we might want to select multiples if they match our keywords
+                await applyDynamicKeywordsFilter(page, btn, config.keywords);
+            }
+        }
+    } catch (e) {
+        console.warn('indeed.filters', 'Error during dynamic filter handling', e);
+    }
+}
+
+async function applyFilterOption(page: any, btn: any, value: string, knownOptions: string[], filterType: string): Promise<void> {
+    try {
+        console.log('indeed.filters', `Attempting to apply "${value}" to ${filterType} filter...`);
+        await btn.click({ force: true });
+        await page.waitForTimeout(1000);
+        
+        // Find the option in the dropdown that matches our value
+        const normalizedValue = value.toLowerCase();
+        const optionsList = page.locator('ul[role="listbox"] li, ul[role="menu"] li');
+        const optCount = await optionsList.count();
+        
+        for (let j = 0; j < optCount; j++) {
+            const opt = optionsList.nth(j);
+            const optText = await opt.innerText();
+            if (optText.toLowerCase().includes(normalizedValue)) {
+                console.log('indeed.filters', `Found matching option: "${optText}" — clicking`);
+                await opt.click({ force: true });
+                await page.waitForTimeout(1500);
+                return;
+            }
+        }
+        
+        // If not found by direct match, try a looser match against knownOptions
+        console.log('indeed.filters', `No direct match for "${value}" in ${filterType}.`);
+        // Close the dropdown if still open
+        await page.keyboard.press('Escape');
+    } catch (e) {
+        console.warn('indeed.filters', `Failed to apply ${filterType} filter`, e);
+    }
+}
+
+async function applyDynamicKeywordsFilter(page: any, btn: any, keywords: string): Promise<void> {
+    try {
+        console.log('indeed.filters', `Exploring dynamic keywords filter for: ${keywords}...`);
+        await btn.click({ force: true });
+        await page.waitForTimeout(1000);
+        
+        const individualKeywords = keywords.split(/[,|]/).map(k => k.trim().toLowerCase()).filter(k => k.length > 0);
+        const optionsList = page.locator('ul[role="menu"] li, ul[role="listbox"] li');
+        const optCount = await optionsList.count();
+        let clickedAny = false;
+        
+        for (let j = 0; j < optCount; j++) {
+            const opt = optionsList.nth(j);
+            const optText = (await opt.innerText()).toLowerCase();
+            
+            for (const kw of individualKeywords) {
+                if (optText.includes(kw)) {
+                    console.log('indeed.filters', `Keyword match: "${kw}" in option "${optText}" — clicking`);
+                    await opt.click({ force: true });
+                    clickedAny = true;
+                    await page.waitForTimeout(500);
+                    break;
+                }
+            }
+        }
+        
+        if (clickedAny) {
+            // Find the "Update" or "Apply" button inside the dropdown if it exists
+            const updateBtn = page.locator('button:has-text("Update"), button:has-text("Apply")').first();
+            if (await updateBtn.count() > 0) {
+                await updateBtn.click({ force: true });
+                await page.waitForTimeout(2000);
+            }
+        } else {
+            await page.keyboard.press('Escape');
+        }
+    } catch (e) {
+        console.warn('indeed.filters', 'Failed to apply dynamic keyword filter', e);
     }
 }
 
@@ -351,7 +477,12 @@ export async function* openJobsPage(ctx: any) {
         await ctx.page.waitForTimeout(4000);
 
         // Auto-handle the "Do you want to see results in [location] only?" dialog
-        await handleLocationDialog(ctx.page);
+        await handleLocationDialog(ctx);
+
+        // EXTRA: Handle dynamic filters identified in indeed_search_filter.html
+        if (ctx.config?.botMode === 'superbot' || ctx.config?.botMode === 'harvester') {
+            await handleDynamicFilters(ctx);
+        }
 
         if (ctx.overlay) {
             await ctx.overlay.initialize().catch(() => {});
@@ -464,17 +595,35 @@ export async function* extractJobDetails(ctx: any) {
 
                 // Immediately save one-by-one (Incremental DB Sync)
                 try {
-                    await fetch('http://localhost:3000/api/scraped-jobs', {
+                    const tokenPath = path.join(process.cwd(), '.cache', 'api_token.txt');
+                    const token = fs.existsSync(tokenPath) ? fs.readFileSync(tokenPath, 'utf8').trim() : '';
+                    
+                    const response = await fetch('http://localhost:3000/api/scraped-jobs', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.CORPUS_RAG_TOKEN || ''}` },
+                        headers: { 
+                            'Content-Type': 'application/json', 
+                            'Authorization': `Bearer ${token}` 
+                        },
                         body: JSON.stringify({
-                            platform: 'indeed', platformJobId: job.jobId,
-                            title: job.title, company: job.company, url: job.url,
+                            ...job,
+                            platformJobId: job.jobId,
                             rawData: job
                         })
-                    }).catch(() => { });
-                    console.log(`[DEV] Extracted & Saved to DB: ${job.title} | Desc Length: ${job.description.length}`);
-                } catch (e) { }
+                    });
+
+                    if (response.ok) {
+                        const resData = await response.json();
+                        console.log('indeed.save', `✅ Saved job: ${title} (ID: ${resData.id})`);
+                        if (ctx.overlay) {
+                            await ctx.overlay.addLogEvent(`💾 Saved: ${title}`).catch(() => {});
+                        }
+                    } else {
+                        const errorText = await response.text();
+                        console.error('indeed.save', `❌ Failed to save job: ${title} (${response.status}): ${errorText}`);
+                    }
+                } catch (saveError) {
+                    console.error('indeed.save', `⚠️ Network error saving job: ${title}`, saveError);
+                }
             } catch (e) { }
         }
 

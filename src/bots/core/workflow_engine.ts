@@ -107,14 +107,20 @@ export class WorkflowEngine {
 
     try {
       const generator = stepFunction(this.context);
-      const timeoutPromise = new Promise<string>((resolve) => {
-        setTimeout(() => resolve(stepConfig.on_timeout_event), stepConfig.timeout * 1000);
-      });
+      
+      let result: string;
+      if (typeof stepConfig.timeout === 'number' && stepConfig.timeout > 0) {
+        const timeoutPromise = new Promise<string>((resolve) => {
+          setTimeout(() => resolve(stepConfig.on_timeout_event), stepConfig.timeout * 1000);
+        });
 
-      const result = await Promise.race([
-        this.executeGenerator(generator),
-        timeoutPromise
-      ]);
+        result = await Promise.race([
+          this.executeGenerator(generator),
+          timeoutPromise
+        ]);
+      } else {
+        result = await this.executeGenerator(generator);
+      }
       logger.debug('workflow.step_result', `Step ${stepConfig.step} '${stepName}' (${stepConfig.func}) executed -> ${result}`, {
         stepName,
         stepNumber: stepConfig.step,

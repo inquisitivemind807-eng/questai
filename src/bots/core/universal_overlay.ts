@@ -44,7 +44,8 @@ export class UniversalOverlay {
   private initialized: boolean = false;
   private overlayUnavailable: boolean = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private static readonly HEARTBEAT_INTERVAL_MS = 3000;
+  private static readonly HEARTBEAT_INTERVAL_MS = 1000;
+  private lastState: OverlayState | null = null;
 
   constructor(driver: WebDriver, botName: string = 'Bot', overlayId: string = 'universal-overlay') {
     this.driver = driver;
@@ -99,6 +100,11 @@ export class UniversalOverlay {
           this.initialized = false;
           await this.injectPersistentOverlaySystem();
           this.initialized = true;
+
+          // If we had a state, re-push it immediately after reinjection
+          if (this.lastState) {
+            await this.updateState(this.lastState);
+          }
         }
       } catch (error) {
         if (this.isWindowClosedError(error)) {
@@ -872,13 +878,25 @@ export class UniversalOverlay {
       'getActiveMode'
     );
     state.activeMode = state.activeMode || currentMode || 'superbot';
+    this.lastState = state;
 
     await this.safeExecute(async () => {
-      // Re-inject overlay system if it was lost (e.g. after a full page navigation)
+      // Fast check: is the browser-side system actually there?
+      // Full navigations can wipe it even if Node thinks it's initialized.
+      const isAlive = await this.driver.executeScript(`
+        return typeof window.__updateOverlay === 'function';
+      `).catch(() => false);
+
+      if (!isAlive) {
+        this.initialized = false;
+      }
+
+      // Re-inject overlay system if it was lost
       if (!this.initialized) {
         await this.injectPersistentOverlaySystem();
         this.initialized = true;
       }
+
       await this.driver.executeScript(`
         if (typeof window.__updateOverlay === 'function') {
           window.__updateOverlay(${JSON.stringify(state)});
@@ -1035,9 +1053,20 @@ export class UniversalOverlay {
       const checkInterval = setInterval(async () => {
         try {
           const completed = await this.driver.executeScript(`
-            return window.__overlaySignInComplete === true ||
-                   sessionStorage.getItem('overlay_signin_complete') === 'true';
+            return (window.__overlaySignInComplete === true) ||
+                   (sessionStorage.getItem('overlay_signin_complete') === 'true');
           `);
+
+          if (!completed) {
+            // Self-heal: if the overlay was destroyed by navigation, re-push the sign-in state
+            const alive = await this.driver.executeScript(`
+              return typeof window.__updateOverlay === 'function';
+            `).catch(() => false);
+            
+            if (!alive) {
+              await this.updateState(state);
+            }
+          }
 
           if (completed) {
             clearInterval(checkInterval);
