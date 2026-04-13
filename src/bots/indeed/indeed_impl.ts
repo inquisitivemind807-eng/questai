@@ -672,6 +672,7 @@ export async function* extractJobDetails(ctx: any) {
                 let jobType = 'Unknown';
                 let workMode: string | null = null;
                 let applicationType: 'internal' | 'external' = 'external';
+                let externalApplyUrl: string | null = null;
 
                 try {
                     await card.scrollIntoViewIfNeeded().catch(() => { });
@@ -717,6 +718,21 @@ export async function* extractJobDetails(ctx: any) {
                         salary = await paneSalaryEl.innerText();
                     }
 
+                    // Try to get salary and job type from the combined container if available
+                    const salaryJobTypeContainer = ctx.page.locator(s.salaryInfoAndJobType || '#salaryInfoAndJobType').first();
+                    if (await salaryJobTypeContainer.count() > 0) {
+                        await highlight(salaryJobTypeContainer, '#00ff00');
+                        const spans = salaryJobTypeContainer.locator('span');
+                        const spanCount = await spans.count();
+                        if (spanCount > 0) {
+                            salary = await spans.nth(0).innerText();
+                            if (spanCount > 1) {
+                                const jtRaw = await spans.nth(1).innerText();
+                                jobType = jtRaw.replace(/^[\s-]+/, '').trim();
+                            }
+                        }
+                    }
+
                     // Extract Benefits
                     let benefits: string[] = [];
                     try {
@@ -748,32 +764,40 @@ export async function* extractJobDetails(ctx: any) {
                     } catch (e) { }
 
                     // Improved Job Type extraction: get all tiles (e.g., "Full-time", "Permanent")
-                    const jobTypeTiles = ctx.page.locator('[aria-label="Job type"] [data-testid$="-tile"], .js-match-insights-provider-1yabrbp');
-                    const tileCount = await jobTypeTiles.count();
-                    if (tileCount > 0) {
-                        const types: string[] = [];
-                        for (let t = 0; t < tileCount; t++) {
-                            const tile = jobTypeTiles.nth(t);
-                            await highlight(tile, '#00ff00');
-                            const txt = await tile.innerText();
-                            if (txt) types.push(txt.trim());
-                        }
-                        jobType = types.join(', ');
-                    } else {
-                        const paneJobTypeEl = ctx.page.locator(s.jobType || '[data-testid="jobsearch-JobInfoHeader-jobType"]').first();
-                        if (await paneJobTypeEl.count() > 0) {
-                            await highlight(paneJobTypeEl, '#00ff00');
-                            jobType = await paneJobTypeEl.innerText();
+                    if (jobType === 'Unknown') {
+                        const jobTypeTiles = ctx.page.locator('[aria-label="Job type"] [data-testid$="-tile"], .js-match-insights-provider-1yabrbp');
+                        const tileCount = await jobTypeTiles.count();
+                        if (tileCount > 0) {
+                            const types: string[] = [];
+                            for (let t = 0; t < tileCount; t++) {
+                                const tile = jobTypeTiles.nth(t);
+                                await highlight(tile, '#00ff00');
+                                const txt = await tile.innerText();
+                                if (txt) types.push(txt.trim());
+                            }
+                            jobType = types.join(', ');
+                        } else {
+                            const paneJobTypeEl = ctx.page.locator(s.jobType || '[data-testid="jobsearch-JobInfoHeader-jobType"]').first();
+                            if (await paneJobTypeEl.count() > 0) {
+                                await highlight(paneJobTypeEl, '#00ff00');
+                                jobType = await paneJobTypeEl.innerText();
+                            }
                         }
                     }
 
-                    // Detect Application Type (Quick Apply)
-                    const applyBtn = ctx.page.locator('button[data-testid="indeedApply"], #indeedApplyButton, button.sp-IndeedApplyButton').first();
-                    if (await applyBtn.count() > 0) {
-                        await highlight(applyBtn, '#ff00ff');
+                    // Detect Application Type (Quick Apply vs External)
+                    const internalApplyBtn = ctx.page.locator(s.internalApplyButton || 'button[data-testid="indeedApply"], #indeedApplyButton, button.sp-IndeedApplyButton, button:has-text("Apply with Indeed"), button[data-testid="indeedApplyButton-test"], button:has-text("Apply now")').first();
+                    const externalApplyBtn = ctx.page.locator(s.externalApplyButton || 'button:has-text("Apply on company site"), a:has-text("Apply on company site")').first();
+
+                    if (await internalApplyBtn.count() > 0) {
+                        await highlight(internalApplyBtn, '#ff00ff');
                         applicationType = 'internal';
-                    } else {
+                    } else if (await externalApplyBtn.count() > 0) {
+                        await highlight(externalApplyBtn, '#ff00ff');
                         applicationType = 'external';
+                        externalApplyUrl = await externalApplyBtn.getAttribute('href') || null;
+                    } else {
+                        applicationType = 'external'; // Default fallback
                     }
 
                     // Infer work mode from location or description
@@ -802,6 +826,8 @@ export async function* extractJobDetails(ctx: any) {
                     workMode,
                     benefits,
                     specificLocation,
+                    applicationType,
+                    externalApplyUrl,
                     platform: 'indeed' 
                 };
                 ctx.state.currentJobCards.push(job);
@@ -812,7 +838,7 @@ export async function* extractJobDetails(ctx: any) {
                         ...job,
                         applicationType, // Added for the tracker table
                         platformJobId: job.jobId,
-                        rawData: { ...job, applicationType }
+                        rawData: { ...job }
                     });
 
                     if (result && result.success) {
