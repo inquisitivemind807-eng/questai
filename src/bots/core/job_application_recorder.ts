@@ -345,6 +345,7 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     salary: jobData.salary_note || jobData.salary || jobData.category,
     jobType: jobData.work_type || jobData.jobType,
     workMode: jobData.workMode,
+    applicationType: jobData.applicationType || jobData.application_type,
     postedDate: typeof jobData.posted === 'string' ? jobData.posted : undefined,
     hrContact: jobData.hrContact,
     requiredSkills: Array.isArray(jobData.requiredSkills) ? jobData.requiredSkills : undefined,

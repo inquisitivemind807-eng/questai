@@ -192,7 +192,7 @@
     { id: "salary", label: "Salary", visible: true },
     { id: "type", label: "Type", visible: true },
     { id: "date", label: "Date", visible: true },
-    { id: "status", label: "Status", visible: true },
+    { id: "status", label: "Status", visible: false },
     { id: "actions", label: "Actions", visible: true, disableToggle: true }
   ];
 

@@ -673,6 +673,8 @@ export async function* extractJobDetails(ctx: any) {
                 let workMode: string | null = null;
                 let applicationType: 'internal' | 'external' = 'external';
                 let externalApplyUrl: string | null = null;
+                let benefits: string[] = [];
+                let specificLocation = '';
 
                 try {
                     await card.scrollIntoViewIfNeeded().catch(() => { });
@@ -734,7 +736,6 @@ export async function* extractJobDetails(ctx: any) {
                     }
 
                     // Extract Benefits
-                    let benefits: string[] = [];
                     try {
                         const showMoreBenefits = ctx.page.locator(s.benefitsShowMore || '[data-testid="collapsedBenefitsButton"]').first();
                         if (await showMoreBenefits.count() > 0 && await showMoreBenefits.isVisible()) {
@@ -754,7 +755,6 @@ export async function* extractJobDetails(ctx: any) {
                     } catch (e) { }
 
                     // Extract Specific Location (Full address)
-                    let specificLocation = '';
                     try {
                         const specLocEl = ctx.page.locator(s.specificLocation || 'div[data-testid="job-location"]').first();
                         if (await specLocEl.count() > 0) {
