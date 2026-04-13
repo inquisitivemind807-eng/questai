@@ -20,6 +20,17 @@
         "location": "div[data-testid='text-location']",
         "applyButton": "button:has-text(\"Apply\"), [data-testid=\"indeedApply\"]"
     },
+    "jobDetails": {
+        "title": "[data-testid='jobsearch-JobInfoHeader-title']",
+        "company": "[data-testid='inlineHeader-companyName']",
+        "location": "[data-testid='inlineHeader-companyLocation'], .jobsearch-JobInfoHeader-companyLocation",
+        "salary": "[data-testid='jobsearch-JobInfoHeader-salary']",
+        "jobType": "[data-testid='jobsearch-JobInfoHeader-jobType'], span.css-1u1g3ig",
+        "description": "#jobDescriptionText",
+        "benefits": "[data-testid='benefits-test'] ul li, #benefits ul li",
+        "benefitsShowMore": "[data-testid='collapsedBenefitsButton']",
+        "specificLocation": "div[data-testid='job-location']"
+    },
     "apply": {
         "resumeCard": "[data-testid=\"FileResumeCardHeader-title\"]",
         "continueButton": "button:has-text(\"Continue\"), button.ia-continueButton",

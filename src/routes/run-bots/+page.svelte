@@ -40,6 +40,7 @@
       // Ensure we map to the correct internal bot names
       if (cleanBotName === "linkedin") finalBotName = "linkedin_extract";
       if (cleanBotName === "seek") finalBotName = "seek_extract";
+      if (cleanBotName === "indeed") finalBotName = "indeed_extract";
 
       if (isPauseConfirmMode && finalBotName.includes("extract")) {
         finalBotName += "_pauseconfirm";

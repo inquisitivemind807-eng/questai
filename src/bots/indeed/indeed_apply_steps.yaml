@@ -76,13 +76,21 @@ steps_config:
     step: 17
     func: "submitApplication"
     transitions:
-      save_applied_job: "finish"
+      save_applied_job: "save_applied_job"
       application_failed: "application_failed"
       submit_application_error: "submit_application"
     timeout: 30
     on_timeout_event: "submit_application_error"
     max_retries: 3
     on_max_retries: "application_failed"
+
+  save_applied_job:
+    step: 18
+    func: "saveAppliedJob"
+    transitions:
+      finish: "finish"
+    timeout: 30
+    on_timeout_event: "finish"
 
   external_apply:
     step: 19

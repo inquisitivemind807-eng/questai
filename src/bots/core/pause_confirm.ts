@@ -24,20 +24,11 @@ async function evalInBrowser(ctx: any, script: string): Promise<any> {
 }
 
 /**
- * Workflow step function that pauses execution until the user clicks
- * "Next ▶" in the browser overlay.  Yields "confirmed" once clicked.
+ * Async version of waitForNextConfirm that can be awaited directly
+ * without being part of a generator workflow step.
  */
-export async function* waitForNextConfirm(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  // Derive the next step label from the YAML transition config
-  const nextStepKey: string =
-    ctx._currentStepConfig?.transitions?.confirmed ||
-    ctx._pauseStepLabel ||
-    '';
-
-  const toLabel = (key: string) =>
-    key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
-
-  const stepLabel = nextStepKey ? `Next: ${toLabel(nextStepKey)}` : 'Next Step';
+export async function waitForNextConfirmAsync(ctx: WorkflowContext, label?: string): Promise<void> {
+  const stepLabel = label || 'Next Step';
 
   console.log(`⏸️ Pause-and-confirm: waiting for user to click Next (${stepLabel})`);
 
@@ -47,13 +38,11 @@ export async function* waitForNextConfirm(ctx: WorkflowContext): AsyncGenerator<
       await ctx.overlay.showPauseConfirm(stepLabel);
     } catch (e) {
       console.warn('[PauseConfirm] Could not show overlay, auto-confirming:', e);
-      yield 'confirmed';
       return;
     }
   } else {
     // No overlay at all — skip
     console.warn('[PauseConfirm] No overlay available — auto-confirming');
-    yield 'confirmed';
     return;
   }
 
@@ -66,7 +55,7 @@ export async function* waitForNextConfirm(ctx: WorkflowContext): AsyncGenerator<
       );
 
       if (clicked) {
-        console.log('▶️ User confirmed — resuming workflow');
+        console.log('▶️ User confirmed — resuming');
         // Reset the flag
         await evalInBrowser(ctx,
           `window.__overlayPauseConfirmClicked = false;
@@ -76,13 +65,12 @@ export async function* waitForNextConfirm(ctx: WorkflowContext): AsyncGenerator<
         // Restore job_progress overlay so user sees normal progress between gates
         if (ctx.overlay) {
           try {
-            const numerator = ctx.jobs_extracted || ctx.applied_jobs || 0;
-            const total = ctx.maxJobsLimit || ctx.total_jobs || 0;
+            const numerator = (ctx as any).jobs_extracted || (ctx as any).applied_jobs || 0;
+            const total = (ctx as any).maxJobsLimit || (ctx as any).total_jobs || 0;
             await ctx.overlay.showJobProgress(numerator, total, 'Resuming...', 0);
           } catch { /* non-critical */ }
         }
 
-        yield 'confirmed';
         return;
       }
     } catch (e: any) {
@@ -97,4 +85,24 @@ export async function* waitForNextConfirm(ctx: WorkflowContext): AsyncGenerator<
 
     await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL_MS));
   }
+}
+
+/**
+ * Workflow step function that pauses execution until the user clicks
+ * "Next ▶" in the browser overlay.  Yields "confirmed" once clicked.
+ */
+export async function* waitForNextConfirm(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  // Derive the next step label from the YAML transition config
+  const nextStepKey: string =
+    (ctx as any)._currentStepConfig?.transitions?.confirmed ||
+    (ctx as any)._pauseStepLabel ||
+    '';
+
+  const toLabel = (key: string) =>
+    key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+
+  const stepLabel = nextStepKey ? `Next: ${toLabel(nextStepKey)}` : 'Next Step';
+
+  await waitForNextConfirmAsync(ctx, stepLabel);
+  yield 'confirmed';
 }

@@ -188,7 +188,7 @@
   let columns = [
     { id: "details", label: "Job Details", visible: true, disableToggle: true },
     { id: "location", label: "Location", visible: true },
-    { id: "workplace_type", label: "Workplace Type", visible: false },
+    { id: "workplace_type", label: "Workplace Type", visible: true },
     { id: "salary", label: "Salary", visible: true },
     { id: "type", label: "Type", visible: true },
     { id: "date", label: "Date", visible: true },
@@ -646,7 +646,9 @@
           ? "seek_apply"
           : app.platform === "linkedin"
             ? "linkedin_apply"
-            : app.platform;
+            : app.platform === "indeed"
+              ? "indeed_apply"
+              : app.platform;
       
       const configuredBotName = isPauseConfirmMode ? mappedBotName + "_pauseconfirm" : mappedBotName;
 
@@ -1094,11 +1096,25 @@
                             />
                           </td>
                           <td>
-                            <div class="font-bold text-base text-primary">
-                              {job.title || "—"}
+                            <div class="flex items-center gap-2">
+                              <div class="font-bold text-base text-primary">
+                                {job.title || "—"}
+                              </div>
+                              {#if !platform}
+                                {#if job.platform === 'indeed'}
+                                  <span class="badge badge-sm border-none bg-[#003A9B] text-white text-[10px] h-4">Indeed</span>
+                                {:else if job.platform === 'linkedin'}
+                                  <span class="badge badge-sm border-none bg-[#007FB1] text-white text-[10px] h-4">LinkedIn</span>
+                                {:else if job.platform === 'seek'}
+                                  <span class="badge badge-sm border-none bg-[#E60278] text-white text-[10px] h-4">Seek</span>
+                                {/if}
+                              {/if}
                             </div>
                             <div class="text-sm text-base-content/60 mt-0.5">
                               {job.company || "—"}
+                              {#if job.jobType && job.jobType !== 'Unknown'}
+                                <span class="mx-1">•</span> <span class="text-accent/80">{job.jobType}</span>
+                              {/if}
                             </div>
                           </td>
                           {#if columns.find(c => c.id === 'location')?.visible}
@@ -1500,8 +1516,19 @@
                       {#each paginatedAppliedJobs as application}
                         <tr class="hover">
                           <td>
-                            <div class="font-bold text-primary">
-                              {application.title || "—"}
+                            <div class="flex items-center gap-2">
+                              <div class="font-bold text-primary">
+                                {application.title || "—"}
+                              </div>
+                              {#if !platform}
+                                {#if application.platform === 'indeed'}
+                                  <span class="badge badge-sm border-none bg-[#003A9B] text-white text-[10px] h-4">Indeed</span>
+                                {:else if application.platform === 'linkedin'}
+                                  <span class="badge badge-sm border-none bg-[#007FB1] text-white text-[10px] h-4">LinkedIn</span>
+                                {:else if application.platform === 'seek'}
+                                  <span class="badge badge-sm border-none bg-[#E60278] text-white text-[10px] h-4">Seek</span>
+                                {/if}
+                              {/if}
                             </div>
                             <div class="text-sm text-base-content/70">
                               {application.company || "—"}

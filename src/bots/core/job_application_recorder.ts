@@ -78,7 +78,9 @@ function getCandidateJobDirs(primaryDir: string, platform: 'seek' | 'linkedin' |
   if (platform === 'linkedin') {
     dirs.push(path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId));
   } else if (platform === 'seek') {
-    dirs.push(path.join(process.cwd(), 'src', 'bots', 'jobs', jobId));
+    dirs.push(path.join(process.cwd(), 'src', 'bots', 'seek', 'jobs', jobId));
+  } else if (platform === 'indeed') {
+    dirs.push(path.join(process.cwd(), 'src', 'bots', 'indeed', 'jobs', jobId));
   }
   return Array.from(new Set(dirs));
 }
@@ -294,7 +296,20 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
   
   const title = jobData.title || jobData.raw_title || '';
   const company = jobData.company || '';
-  const platform = inputPlatform ?? (jobFilePath.includes('linkedinjobs') ? 'linkedin' : 'seek');
+  
+  // Platform detection logic: input -> jobData -> filePath -> fallback
+  let platform = inputPlatform;
+  if (!platform) {
+    if (jobData.platform && ['seek', 'linkedin', 'indeed', 'other'].includes(jobData.platform)) {
+      platform = jobData.platform;
+    } else if (jobFilePath.includes('linkedinjobs')) {
+      platform = 'linkedin';
+    } else if (jobFilePath.includes('indeed')) {
+      platform = 'indeed';
+    } else {
+      platform = 'seek';
+    }
+  }
 
   if (!platformJobId || !title || !company) {
     printLog(`[JobRecorder] Job file missing required fields:`);
