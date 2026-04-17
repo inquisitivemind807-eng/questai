@@ -31,7 +31,7 @@
     "src/bots/indeed/old/**",
     "src/bots/**/tests/**",
     "src/bots/seek/tests/**",
-    "src/bots/indeed_bot/**",
+    "src/bots/indeed/**",
     "src/deprecated/**"
   ]
   // Path aliases are handled by https://svelte.dev/docs/kit/configuration#alias

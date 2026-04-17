@@ -1,6 +1,6 @@
 workflow_meta:
-  title: "Seek Extract Only"
-  description: "Search on seek.com.au, iterate job cards, and save job details without applying"
+  title: "Seek Extract (Pause & Confirm)"
+  description: "Search on seek.com.au, iterate job cards, and save job details — pauses after each key step for user confirmation"
   start_step: "init_context"
 
 steps_config:
@@ -18,10 +18,18 @@ steps_config:
     step: 2
     func: "openHomepage"
     transitions:
-      homepage_opened: "wait_for_load"
+      homepage_opened: "pc_after_homepage"
       page_navigation_failed: "refresh_page"
     timeout: 60
     on_timeout_event: "page_navigation_failed"
+
+  pc_after_homepage:
+    step: 2.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "wait_for_load"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   wait_for_load:
     step: 3
@@ -49,11 +57,19 @@ steps_config:
     step: 5
     func: "detectPageState"
     transitions:
-      logged_in: "perform_search"
+      logged_in: "pc_after_detect"
       sign_in_required: "show_sign_in_banner"
-      no_cards_found: "perform_search"
+      no_cards_found: "pc_after_detect"
     timeout: 20
     on_timeout_event: "perform_search"
+
+  pc_after_detect:
+    step: 5.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "perform_search"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   fill_search_form:
     step: 6
@@ -105,11 +121,19 @@ steps_config:
     step: 11
     func: "collectJobCards"
     transitions:
-      cards_collected: "click_job_card"
+      cards_collected: "pc_after_collect"
       cards_collect_retry: "perform_search"
       no_cards_found_permanently: "done"
     timeout: 45
     on_timeout_event: "perform_search"
+
+  pc_after_collect:
+    step: 11.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "click_job_card"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   click_job_card:
     step: 12
@@ -165,11 +189,19 @@ steps_config:
     step: 17
     func: "saveScrapedJob"
     transitions:
-      job_saved_quick_apply: "skip_to_next_card"
-      job_saved: "skip_to_next_card"
+      job_saved_quick_apply: "pc_after_save"
+      job_saved: "pc_after_save"
       save_failed: "skip_to_next_card"
     timeout: 10
     on_timeout_event: "save_failed"
+
+  pc_after_save:
+    step: 17.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "skip_to_next_card"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   skip_to_next_card:
     step: 18
@@ -178,4 +210,3 @@ steps_config:
       card_skipped: "click_job_card"
     timeout: 5
     on_timeout_event: "card_skipped"
-

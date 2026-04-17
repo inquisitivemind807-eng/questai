@@ -37,7 +37,7 @@ export class BotRegistry {
 
       for (const entry of entries) {
         // Skip non-bot directories: core, sessions, and data folders
-        const skipDirs = ['core', 'sessions', 'all-resumes', 'jobs', 'indeed_bot'];
+        const skipDirs = ['core', 'sessions', 'all-resumes', 'jobs', 'logs', 'data'];
 
         if (entry.isDirectory() && !entry.name.startsWith('.') && !skipDirs.includes(entry.name)) {
           const bot_name = entry.name;
@@ -55,10 +55,10 @@ export class BotRegistry {
         }
       }
     } catch (error) {
-      console.error(`Error discovering bots: ${error}`);
+      // console.error(`Error discovering bots: ${error}`);
     }
 
-    console.log(`[DEV] [Registry] Discovered bots: ${bot_names.join(', ')}`);
+    // console.log(`[DEV] [Registry] Discovered bots: ${bot_names.join(', ')}`);
     return bot_names;
   }
 
@@ -120,7 +120,7 @@ export class BotRegistry {
     // Check impl file
     const impl_path = path.join(bot_path, `${bot_name}_impl.ts`);
     if (!fs.existsSync(impl_path)) {
-      console.warn(`[Registry] Bot '${bot_name}' missing required file: ${bot_name}_impl.ts`);
+      // console.warn(`[Registry] Bot '${bot_name}' missing required file: ${bot_name}_impl.ts`);
       return false;
     }
 
@@ -129,7 +129,7 @@ export class BotRegistry {
       const files = fs.readdirSync(bot_path);
       const has_yaml = files.some(f => f.endsWith('_steps.yaml'));
       if (!has_yaml) {
-        console.warn(`[Registry] Bot '${bot_name}' has no *_steps.yaml workflow files`);
+        // console.warn(`[Registry] Bot '${bot_name}' has no *_steps.yaml workflow files`);
         return false;
       }
     } catch {
@@ -140,7 +140,7 @@ export class BotRegistry {
     const selectors_root = path.join(bot_path, `${bot_name}_selectors.json`);
     const selectors_config = path.join(bot_path, 'config', `${bot_name}_selectors.json`);
     if (!fs.existsSync(selectors_root) && !fs.existsSync(selectors_config)) {
-      console.warn(`[Registry] Bot '${bot_name}' missing required file: ${bot_name}_selectors.json (checked root and config/)`);
+      // console.warn(`[Registry] Bot '${bot_name}' missing required file: ${bot_name}_selectors.json (checked root and config/)`);
       return false;
     }
 

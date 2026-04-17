@@ -1,6 +1,6 @@
 workflow_meta:
-  title: "Seek Quick Apply (Single Job URL)"
-  description: "Open a specific Seek job URL, detect Quick Apply, fill cover letter, resume, and employer questions, then pause for manual submit."
+  title: "Seek Quick Apply — Pause & Confirm"
+  description: "Open a specific Seek job URL, detect Quick Apply, fill cover letter, resume, and employer questions — pauses after each key step for user confirmation"
   start_step: "init_context"
 
 steps_config:
@@ -17,10 +17,18 @@ steps_config:
     step: 0.5
     func: "openJobUrl"
     transitions:
-      job_url_opened: "detect_page_state"
+      job_url_opened: "pc_after_open"
       job_url_failed: "done"
     timeout: 60
     on_timeout_event: "job_url_failed"
+
+  pc_after_open:
+    step: 0.6
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "detect_page_state"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   detect_page_state:
     step: 1
@@ -45,14 +53,20 @@ steps_config:
     step: 2
     func: "detectApplyType"
     transitions:
-      quick_apply_found: "click_quick_apply"
+      quick_apply_found: "pc_after_detect_type"
       regular_apply_found: "close_quick_apply_and_end"
       no_apply_found: "close_quick_apply_and_end"
       detect_apply_failed: "close_quick_apply_and_end"
     timeout: 15
     on_timeout_event: "close_quick_apply_and_end"
 
-
+  pc_after_detect_type:
+    step: 2.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "click_quick_apply"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   click_quick_apply:
     step: 4
@@ -100,11 +114,19 @@ steps_config:
     step: 8
     func: "handleResumeSelection"
     transitions:
-      resume_selected: "click_continue_button"
-      resume_not_required: "click_continue_button"
+      resume_selected: "pc_before_continue"
+      resume_not_required: "pc_before_continue"
       resume_selection_error: "close_quick_apply_and_end"
     timeout: 90
     on_timeout_event: "resume_selection_error"
+
+  pc_before_continue:
+    step: 8.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "click_continue_button"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   click_continue_button:
     step: 9
@@ -144,12 +166,20 @@ steps_config:
     step: 11
     func: "handleEmployerQuestions"
     transitions:
-      employer_questions_saved: "click_continue_after_questions"
-      no_questions: "click_continue_after_questions"
-      no_job_data: "click_continue_after_questions"
+      employer_questions_saved: "pc_before_questions_continue"
+      no_questions: "pc_before_questions_continue"
+      no_job_data: "pc_before_questions_continue"
       employer_questions_error: "stay_put_for_inspection"
     timeout: 45
     on_timeout_event: "employer_questions_error"
+
+  pc_before_questions_continue:
+    step: 11.1
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "click_continue_after_questions"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   click_continue_after_questions:
     step: 11.2
@@ -179,11 +209,19 @@ steps_config:
     step: 11.4
     func: "checkForSubmitButton"
     transitions:
-      submit_button_found: "submit_application"
+      submit_button_found: "pc_before_submit"
       submit_button_not_found: "click_continue_after_questions"
-      max_continue_reached: "submit_application"
+      max_continue_reached: "pc_before_submit"
     timeout: 10
-    on_timeout_event: "submit_application"
+    on_timeout_event: "pc_before_submit"
+
+  pc_before_submit:
+    step: 11.45
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "submit_application"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   stay_put_for_inspection:
     step: 11.5
@@ -195,15 +233,22 @@ steps_config:
 
   submit_application:
     step: 12
-    # func: "submitApplication"
     func: "stayPutForInspection"
     transitions:
-      inspection_complete: "done"
+      inspection_complete: "pc_after_submit"
       application_submitted: "close_quick_apply_and_end"
       submit_not_found: "pause_for_manual_review"
       submit_failed: "pause_for_manual_review"
     timeout: 30
     on_timeout_event: "submit_failed"
+
+  pc_after_submit:
+    step: 12.3
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "close_quick_apply_and_end"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   pause_for_manual_review:
     step: 12.5
@@ -221,4 +266,3 @@ steps_config:
       close_and_continue_error: "done"
     timeout: 20
     on_timeout_event: "hunting_next_job"
-

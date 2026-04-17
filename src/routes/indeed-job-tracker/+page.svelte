@@ -4,5 +4,5 @@
 
 <JobTrackerBase 
   platform="indeed" 
-  bots={["indeed_bot"]} 
+  bots={["indeed"]} 
 />

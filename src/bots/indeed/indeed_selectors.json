@@ -20,6 +20,20 @@
         "location": "div[data-testid='text-location']",
         "applyButton": "button:has-text(\"Apply\"), [data-testid=\"indeedApply\"]"
     },
+    "jobDetails": {
+        "title": "[data-testid='jobsearch-JobInfoHeader-title']",
+        "company": "[data-testid='inlineHeader-companyName']",
+        "location": "[data-testid='inlineHeader-companyLocation'], .jobsearch-JobInfoHeader-companyLocation",
+        "salary": "[data-testid='jobsearch-JobInfoHeader-salary']",
+        "salaryInfoAndJobType": "#salaryInfoAndJobType",
+        "jobType": "[data-testid='jobsearch-JobInfoHeader-jobType'], span.css-1u1g3ig",
+        "internalApplyButton": "button[data-testid='indeedApply'], #indeedApplyButton, button.sp-IndeedApplyButton, button:has-text('Apply with Indeed'), button[data-testid='indeedApplyButton-test'], button:has-text('Apply now')",
+        "externalApplyButton": "button[contenthtml*='Apply on company site'], button:has-text('Apply on company site'), a:has-text('Apply on company site')",
+        "description": "#jobDescriptionText",
+        "benefits": "[data-testid='benefits-test'] ul li, #benefits ul li",
+        "benefitsShowMore": "[data-testid='collapsedBenefitsButton']",
+        "specificLocation": "div[data-testid='job-location']"
+    },
     "apply": {
         "resumeCard": "[data-testid=\"FileResumeCardHeader-title\"]",
         "continueButton": "button:has-text(\"Continue\"), button.ia-continueButton",
@@ -28,5 +42,11 @@
     },
     "pagination": {
         "nextButton": "a[data-testid='pagination-page-next']"
+    },
+    "filters": {
+        "locationDialog": "div.eofpmnx1",
+        "locationDialogYes": "div.eofpmnx1 button:has-text('Yes')",
+        "filterBar": ".yosegi-FilterPill-pillList",
+        "anyFilterButton": "button[id$='_filter_button'], button[aria-label$=' filter']"
     }
 }

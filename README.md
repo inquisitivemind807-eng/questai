@@ -1,327 +1,288 @@
-# FinalBoss - Job Application Automation Platform
+# Quest Bot (FinalBoss) — AI-Driven Autonomous Job Search & Application Platform
 
-AI-powered job application automation platform that integrates with job boards (LinkedIn, Indeed, Seek) and generates personalized cover letters, resumes, and answers using the corpus-rag API.
-
----
-
-## 🌿 Git Branches
-
-**Branch Strategy:**
-- **`develop`** - Development branch (for active development and testing)
-- **`alpha`** - Production branch (stable, deployed to production)
-
-**Usage:**
-- For development work, use: `git checkout develop`
-- For production deployment, use: `git checkout alpha`
-- Always merge `develop` → `alpha` when ready for production
+Quest Bot is an advanced, high-performance automation suite designed to transform the job application process from a manual grind into an autonomous, AI-optimized journey. Built on **SvelteKit**, **Tauri**, and **Bun**, it combines high-level AI reasoning with low-level browser automation to help users land their next role with minimal effort.
 
 ---
 
-## 🚀 Quick Start
+## 🌟 The Vision
 
-> **📌 Branch Information:** This project uses `develop` for development and `alpha` for production. See [Git Branches](#-git-branches) section for details.
+Quest Bot isn't just a scraper; it's an **Autonomous Career Agent**. It handles the entire lifecycle of a job search: from finding relevant listings across multiple platforms to tailoring your professional documents and finally submitting applications on your behalf using human-like browser interactions.
+
+---
+
+## 🛠 What This App Does (Core Features)
+
+### 1. Unified Job Intelligence Dashboard
+*   **Multi-Platform Tracking**: A centralized "Command Center" for LinkedIn, Seek, and Indeed.
+*   **Live Progress Monitoring**: Watch bots work in real-time via the **Bot Activity** log and the **Universal Overlay**.
+*   **Performance Analytics**: Visual data on your application momentum, including daily/weekly/monthly charts and "Time Saved" metrics.
+*   **Job Status Lifecycle**: Track jobs from `Discovered` → `Applied` → `Interview` → `Offer` or `Rejected`.
+
+### 2. Autonomous "Bot Apply" System
+*   **Human-Like Interaction**: Bots use randomized mouse movements, realistic typing speeds, and "jitter" to bypass sophisticated anti-bot detection.
+*   **Smart Form Filling**: Integrates with the `corpus-rag` AI backend to answer platform-specific application questions (e.g., "How many years of experience do you have with Svelte?").
+*   **Autonomous Document Tailoring**: Automatically attaches the most relevant resume and generates a job-specific cover letter for every single application.
+*   **Bulk Queueing**: Select up to 10 jobs and fire them off in a single batch.
+
+### 3. AI Document Suite
+*   **Resume Builder**: Create and manage multiple versions of your resume.
+*   **AI Resume Enhancement**: Upload your resume and let the AI optimize it for specific keywords and ATS (Applicant Tracking System) compatibility.
+*   **Tailored Cover Letters**: Instantly generate professional cover letters mapped directly to the job description and your personal profile.
+
+### 4. Advanced Stealth Infrastructure
+*   **Camoufox Integration (Indeed)**: Employs a specialized, hardened Firefox browser for Indeed, spoofing hardware fingerprints and overcoming aggressive stealth protections.
+*   **Selenium Stealth (LinkedIn/Seek)**: Uses a custom humanization layer and Chrome profile management to maintain long-term session persistence.
+*   **Session Persistence**: Bots "remember" your logins, so you don't have to solve CAPTCHAs or log in every time.
+
+---
+
+## 🏗 Technical Architecture
+
+### The Stack
+- **Frontend**: SvelteKit (UI), TypeScript (Logic), TailwindCSS & DaisyUI (Styling).
+- **Desktop Wrapper**: Tauri (Rust) for secure file access, process management, and native performance.
+- **Engine**: Bun for high-speed TypeScript execution of bot workflows.
+- **Automation**: 
+  - **Selenium Webdriver** (Seek/LinkedIn).
+  - **Playwright + Camoufox** (Indeed).
+- **Backend**: Integrates with the `corpus-rag` API for LLM processing and RAG-based data retrieval.
+
+### The Bot Core (`src/bots/core`)
+*   **`WorkflowEngine.ts`**: A robust state machine that reads YAML configurations and executes steps. It handles retries, timeouts, and state transitions.
+*   **`UniversalOverlay.ts`**: A Svelte-powered UI injected directly into the automation browser, allowing you to see what the bot is thinking and intervene if needed.
+*   **`HumanBehavior.ts`**: The "humanization" engine that makes Selenium look like a real person.
+*   **`BotRegistry.ts`**: Automatically discovers new bot variants and implementations in the project directory.
+
+---
+
+## 📂 System Layout
+
+```text
+├── src/
+│   ├── bots/                   # The Automation Engine
+│   │   ├── core/               # Shared logic: Workflow Engine, Stealth, Overlay
+│   │   ├── indeed/             # Indeed-specific Playwright logic
+│   │   ├── linkedin/           # LinkedIn-specific Selenium logic
+│   │   └── seek/               # Seek-specific Selenium logic
+│   ├── lib/                    # Svelte logic, stores, and API clients
+│   ├── routes/                 # UI Pages (Dashboard, Trackers, Builder)
+│   └── tests/                  # Integration and E2E tests
+├── sessions/                   # Browser profiles (Login sessions)
+├── logs/                       # JSONL logs for every bot run
+├── build/                      # Compiled production assets
+└── src-tauri/                  # Rust source for the desktop application
+```
+
+---
+
+## 🚥 Installation & Setup
 
 ### Prerequisites
-- Node.js (v18 or higher)
-- **bun** (recommended) or npm — this project uses bun per monorepo conventions
-- MongoDB is required only for the **corpus-rag** API (run corpus-rag separately for AI features)
-- Chrome/Chromium browser (for bot automation)
+1.  **Bun**: `curl -fsSL https://bun.sh/install | bash`
+2.  **Rust**: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+3.  **Camoufox**: `npx camoufox-js fetch` (Required for Indeed bot).
 
-### Installation
-
-1. **Clone the repository:**
-   ```bash
-   git clone <your-repo-url>
-   cd finalboss
-   ```
-
-2. **Checkout the appropriate branch:**
-   ```bash
-   git checkout develop  # For development
-   # or
-   git checkout alpha    # For production
-   ```
-
-3. **Install dependencies:**
-   ```bash
-   bun install
-   # or
-   npm install
-   ```
-
-4. **Configure environment variables:**
-   Create a `.env` or `.env.local` file in the project root:
-   ```bash
-   # Corpus-rag API (default if not set)
-   PUBLIC_API_BASE=http://localhost:3000
-   VITE_API_BASE=http://localhost:3000
-   ```
-
-5. **Start the development server:**
-   ```bash
-   bun run dev
-   # or
-   npm run dev
-   # Without env loading:
-   bun run dev:plain
-   ```
-
-6. **Access the application:**
-   - Web: `http://localhost:1420` (Vite is configured for port 1420 for Tauri)
-   - Tauri Desktop App: `bun run tauri:dev` or `npm run tauri:dev`
+### Setup
+1.  **Clone & Install**:
+    ```bash
+    bun install
+    ```
+2.  **Environment**:
+    Create a `.env` file:
+    ```env
+    VITE_API_BASE=http://localhost:3000
+    PUBLIC_API_BASE=http://localhost:3000
+    CORPUS_RAG_TOKEN=your_secure_api_token
+    ```
+3.  **Launch**:
+    ```bash
+    bun run tauri:dev
+    ```
 
 ---
 
-## 📋 Overview
+## 🛠 Developer Guide
 
-FinalBoss is a comprehensive job application automation platform with the following features:
+### Creating a New Bot Variant
+To create a new workflow (e.g., a "Quick Apply" for a new platform):
+1.  Add a `{platform}_apply_steps.yaml` to `src/bots/{platform}/`.
+2.  Implement the generator functions in `{platform}_impl.ts`.
+3.  The `BotRegistry` will automatically detect the variant.
 
-### Core Features
-- **Job Board Integration**: Automated job searching and application on LinkedIn, Indeed, and Seek
-- **AI-Powered Content Generation** (via corpus-rag API):
-  - Personalized cover letters
-  - Tailored resume enhancement
-  - Intelligent employer Q&A
-- **Resume Builder**: Create and manage resumes used by bots and AI
-- **Token plans & billing**: Stripe checkout, token balance, order history (via corpus-rag)
-- **API Testing Interface**: Built-in API testing at `/api-test` for corpus-rag integration
-- **Desktop Application**: Tauri 2–based desktop app for cross-platform support
+### Debugging
+*   **Logs**: Check `logs/YYYY-MM-DD/workflow.jsonl` for step-by-step execution data.
+*   **Overlay**: The browser overlay shows the current step and any errors encountered during the run.
+*   **Headless Mode**: Toggle `headless: false` in `bot_starter.ts` or via the CLI to watch the bot work visually.
 
-### Components
+### Camoufox Browser zip in our own server (Not done yet!)
+If a user downloads a newer browser binary than what your bot scripts expect → things break silently or crash.
 
-1. **Web Interface** (SvelteKit 2, Svelte 5, static adapter)
-   - App shell, login, token/plans/orders/payment flows
-   - Bot selection and configuration (choose-bot, control-bar)
-   - API testing interface (`/api-test`)
-   - Cover letter, resume enhancement, resume builder, job analytics, generic questions
-
-2. **Bot Automation System** (`src/bots/`)
-   - **core/**: Workflow engine (YAML steps), browser manager (Selenium/Playwright), humanization, session manager, universal overlay
-   - **seek/**, **linkedin/**: Per-platform impls with `*_impl.ts`, `*_steps.yaml`, and `*_selectors.json`
-   - **indeed_bot/**: Standalone Camoufox Indeed bot (Active Indeed implementation)
-   - Entry: `bot_starter.ts`; shared config: `user-bots-config.json`
-
-3. **API Integration**
-   - `corpus-rag-client.js`, `corpus-rag-auth.js`, `api-config.js`
-   - JWT refresh and token persistence (e.g. `.cache/jwt_tokens.json`)
-   - Job application handling and proxy routes under `src/routes/api/`
+✅ Best: Host the exact .zip binary on your server
+Pin the version your bot is tested against
+In-app installer downloads from your URL (e.g. yourserver.com/camoufox/0.4.x/linux.zip)
+You control exactly what gets installed
+When you update your bot, you update the hosted binary too
 
 ---
 
-## 🛠️ Development
+## 🖥️ CLI Commands (`bot_starter.ts`)
 
-### Available Scripts
-
-Use **bun** (recommended) or npm:
+All bots are run from the `questai/` directory using Bun. **Exception:** the `indeed` and `indeed_apply` bots must be run with `npx tsx` — not `bun` — because `camoufox-js` internally uses `better-sqlite3`, a native C++ addon compiled for Node.js ABI, which is incompatible with Bun's ABI.
 
 ```bash
-# Development
-bun run dev              # Start dev server (port 1420, loads .env)
-bun run dev:plain        # Start dev server without env loading
+cd questai
 
-# Building
-bun run build            # Vite production build (static SPA)
-bun run preview          # Preview production build
+# Seek & LinkedIn — use bun
+bun src/bots/bot_starter.ts <bot_name> [options]
 
-# Tauri (Desktop App)
-bun run tauri            # Tauri CLI (e.g. tauri build)
-bun run tauri:dev        # Tauri dev mode with env
-
-# Testing (Vitest)
-bun run test             # Watch mode
-bun run test:run         # Single run
-
-# Type Checking
-bun run check            # svelte-check
-bun run check:watch      # svelte-check watch
+# Indeed — use npx tsx (Node.js runtime required)
+npx tsx src/bots/bot_starter.ts <bot_name> [options]
 ```
 
-### Project Structure
+### Available Bot Names
 
-```
-finalboss/
-├── src/
-│   ├── routes/              # SvelteKit routes (static adapter)
-│   │   ├── api/             # Client-side API proxies to corpus-rag
-│   │   ├── api-test/        # API testing UI
-│   │   ├── app/, login/, choose-bot/, control-bar/
-│   │   ├── cover-letters/, resume-enhancement/, resume-builder/
-│   │   ├── job-analytics/, generic-questions/, tokens/, plans/, payment/, orders/
-│   │   └── ...
-│   ├── bots/                # Bot automation
-│   │   ├── core/            # Workflow engine, browser manager, humanization, overlay
-│   │   ├── bot_starter.ts   # Entry point
-│   │   ├── user-bots-config.json
-│   │   ├── seek/
-│   │   ├── linkedin/
-│   │   └── indeed_bot/       # Standalone Camoufox Indeed bot
-│   ├── lib/                 # Shared code
-│   │   ├── corpus-rag-client.js, corpus-rag-auth.js, api-config.js
-│   │   ├── job-application-handler.js, authService.js
-│   │   └── ...
-│   └── ...
-├── src-tauri/               # Tauri 2 desktop shell
-├── static/                  # Static assets (images, logos, favicon)
-├── clients/                 # Canonical job application records (persistent storage)
-├── data/                    # User data and file uploads
-├── docs/                    # Technical documentation and data contracts
-├── zcycleBin/               # Archive for decommissioned, legacy, and unused files
-└── package.json
-```
+| Bot Name | Platform | Action |
+|---|---|---|
+| `seek` | Seek | Extract jobs (search & save) |
+| `seek_extract` | Seek | Extract jobs only |
+| `seek_apply` | Seek | Apply to a specific job via `--url=` |
+| `seek_apply_pauseconfirm` | Seek | Apply with manual confirmation at each step |
+| `seek_extract_pauseconfirm` | Seek | Extract with manual confirmation at each step |
+| `linkedin` | LinkedIn | Extract jobs |
+| `linkedin_extract` | LinkedIn | Extract jobs only |
+| `linkedin_apply` | LinkedIn | Apply to a specific job via `--url=` |
+| `linkedin_apply_pauseconfirm` | LinkedIn | Apply with manual confirmation at each step |
+| `linkedin_extract_pauseconfirm` | LinkedIn | Extract with manual confirmation at each step |
+| `indeed` | Indeed | Extract jobs (search & save) |
+| `indeed_extract` | Indeed | Extract jobs only |
+| `indeed_apply` | Indeed | Apply to a specific job via `--url=` |
+| `indeed_apply_pauseconfirm` | Indeed | Apply with manual confirmation at each step |
+| `indeed_extract_pauseconfirm` | Indeed | Extract with manual confirmation at each step |
+| `bulk` | Any | Orchestrate applying to a queue of jobs from DB |
 
 ---
 
-## 🔗 Integration with Corpus-Rag API
-
-FinalBoss integrates with the corpus-rag API for AI-powered content generation. Ensure the corpus-rag API is running and accessible.
-
-### Authentication Flow
-
-1. User logs in through finalboss (or service account via client_id/secret).
-2. Session is converted to JWT via corpus-rag (`/api/auth/session-to-jwt`).
-3. JWT (and refresh token) are stored and persisted (e.g. `.cache/jwt_tokens.json`) for reuse across runs.
-4. corpus-rag-client uses the JWT for all API requests and refreshes on 401.
-
-### API Endpoints Used (corpus-rag)
-
-- `/api/auth/session-to-jwt`, `/api/auth/token`, `/api/auth/refresh` — Auth and JWT
-- `/api/cover_letter`, `/api/resume`, `/api/questionAndAnswers` — AI generation
-- `/api/jobs`, `/api/upload` — Job listings and file uploads
-- `/api/tokens/`, `/api/plans/`, `/api/orders/` — Billing and tokens
-
----
-
-## 🧪 Testing
-
-### API Testing
-
-The application includes a built-in API testing interface at `/api-test` that allows you to:
-- Test cover letter generation
-- Test resume enhancement
-- Test question answering
-- View authentication status
-- Debug API responses
-
-### Running Tests
+### 🔍 Extract / Scrape Jobs
 
 ```bash
-bun run test          # Watch mode
-bun run test:run      # Single run
+# Seek — extract jobs from search page
+bun src/bots/bot_starter.ts seek
+
+# LinkedIn — extract jobs from search page
+bun src/bots/bot_starter.ts linkedin
+
+# Indeed — extract jobs from search page (must use npx tsx, not bun)
+npx tsx src/bots/bot_starter.ts indeed
+
+# Indeed — extract with manual confirmation
+npx tsx src/bots/bot_starter.ts indeed_extract_pauseconfirm
 ```
 
 ---
 
-## 📦 Building for Production
+### 🚀 Direct Apply (Single Job URL)
 
-### Web Build
+Pass `--url=` to trigger a direct apply workflow for a specific job listing.
 
 ```bash
-bun run build
-bun run preview   # Test production build locally
+# Seek — apply to a specific job
+bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678
+
+# LinkedIn — apply to a specific job
+bun src/bots/bot_starter.ts linkedin --url=https://www.linkedin.com/jobs/view/12345678
+
+# Indeed — apply to a specific job (must use npx tsx, not bun)
+npx tsx src/bots/bot_starter.ts indeed_apply --url=https://au.indeed.com/viewjob?jk=abc123
+
+# Indeed — apply with manual confirmation
+npx tsx src/bots/bot_starter.ts indeed_apply_pauseconfirm --url=https://au.indeed.com/viewjob?jk=abc123
+
+# With a specific bot mode (e.g., 'bot' for fully automated, 'review' to pause before submit)
+bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678 --mode=bot
+bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678 --mode=review
 ```
 
-### Tauri Desktop Build
+---
+
+### 📦 Bulk Orchestrator
+
+Run a queue of jobs (by DB ObjectId) in sequence. Failed jobs are skipped and the queue continues.
 
 ```bash
-bun run tauri build
+# Run a list of job IDs in review mode
+bun src/bots/bot_starter.ts bulk --jobs=<id1>,<id2>,<id3> --mode=review
+
+# Run in fully automated bot mode
+bun src/bots/bot_starter.ts bulk --jobs=<id1>,<id2>,<id3> --mode=bot
+
+# Enable Superbot (forces 'bot' mode globally, overrides per-job mode)
+bun src/bots/bot_starter.ts bulk --jobs=<id1>,<id2>,<id3> --superbot=true
 ```
 
 ---
 
-## 🔧 Configuration
+### 🏁 Flags Reference
 
-### Environment Variables
-
-- `PUBLIC_API_BASE` — Base URL for corpus-rag API (e.g. `http://localhost:3000`)
-- `VITE_API_BASE` — Same, used by Vite-backed code
-
-Loaded from `.env` or `.env.local` when using `bun run dev` / `bun run tauri:dev`.
-
-### Bot Configuration
-
-- `src/bots/user-bots-config.json` — Shared keywords, locations, resume path
-- `src/bots/{seek,linkedin,indeed}/*_steps.yaml` — Workflow steps and transitions
-- `src/bots/{seek,linkedin,indeed}/config/*_selectors.json` — DOM selectors
-- See `src/bots/BOT_STANDARDS.md` for the full bot contract
+| Flag | Description | Example |
+|---|---|---|
+| `--url=<url>` | Direct Apply URL for a specific job listing | `--url=https://seek.com.au/job/123` |
+| `--mode=<mode>` | Bot mode: `review` (default, pauses before submit) or `bot` (fully auto) | `--mode=bot` |
+| `--limit=<n>` | Max number of jobs to extract/process | `--limit=10` |
+| `--headless` | Run browser in headless mode (no visible window) | `--headless` |
+| `--keep-open` / `--review` | Keep browser open after workflow completes | `--keep-open` |
+| `--jobId=<id>` | Target a specific DB job ID (for tracking applied job) | `--jobId=abc123` |
+| `--jobs=<csv>` | *(Bulk only)* Comma-separated DB ObjectIds to process | `--jobs=id1,id2` |
+| `--superbot=true` | *(Bulk only)* Force `bot` mode for all jobs in queue | `--superbot=true` |
 
 ---
 
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **API Connection Errors**
-   - Ensure corpus-rag API is running
-   - Check `PUBLIC_API_BASE` environment variable
-   - Verify network connectivity
-
-2. **Authentication Issues**
-   - Clear localStorage and sessionStorage; optionally remove `.cache/jwt_tokens.json` and `.cache/api_token.txt`
-   - Re-login to get fresh tokens
-   - Check token expiration and corpus-rag JWT settings
-
-3. **Bot Automation Failures**
-   - Ensure Chrome/Chromium is installed
-   - Check browser driver compatibility
-   - Verify selectors in bot configuration files
-
----
-
-## 📝 Contributing
-
-1. **Checkout the development branch:**
-   ```bash
-   git checkout develop
-   git pull origin develop
-   ```
-
-2. **Create a feature branch:**
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
-
-3. **Make your changes and test thoroughly**
-
-4. **Commit and push:**
-   ```bash
-   git add .
-   git commit -m "Description of changes"
-   git push origin feature/your-feature-name
-   ```
-
-5. **Create a pull request to `develop`**
-
-6. **After review and testing, merge to `alpha` for production**
-
----
-
-## 📄 License
-
-MIT
-
----
-
-## 🤝 Support
-
-For issues, feature requests, or questions, please open an issue on GitHub.
-
----
-
-## 🔄 Deployment
-
-### Development Deployment
-- Deploy from `develop` branch
-- Use for staging/testing environments
-
-### Production Deployment
-- Deploy from `alpha` branch
-- Ensure all tests pass
-- Review changelog before deployment
+### 🧪 Seek Test Runners
 
 ```bash
-# Before production deployment
-git checkout alpha
-git pull origin alpha
-bun run build
-bun run test:run
+# Run Seek Quick Apply integration tests
+bun src/bots/bot_starter.ts seek test
+
+# Run Seek Quick Apply E2E test
+bun src/bots/bot_starter.ts seek quicktest
 ```
+
+---
+
+### 🌱 Environment Variable Overrides
+
+These env vars (from `.env` or Tauri) take priority over CLI flags:
+
+| Variable | Description |
+|---|---|
+| `BOT_EXTRACT_LIMIT` | Overrides `--limit=` for max jobs to extract |
+| `BOT_ID` | Overrides the auto-generated bot session ID |
+| `CORPUS_RAG_TOKEN` | Auth token for the RAG backend API |
+
+---
+
+## 🟡 Indeed Bot — Current Status
+
+> Based on [`docs/indeed_minimum_requirements.md`](./docs/indeed_minimum_requirements.md)
+
+The Indeed bot uses **Playwright + Camoufox** (stealthy Firefox) instead of Selenium/Chrome, making it more resilient against Indeed's aggressive anti-bot protections.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Browser boot (Camoufox) | ✅ Done | Loads persistent session from `sessions/indeed/camoufox_profile/` |
+| Login detection | ✅ Done | `openCheckLogin` checks for auth cookies & sign-in button |
+| Manual login prompt | ✅ Done | Injects red banner, waits up to 3 mins for cookie-based auth confirmation |
+| Job extraction (search) | ✅ Done | Extracts title, company, location, salary, description, saves to DB incrementally |
+| Pagination | ✅ Done | `navigateToNextPage` follows next-page links |
+| Direct Apply (URL) | ✅ Done | `indeed_apply` bot navigates to URL and attempts Easy Apply |
+| Form answering | ⚠️ Stub | Currently just clicks Continue/Submit — no LLM Q&A |
+| `userLog` (clean frontend logs) | ❌ Missing | All logging is `console.log` — no user-facing dashboard messages |
+| Overlay integration | ✅ Done | `UniversalOverlay` integration completed with job progress updates |
+| `indeed_extract_steps.yaml` | ✅ Done | Dedicated extraction workflow YAML |
+| `indeed_apply_pauseconfirm` | ✅ Done | Pause-confirm variants for extraction and application |
+| Tauri runner fix | ❌ Missing | Tauri spawns Indeed with wrong runtime (`bun` instead of correct path) |
+| Frontend bot mapping | ❌ Missing | `JobTrackerBase.svelte` may not correctly map Indeed jobs to `indeed_apply` |
+
+---
+
+## ⚖️ License
+MIT - Created with ❤️ for job seekers everywhere.

@@ -1,6 +1,6 @@
 workflow_meta:
-  title: "Indeed Direct Apply"
-  description: "Apply directly to a single Indeed job URL"
+  title: "Indeed Direct Apply (Pause & Confirm)"
+  description: "Apply directly to a single Indeed job URL. Pauses between steps for manual intervention."
   start_step: "start"
 
 steps_config:
@@ -29,7 +29,7 @@ steps_config:
     step: 1
     func: "openCheckLogin"
     transitions:
-      login_not_needed: "attempt_easy_apply"
+      login_not_needed: "pc_before_attempt_easy_apply"
       user_needs_to_login: "show_manual_login_prompt"
       failed_to_navigate: "show_manual_login_prompt"
       failed_checking_login_status: "show_manual_login_prompt"
@@ -40,17 +40,23 @@ steps_config:
     step: 4
     func: "showManualLoginPrompt"
     transitions:
-      login_successful: "attempt_easy_apply"
+      login_successful: "pc_before_attempt_easy_apply"
       login_failed: "finish"
       error_showing_manual_login: "finish"
     timeout: 300
     on_timeout_event: "login_failed"
 
+  pc_before_attempt_easy_apply:
+    step: 13
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "attempt_easy_apply"
+
   attempt_easy_apply:
     step: 14
     func: "attemptEasyApply"
     transitions:
-      modal_opened_successfully: "answer_questions"
+      modal_opened_successfully: "pc_before_answer_questions"
       modal_failed_to_open: "application_failed"
       no_easy_apply_button_found: "external_apply"
       failed_to_click_easy_apply: "external_apply"
@@ -60,11 +66,17 @@ steps_config:
     max_retries: 3
     on_max_retries: "application_failed"
 
+  pc_before_answer_questions:
+    step: 15
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "answer_questions"
+
   answer_questions:
     step: 16
     func: "answerQuestions"
     transitions:
-      finished_answering_questions: "submit_application"
+      finished_answering_questions: "pc_before_submit_application"
       next_stage: "answer_questions"
       error_answering_questions: "answer_questions"
     timeout: 60
@@ -72,25 +84,29 @@ steps_config:
     max_retries: 3
     on_max_retries: "application_failed"
 
+  pc_before_submit_application:
+    step: 16.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "submit_application"
+
   submit_application:
     step: 17
     func: "submitApplication"
     transitions:
-      save_applied_job: "save_applied_job"
+      save_applied_job: "pc_after_submit"
       application_failed: "application_failed"
       submit_application_error: "submit_application"
     timeout: 30
     on_timeout_event: "submit_application_error"
     max_retries: 3
     on_max_retries: "application_failed"
-
-  save_applied_job:
+    
+  pc_after_submit:
     step: 18
-    func: "saveAppliedJob"
+    func: "waitForNextConfirm"
     transitions:
-      finish: "finish"
-    timeout: 30
-    on_timeout_event: "finish"
+      confirmed: "finish"
 
   external_apply:
     step: 19

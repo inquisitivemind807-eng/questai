@@ -4,6 +4,7 @@ import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/hu
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
+import { waitForNextConfirm } from '../core/pause_confirm';
 import { apiRequest } from '../core/api_client';
 import { handleResumeSelection } from './handlers/resume_handler';
 import { handleCoverLetter } from './handlers/cover_letter_handler';
@@ -394,22 +395,23 @@ export async function* openJobUrl(ctx: WorkflowContext): AsyncGenerator<string, 
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, 'Seek');
 
-    // Show overlay immediately — before any navigation so the user sees it right away
-    await ctx.overlay.initialize();
-    await ctx.overlay.showJobProgress(0, 1, 'Starting Seek bot...', 0);
+    await StealthFeatures.hideWebDriver(driver);
+    await StealthFeatures.randomizeUserAgent(driver);
 
+    printLog(`Opening Direct Job URL (prio): ${ctx.seek_url}`);
+    // Start navigation BEFORE initializing overlay to avoid clear & flicker
+    await driver.get(ctx.seek_url);
+
+    // Now initialize overlay — it will show up on the loading/loaded page
     try {
+      await ctx.overlay.initialize();
+      await ctx.overlay.showJobProgress(0, 1, 'Starting Seek bot...', 0);
+      
       await driver.executeScript(`
         sessionStorage.removeItem('universal_overlay_state');
         window.__overlaySystemInitialized = false;
       `);
-    } catch (e) { /* ignore if page not loaded yet */ }
-
-    await StealthFeatures.hideWebDriver(driver);
-    await StealthFeatures.randomizeUserAgent(driver);
-
-    printLog(`Opening Direct Job URL: ${ctx.seek_url}`);
-    await driver.get(ctx.seek_url);
+    } catch (e) { /* overlay not critical */ }
 
     await driver.sleep(5000);
 
@@ -496,23 +498,24 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
       return await recreateDriverAndRestoreContext(ctx);
     };
 
-    // Show overlay immediately — before any navigation so the user sees it right away
-    await ctx.overlay.initialize();
-    await ctx.overlay.showJobProgress(0, 0, 'Starting Seek bot...', 0);
+    await StealthFeatures.hideWebDriver(driver);
+    await StealthFeatures.randomizeUserAgent(driver);
 
-    // Clear stale overlay state from any previous run so the fresh overlay shows correctly
+    printLog(`Opening URL (prio): ${ctx.seek_url || `${BASE_URL}/jobs`}`);
+    // Start navigation BEFORE initializing overlay to avoid clear & flicker
+    await driver.get(ctx.seek_url || `${BASE_URL}/jobs`);
+
+    // Now initialize overlay — it will show up on the loading/loaded page
     try {
+      await ctx.overlay.initialize();
+      await ctx.overlay.showJobProgress(0, 0, 'Starting Seek bot...', 0);
+      
+      // Clear stale overlay state from any previous run so the fresh overlay shows correctly
       await driver.executeScript(`
         sessionStorage.removeItem('universal_overlay_state');
         window.__overlaySystemInitialized = false;
       `);
-    } catch (e) { /* ignore if page not loaded yet */ }
-
-    await StealthFeatures.hideWebDriver(driver);
-    await StealthFeatures.randomizeUserAgent(driver);
-
-    printLog(`Opening URL: ${ctx.seek_url || `${BASE_URL}/jobs`}`);
-    await driver.get(ctx.seek_url || `${BASE_URL}/jobs`);
+    } catch (e) { /* overlay not critical */ }
 
     // Wait longer for slow networks
     printLog("Waiting for page to load...");
@@ -842,10 +845,47 @@ export async function* clickSearchButton(ctx: WorkflowContext): AsyncGenerator<s
 
 // Step 4: Show Sign In Banner and Wait for Login
 export async function* showSignInBanner(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  await ctx.overlay.showSignInOverlay();
-  await ctx.driver.get(ctx.seek_url || 'https://www.seek.com.au');
-  await ctx.driver.sleep(2000);
-  yield "signin_banner_shown";
+  try {
+    await ctx.overlay.showSignInOverlay();
+    
+    let authenticated = false;
+    // Wait up to ~6 minutes (120 iterations * 3s)
+    for (let i = 0; i < 120; i++) {
+        await ctx.driver.sleep(3000);
+        
+        // Check if user clicked the "✅ I have logged in - Continue" button on the Overlay
+        const isClickConfirmed = await ctx.driver.executeScript(`
+            return window.__overlaySignInComplete === true || sessionStorage.getItem('overlay_signin_complete') === 'true';
+        `).catch(() => false);
+
+        // Check if "Sign in" button is gone from the header (Seek specific)
+        const isLoggedIn = await ctx.driver.executeScript(`
+            const pageSource = document.body.innerText;
+            return !pageSource.includes('Sign in') && !document.querySelector('[data-automation="sign in"]');
+        `).catch(() => false);
+
+        if (isClickConfirmed || isLoggedIn) {
+            authenticated = true;
+            // Clear the state
+            await ctx.driver.executeScript(`
+                window.__overlaySignInComplete = false;
+                sessionStorage.removeItem('overlay_signin_complete');
+            `).catch(() => {});
+            break;
+        }
+    }
+
+    if (authenticated) {
+        printLog("Login confirmed! Proceeding...");
+        yield "signin_banner_shown";
+    } else {
+        printLog("Login timed out.");
+        yield "signin_banner_retry"; // Transitions to refresh_page or finish in YAML
+    }
+  } catch (error) {
+    printLog(`Error showing sign in banner: ${error}`);
+    yield "signin_banner_retry";
+  }
 }
 
 // Step 5: Basic search functionality - just click search since we already have URL with keywords/location
@@ -2935,5 +2975,6 @@ export const seekStepFunctions = {
   skipToNextCard,
   skipResume,
   skipDocuments,
-  clickNextPage
+  clickNextPage,
+  waitForNextConfirm
 };

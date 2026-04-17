@@ -735,8 +735,9 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
     }
 
     // Build command with arguments
-    let mut cmd = Command::new("bun");
-    cmd.arg(path.to_str().unwrap());
+    // Use tsx for consistency.
+    let mut cmd = Command::new("npx");
+    cmd.arg("tsx").arg(path.to_str().unwrap());
 
     // Add arguments if provided
     if let Some(args) = args {
@@ -792,16 +793,16 @@ async fn run_bot_streaming(
     }
 
     // Spawn bot process with piped stdout
-    // Use tsx for Indeed because Camoufox strictly requires better-sqlite3 compiled against Node ABI.
-    let mut cmd = if bot_name.starts_with("indeed") {
-        let mut c = Command::new("npx");
-        c.arg("tsx").arg(script_path.to_str().unwrap()).arg(&bot_name);
-        c
-    } else {
-        let mut c = Command::new("bun");
-        c.arg("--no-cache").arg(script_path.to_str().unwrap()).arg(&bot_name);
-        c
-    };
+    // Use tsx for all bots to ensure consistent runtime, especially for native modules like SQLite.
+    // Use setsid on Unix to create a process group for reliable termination.
+    let mut cmd = Command::new("npx");
+    cmd.arg("tsx").arg(script_path.to_str().unwrap()).arg(&bot_name);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
 
     cmd.env("BOT_ID", &bot_id);
 
@@ -898,11 +899,19 @@ async fn run_bot_for_job(
     }
 
     // Spawn bot process with piped stdout and explicit params
-    let mut cmd = Command::new("bun");
-    cmd.arg(script_path.to_str().unwrap())
+    // Use tsx for all bots and setsid on Unix for clean termination.
+    let mut cmd = Command::new("npx");
+    cmd.arg("tsx")
+       .arg(script_path.to_str().unwrap())
        .arg(&bot_name)
        .arg(format!("--url={}", job_url))
        .arg(format!("--mode={}", mode));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
        
     if let Some(id) = job_id {
         cmd.arg(format!("--jobId={}", id));
@@ -1002,12 +1011,20 @@ async fn run_bot_bulk(
     let ids_str = job_ids.join(",");
     let superbot_str = if superbot { "true" } else { "false" };
 
-    let mut cmd = Command::new("bun");
-    cmd.arg(script_path.to_str().unwrap())
+    // Use tsx for all bots and setsid on Unix for clean termination.
+    let mut cmd = Command::new("npx");
+    cmd.arg("tsx")
+        .arg(script_path.to_str().unwrap())
         .arg("bulk") // Trigger the bulk runner routine
         .arg(format!("--jobs={}", ids_str))
         .arg(format!("--mode={}", mode))
         .arg(format!("--superbot={}", superbot_str));
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
+    }
 
     cmd.env("BOT_ID", &bot_id);
 
@@ -1619,7 +1636,8 @@ async fn stop_bot(bot_id: String) -> Result<String, String> {
         Some(pid) => {
             #[cfg(unix)]
             unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+                // Send SIGTERM to the process group to kill npx, node, and the browser
+                libc::kill(-(pid as i32), libc::SIGTERM);
             }
             #[cfg(windows)]
             {

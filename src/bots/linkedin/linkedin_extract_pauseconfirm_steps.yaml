@@ -1,6 +1,6 @@
 workflow_meta:
-  title: "LinkedIn Extract"
-  description: "Search LinkedIn jobs and extract/save job details without applying"
+  title: "LinkedIn Extract (Pause & Confirm)"
+  description: "Search LinkedIn jobs and extract/save job details — pauses after each key step for user confirmation"
   start_step: "start"
 
 steps_config:
@@ -60,12 +60,20 @@ steps_config:
     step: 5
     func: "openJobsPage"
     transitions:
-      jobs_page_loaded: "set_search_keywords"
+      jobs_page_loaded: "pc_after_jobs_page"
       failed_opening_jobs_page: "open_jobs_page"
     timeout: 30
     on_timeout_event: "failed_opening_jobs_page"
     max_retries: 3
     on_max_retries: "finish"
+
+  pc_after_jobs_page:
+    step: 5.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "set_search_keywords"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   set_search_keywords:
     step: 6
@@ -99,13 +107,21 @@ steps_config:
     step: 8
     func: "applyFilters"
     transitions:
-      filters_applied_successfully: "get_page_info"
+      filters_applied_successfully: "pc_after_filters"
       filters_application_failed: "get_page_info"
       jobs_page_missing: "apply_filters"
     timeout: 40
     on_timeout_event: "filters_application_failed"
     max_retries: 3
     on_max_retries: "finish"
+
+  pc_after_filters:
+    step: 8.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "get_page_info"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   get_page_info:
     step: 9
@@ -124,7 +140,7 @@ steps_config:
     step: 10
     func: "extractJobDetails"
     transitions:
-      jobs_prepared: "open_current_job_card"
+      jobs_prepared: "pc_after_extract"
       max_jobs_reached: "finish"
       no_jobs_page_found: "open_jobs_page"
       no_job_cards_found: "navigate_to_next_page"
@@ -133,6 +149,14 @@ steps_config:
     on_timeout_event: "failed_extracting_jobs"
     max_retries: 3
     on_max_retries: "finish"
+
+  pc_after_extract:
+    step: 10.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "open_current_job_card"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   open_current_job_card:
     step: 11
@@ -158,10 +182,18 @@ steps_config:
     step: 13
     func: "saveLinkedInScrapedJob"
     transitions:
-      job_saved: "advance_to_next_job"
+      job_saved: "pc_after_save"
       save_failed: "advance_to_next_job"
     timeout: 45
     on_timeout_event: "save_failed"
+
+  pc_after_save:
+    step: 13.5
+    func: "waitForNextConfirm"
+    transitions:
+      confirmed: "advance_to_next_job"
+    timeout: 360
+    on_timeout_event: "confirmed"
 
   advance_to_next_job:
     step: 14

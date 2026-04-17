@@ -29,7 +29,7 @@
     "src/deprecated/**",
     "src/bots/**/tests/**",
     "src/bots/indeed/old/**",
-    "src/bots/indeed_bot/**"
+    "src/bots/indeed/**",
   ]
 }
 

@@ -4,6 +4,7 @@ import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/hu
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
+import { waitForNextConfirm } from '../core/pause_confirm';
 import { recordJobApplicationToBackend } from '../core/job_application_recorder';
 import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
 import { logger } from '../core/logger';
@@ -399,10 +400,6 @@ export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<stri
       ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.linkedin);
       ctx.overlay = new UniversalOverlay(driver, 'LinkedIn');
 
-      // Show overlay immediately — before any navigation so the user sees it right away
-      await ctx.overlay.initialize();
-      await ctx.overlay.showJobProgress(0, 0, 'Starting LinkedIn bot...', 0);
-
       await StealthFeatures.hideWebDriver(driver);
       await StealthFeatures.randomizeUserAgent(driver);
     }
@@ -414,11 +411,24 @@ export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<stri
 
     if (!currentUrl.includes('linkedin.com') || currentUrl === 'data:,') {
       printLog(`Navigating to: ${jobsUrl}`);
+      // Start navigation BEFORE initializing overlay to avoid flicker
       await ctx.driver.get(jobsUrl);
+      
+      // Now initialize and show overlay if navigation was needed
+      try {
+        await ctx.overlay.initialize();
+        await ctx.overlay.showJobProgress(0, 0, 'Starting LinkedIn bot...', 0);
+      } catch (e) { /* overlay not critical */ }
+
       await ctx.driver.sleep(2000);
       currentUrl = await ctx.driver.getCurrentUrl();
     } else {
       printLog(`Already on LinkedIn: ${currentUrl}`);
+      // If already there, just ensure overlay is initialized
+      try {
+        await ctx.overlay.initialize();
+        await ctx.overlay.showJobProgress(0, 0, 'Continuing LinkedIn bot...', 0);
+      } catch (e) { /* overlay not critical */ }
     }
 
     const title = await ctx.driver.getTitle();
@@ -469,8 +479,39 @@ export async function* showManualLoginPrompt(ctx: WorkflowContext): AsyncGenerat
 
   try {
     await ctx.overlay.showSignInOverlay();
-    printLog("Manual login prompt shown");
-    yield "prompt_displayed_to_user";
+    
+    let authenticated = false;
+    // Wait up to ~6 minutes (120 iterations * 3s)
+    for (let i = 0; i < 120; i++) {
+      await ctx.driver.sleep(3000);
+      
+      // Check if user clicked the "✅ I have logged in - Continue" button on the Overlay
+      const isClickConfirmed = await ctx.driver.executeScript(`
+        return window.__overlaySignInComplete === true || sessionStorage.getItem('overlay_signin_complete') === 'true';
+      `).catch(() => false);
+
+      // Check for LinkedIn auth cookies
+      const cookies = await ctx.driver.manage().getCookies();
+      const hasAuthCookies = cookies.some((c: any) => c.name === 'li_at' || c.name === 'jsessionid');
+
+      if (isClickConfirmed || hasAuthCookies) {
+        authenticated = true;
+        // Clear the state
+        await ctx.driver.executeScript(`
+          window.__overlaySignInComplete = false;
+          sessionStorage.removeItem('overlay_signin_complete');
+        `).catch(() => {});
+        break;
+      }
+    }
+
+    if (authenticated) {
+      printLog("Login confirmed! Proceeding...");
+      yield "login_successful";
+    } else {
+      printLog("Login timed out.");
+      yield "login_failed";
+    }
   } catch (error) {
     printLog(`Error showing manual login prompt: ${error}`);
     yield "error_showing_manual_login";
@@ -2060,11 +2101,16 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
 
 export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    const directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
+    let directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
     if (!directApplyUrl) {
       printLog("No directApplyUrl provided for LinkedIn apply flow");
       yield "navigation_failed";
       return;
+    }
+
+    // Normalize relative URLs
+    if (directApplyUrl.startsWith('/')) {
+      directApplyUrl = `https://www.linkedin.com${directApplyUrl}`;
     }
 
     if (!ctx.driver) {
@@ -2362,7 +2408,8 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         });
 
         if (answer !== null && answer !== undefined) {
-          const modalScope = "[data-test-modal-id='easy-apply-modal']";
+          const configuredModalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal']";
+          const modalScope = `:is(${configuredModalCss})`;
           const fillResult = await fillQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, modalScope);
           const filled = fillResult.success;
           const options = q.options || q.opts || [];
@@ -2849,5 +2896,6 @@ export const linkedinStepFunctions = {
   applicationFailed,
   continueProcessing,
   navigateToNextPage,
-  finish
+  finish,
+  waitForNextConfirm
 };

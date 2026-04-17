@@ -145,13 +145,49 @@ export async function getIntelligentAnswers(questions: any[], ctx: WorkflowConte
     const qText = (question.question || '').toLowerCase();
 
     if (configPhone && (qText.includes('mobile phone') || qText.includes('phone number') || qText.includes('phone') || qText.includes('telephone'))) {
-      textAnswer = configPhone;
-      answerSource = 'Config (phone)';
-      genericAnsweredIndices.add(i);
+      if (question.type === 'select' || question.type === 'radio') {
+        const mapped = mapTextToOptionIndex(configPhone, question.options || []);
+        if (mapped !== null) {
+          selectedAnswer = mapped;
+          answerSource = 'Config (phone)';
+          genericAnsweredIndices.add(i);
+        } else {
+          const candidateOptions = (question.options || [])
+            .map((opt: string, idx: number) => ({ idx, normalized: normalizeForMatch(opt) }))
+            .filter(({ normalized }: { normalized: string }) => normalized && !/^(select an option|select|please select|choose)$/.test(normalized));
+          if (candidateOptions.length === 1) {
+            selectedAnswer = candidateOptions[0].idx;
+            answerSource = 'Config (phone - Auto Pick)';
+            genericAnsweredIndices.add(i);
+          }
+        }
+      } else {
+        textAnswer = configPhone;
+        answerSource = 'Config (phone)';
+        genericAnsweredIndices.add(i);
+      }
     } else if (configEmail && (qText.includes('email') || qText.includes('e-mail'))) {
-      textAnswer = configEmail;
-      answerSource = 'Config (email)';
-      genericAnsweredIndices.add(i);
+      if (question.type === 'select' || question.type === 'radio') {
+        const mapped = mapTextToOptionIndex(configEmail, question.options || []);
+        if (mapped !== null) {
+          selectedAnswer = mapped;
+          answerSource = 'Config (email)';
+          genericAnsweredIndices.add(i);
+        } else {
+          const candidateOptions = (question.options || [])
+            .map((opt: string, idx: number) => ({ idx, normalized: normalizeForMatch(opt) }))
+            .filter(({ normalized }: { normalized: string }) => normalized && !/^(select an option|select|please select|choose)$/.test(normalized));
+          if (candidateOptions.length === 1) {
+            selectedAnswer = candidateOptions[0].idx;
+            answerSource = 'Config (email - Auto Pick)';
+            genericAnsweredIndices.add(i);
+          }
+        }
+      } else {
+        textAnswer = configEmail;
+        answerSource = 'Config (email)';
+        genericAnsweredIndices.add(i);
+      }
     } else if (isGenericQuestion(question.question)) {
       const genericAnswer = getGenericAnswer(question.question, question.type, question.options || []);
       if (genericAnswer !== null) {
