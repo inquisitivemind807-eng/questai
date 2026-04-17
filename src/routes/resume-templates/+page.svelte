@@ -16,7 +16,13 @@
 		(async () => {
 			loadError = '';
 			try {
-				templates = await loadResumeTemplatesCatalog();
+				const raw = await loadResumeTemplatesCatalog();
+				// Explicitly sort by category then title to match backend order requirements
+				templates = raw.sort((a, b) => {
+					const catSort = a.category.localeCompare(b.category);
+					if (catSort !== 0) return catSort;
+					return a.title.localeCompare(b.title);
+				});
 			} catch (e) {
 				templates = [];
 				loadError =

@@ -1,4 +1,4 @@
-﻿import type { HybridTemplate } from '$lib/data/resumeTemplates';
+import type { HybridTemplate } from '$lib/data/resumeTemplates';
 
 export function getResumeTemplatesApiBase(): string {
 	return String(
@@ -64,7 +64,9 @@ function isPublicCatalogRow(
 	title: string;
 	category: string;
 	file_url: string;
+	description?: string;
 	preview_url?: string;
+	preview_urls?: string[];
 	status?: string;
 } {
 	if (!r || typeof r !== 'object') return false;
@@ -83,7 +85,9 @@ function mapPublicRow(
 		title: string;
 		category: string;
 		file_url: string;
+		description?: string;
 		preview_url?: string;
+		preview_urls?: string[];
 		status?: string;
 	},
 	apiBase: string
@@ -97,9 +101,11 @@ function mapPublicRow(
 	return {
 		id: row.id,
 		title: row.title,
+		description: row.description,
 		category: row.category,
 		downloadUrl: new URL(downloadPath, `${apiBase}/`).href,
-		previewUrl: previewPath ? new URL(previewPath, `${apiBase}/`).href : undefined
+		previewUrl: previewPath ? new URL(previewPath, `${apiBase}/`).href : undefined,
+		previewUrls: row.preview_urls?.map((p) => new URL(p.startsWith('/') ? p : `/${p}`, `${apiBase}/`).href)
 	};
 }
 
