@@ -32,7 +32,7 @@
     "@auth/sveltekit": "^1.10.0",
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-fs": "^2.4.5",
+    "@tauri-apps/plugin-fs": "~2.4.0",
     "@tauri-apps/plugin-opener": "^2.5.3",
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@types/js-yaml": "^4.0.9",
