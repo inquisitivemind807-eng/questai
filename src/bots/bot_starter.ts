@@ -55,6 +55,22 @@ const normalizeSeekJobUrl = (rawUrl: string): string => {
   return rawUrl;
 };
 
+const normalizeIndeedJobUrl = (rawUrl: string): string => {
+  if (!rawUrl) return rawUrl;
+  if (rawUrl.startsWith('/')) {
+    return `https://www.indeed.com${rawUrl}`;
+  }
+  return rawUrl;
+};
+
+const normalizeLinkedInJobUrl = (rawUrl: string): string => {
+  if (!rawUrl) return rawUrl;
+  if (rawUrl.startsWith('/')) {
+    return `https://www.linkedin.com${rawUrl}`;
+  }
+  return rawUrl;
+};
+
 export interface BotRunOptions {
   bot_name: string;
   bot_id?: string;
@@ -398,7 +414,11 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
         const normalizedDirectApplyUrl =
           platform === 'seek' && typeof job.url === 'string'
             ? normalizeSeekJobUrl(job.url)
-            : job.url;
+            : platform === 'indeed' && typeof job.url === 'string'
+              ? normalizeIndeedJobUrl(job.url)
+              : platform === 'linkedin' && typeof job.url === 'string'
+                ? normalizeLinkedInJobUrl(job.url)
+                : job.url;
 
         const bot_config = {
           directApplyUrl: normalizedDirectApplyUrl,
@@ -525,9 +545,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         const defaultApplyName = isIndeed ? 'indeed_apply' : 'linkedin_apply';
         
         print_log(`🚀 Starting DIRECT APPLY bot runner for ${platformName} Job: ${job_url}`);
+        const normalizedUrl = isIndeed ? normalizeIndeedJobUrl(job_url) : normalizeLinkedInJobUrl(job_url);
         const applyBotName = (bot_name === 'linkedin' || bot_name === 'indeed') ? defaultApplyName : bot_name;
         
-        await run_bot(applyBotName, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
+        await run_bot(applyBotName, { directApplyUrl: normalizedUrl, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
         const isIndeed = bot_name.startsWith('indeed');
         console.error(`${isIndeed ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);

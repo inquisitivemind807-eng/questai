@@ -123,8 +123,14 @@ export async function* step0(ctx: any) {
 
 export async function* navigateToDirectApplyUrl(ctx: any) {
     try {
-        const jobUrl = ctx.config?.directApplyUrl;
+        let jobUrl = ctx.config?.directApplyUrl;
         if (!jobUrl) throw new Error("No Direct Apply URL provided");
+
+        // Normalize relative URLs
+        if (jobUrl.startsWith('/')) {
+            jobUrl = `https://www.indeed.com${jobUrl}`;
+        }
+
         await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
         await ctx.page.waitForTimeout(3000);
 

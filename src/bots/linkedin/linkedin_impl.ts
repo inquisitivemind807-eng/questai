@@ -2101,11 +2101,16 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
 
 export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
-    const directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
+    let directApplyUrl = String(ctx.config?.directApplyUrl || '').trim();
     if (!directApplyUrl) {
       printLog("No directApplyUrl provided for LinkedIn apply flow");
       yield "navigation_failed";
       return;
+    }
+
+    // Normalize relative URLs
+    if (directApplyUrl.startsWith('/')) {
+      directApplyUrl = `https://www.linkedin.com${directApplyUrl}`;
     }
 
     if (!ctx.driver) {
