@@ -1,0 +1,27 @@
+{
+  "lastUpdated": "2026-04-10T09:08:51.768Z",
+  "questions": [
+    {
+      "id": 1,
+      "match_keywords": [],
+      "answer": []
+    },
+    {
+      "id": 2,
+      "match_keywords": [],
+      "answer": []
+    },
+    {
+      "id": 3,
+      "match_keywords": [
+        ""
+      ],
+      "answer": [
+        ""
+      ]
+    }
+  ],
+  "settings": {
+    "autoAnswer": true
+  }
+}

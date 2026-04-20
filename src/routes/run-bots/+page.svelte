@@ -4,6 +4,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/stores";
   import { botProgressStore } from "$lib/stores/botProgressStore";
+  import { profileService } from "$lib/services/profileService";
 
   let bots = [
     { id: "linkedin_extract_bot", name: "LinkedIn Bot", image: "/finallinkedin.png" },
@@ -13,10 +14,35 @@
 
   let showConfigError = false;
   let extractCount = 10;
+  
+  let profiles = [];
+  let selectedProfileId = "";
+  let isLoadingProfiles = true;
 
   onMount(async () => {
-    // Simplified 3-bot list for UI clarity
+    try {
+      const allProfiles = await profileService.getProfiles();
+      profiles = allProfiles.filter(p => p.isActive);
+      const activeProfile = profiles.find(p => p.isSelected);
+      if (activeProfile) {
+        selectedProfileId = activeProfile._id;
+      }
+    } catch (err) {
+      console.error("Failed to load profiles:", err);
+    } finally {
+      isLoadingProfiles = false;
+    }
   });
+
+  async function handleProfileSelectChange() {
+    if (selectedProfileId) {
+      try {
+        await profileService.updateProfile(selectedProfileId, { isSelected: true });
+      } catch (err) {
+        console.error("Failed to set selected profile globally:", err);
+      }
+    }
+  }
 
   function handleBotClick(botId) {
     runBot(botId);
@@ -24,11 +50,56 @@
 
   async function runBot(botId) {
     try {
+      let configContent = "{}";
       try {
-        await invoke("read_file_async", { filename: "src/bots/user-bots-config.json" });
+        configContent = await invoke("read_file_async", { filename: "src/bots/user-bots-config.json" });
       } catch {
         showConfigError = true;
         return;
+      }
+
+      // Profile Injection
+      if (selectedProfileId) {
+        const profile = profiles.find(p => p._id === selectedProfileId);
+        if (profile) {
+          try {
+            const config = JSON.parse(configContent);
+            if (!config.formData) config.formData = {};
+            
+            if (profile.keywords && profile.keywords.length > 0) {
+              config.formData.keywords = profile.keywords.join(", ");
+            }
+            if (profile.resume && profile.resume.filename) {
+              config.formData.resumeFileName = profile.resume.filename;
+            }
+            if (profile.locations && profile.locations.length > 0) {
+              config.formData.locations = profile.locations.join(", ");
+            }
+            if (profile.excludedCompanies && profile.excludedCompanies.length > 0) {
+              config.formData.excludedCompanies = profile.excludedCompanies.join(", ");
+            }
+            if (profile.excludedKeywords && profile.excludedKeywords.length > 0) {
+              config.formData.excludedKeywords = profile.excludedKeywords.join(", ");
+            }
+            if (profile.jobType) config.formData.jobType = profile.jobType;
+            if (profile.experienceLevel) config.formData.experienceLevel = profile.experienceLevel;
+            if (profile.remotePreference) config.formData.remotePreference = profile.remotePreference;
+            if (profile.industry) config.formData.industry = profile.industry;
+            if (profile.listedDate) config.formData.listedDate = profile.listedDate;
+            if (profile.minSalary) config.formData.minSalary = profile.minSalary;
+            if (profile.maxSalary) config.formData.maxSalary = profile.maxSalary;
+            if (profile.rewriteResume !== undefined) config.formData.rewriteResume = profile.rewriteResume;
+            if (profile.botMode) config.formData.botMode = profile.botMode;
+
+            config.formData.activeProfileId = profile._id;
+            config.formData.profileBasicInfo = profile.questions?.basicInfo || [];
+            config.formData.profileSpecificQA = profile.questions?.profileSpecific || [];
+
+            await invoke("write_file_async", { filename: "src/bots/user-bots-config.json", content: JSON.stringify(config, null, 2) });
+          } catch (err) {
+            console.error("Failed to inject profile into config:", err);
+          }
+        }
       }
 
       const cleanBotName = botId.replace("_bot", "");
@@ -75,6 +146,36 @@
 </script>
 
 <div class="container mx-auto p-8 min-h-[calc(100vh-80px)] flex flex-col">
+  <div class="mb-10 max-w-5xl mx-auto w-full">
+    <div class="bg-base-100 rounded-2xl p-6 border border-base-200 shadow-sm flex flex-col md:flex-row items-center justify-between gap-6">
+      <div class="flex items-center gap-4 w-full md:w-auto">
+        <div class="bg-primary/10 p-3 rounded-xl text-primary flex-shrink-0">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        </div>
+        <div class="flex-grow">
+          <h3 class="font-bold text-base text-base-content">Select Career Profile</h3>
+          <p class="text-xs text-base-content/60">Choose a profile to automatically apply its targeted keywords and resume.</p>
+        </div>
+      </div>
+      <div class="w-full md:w-72">
+        {#if isLoadingProfiles}
+          <div class="flex justify-center"><span class="loading loading-spinner loading-sm"></span></div>
+        {:else if profiles.length > 0}
+          <select bind:value={selectedProfileId} on:change={handleProfileSelectChange} class="select select-bordered w-full">
+            <option value="">Default Config (Current settings)</option>
+            {#each profiles as profile}
+              <option value={profile._id}>{profile.profileName}</option>
+            {/each}
+          </select>
+        {:else}
+          <div class="text-sm text-base-content/60 italic">No profiles created yet.</div>
+        {/if}
+      </div>
+    </div>
+  </div>
+
   <div class="flex-grow">
     <div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
       {#each bots as bot}

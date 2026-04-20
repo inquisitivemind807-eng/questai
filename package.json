@@ -4,8 +4,7 @@
   "description": "",
   "type": "module",
   "scripts": {
-    "dev": "node ./node_modules/vite/bin/vite.js dev",
-    "dev:plain": "node ./node_modules/vite/bin/vite.js dev",
+    "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.check.json",
