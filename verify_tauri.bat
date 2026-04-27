@@ -1,0 +1,6 @@
+@echo off
+echo Checking Tauri version and info...
+bun run tauri info
+echo.
+echo Cleaning up temporary files...
+del install_tauri.bat check_rust.bat check_rust_local.bat tauri_info.bat install_rustup.bat install_vstools.bat
