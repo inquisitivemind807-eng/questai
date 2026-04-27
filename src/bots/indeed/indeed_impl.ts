@@ -12,11 +12,23 @@ import { UniversalOverlay } from '../core/universal_overlay';
 import { apiRequest } from '../core/api_client';
 import { waitForNextConfirmAsync } from '../core/pause_confirm';
 import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
+import { emit } from '@tauri-apps/api/event';
 
 /**
  * Visual helper to highlight elements during bot interaction.
  * Uses outline and box-shadow to avoid layout shifts.
  */
+
+//userLog function that sends messages to UI Dashboard
+export function userLog(...message: string[]) {
+    emit('bot-progress', {
+        type: 'transition',
+        transition: message.join(' ')
+    }).catch((error: any) => console.error('Failed to emit bot-progress event:', error));
+
+    console.log(`[USER LOG] ${message}`); // just for debugging
+}
+
 async function highlight(locator: any, color: string = '#ff0000') {
     if (!locator) return;
     try {
@@ -62,7 +74,7 @@ class PlaywrightDriverAdapter {
 export async function* step0(ctx: any) {
     if (!ctx.state) ctx.state = {};
     if (!ctx.page) {
-        console.log('indeed.step0', 'Booting Camoufox (Playwright) stealth engine...');
+        userLog('indeed.step0', 'Booting Camoufox (Playwright) stealth engine...');
         const { Camoufox } = await import('camoufox-js');
 
         const sessionsDir = path.join(process.cwd(), 'sessions', 'indeed', 'camoufox_profile');
@@ -105,14 +117,14 @@ export async function* step0(ctx: any) {
             // NOTE: We don't initialize overlay yet because we might be on about:blank
             // We'll initialize it in openCheckLogin or showManualLoginPrompt
 
-            console.log('indeed.step0', `Camoufox stealth engine ready. Profile: ${sessionsDir}`);
+            userLog('indeed.step0', `Camoufox stealth engine ready. Profile: ${sessionsDir}`);
         } catch (error) {
             console.error('indeed.step0', 'Critical fatal error launching Camoufox', error);
             throw error;
         }
     }
 
-    console.log('indeed.step0', 'Starting Indeed.com extraction workflow...');
+    userLog('indeed.step0', 'Starting Indeed.com extraction workflow...');
 
     if (ctx.config?.directApplyUrl) {
         yield 'direct_apply_requested';
@@ -182,10 +194,10 @@ export function buildSearchUrl(ctx: any): string {
 }
 
 export async function* openCheckLogin(ctx: any) {
-    console.log('indeed.checkLogin', 'Checking login status...');
+    userLog('indeed.checkLogin', 'Checking login status...');
     try {
         if (!ctx.sessionExists) {
-            console.log('indeed.checkLogin', 'No active Camoufox session found. Clean profile.');
+            userLog('indeed.checkLogin', 'No active Camoufox session found. Clean profile.');
             yield 'user_needs_to_login';
             return;
         }
@@ -193,7 +205,7 @@ export async function* openCheckLogin(ctx: any) {
         const currentUrl = ctx.page.url();
         const searchUrl = buildSearchUrl(ctx);
         if (!currentUrl.includes('indeed.com') || currentUrl === 'about:blank') {
-            console.log('indeed.checkLogin', `Navigating to search URL for initial check: ${searchUrl}`);
+            userLog('indeed.checkLogin', `Navigating to search URL for initial check: ${searchUrl}`);
             await ctx.page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
             await ctx.page.waitForTimeout(3000);
         }
@@ -224,10 +236,10 @@ export async function* openCheckLogin(ctx: any) {
         const isLoggedIn = (signInBtnCount === 0) && hasAuthCookies;
 
         if (isLoggedIn) {
-            console.log('indeed.checkLogin', 'Session is authenticated.');
+            userLog('indeed.checkLogin', 'Session is authenticated.');
             yield 'login_not_needed';
         } else {
-            console.log('indeed.checkLogin', `User is not logged in. (Sign-in buttons found: ${signInBtnCount}, Auth Cookies: ${hasAuthCookies})`);
+            userLog('indeed.checkLogin', `User is not logged in. (Sign-in buttons found: ${signInBtnCount}, Auth Cookies: ${hasAuthCookies})`);
             yield 'user_needs_to_login';
         }
     } catch (error) {
@@ -237,7 +249,7 @@ export async function* openCheckLogin(ctx: any) {
 }
 
 export async function* showManualLoginPrompt(ctx: any) {
-    console.log('indeed.login', 'Pausing for manual login...');
+    userLog('indeed.login', 'Pausing for manual login...');
     console.warn('indeed.login', 'ACTION REQUIRED: Please enter your credentials and log in to Indeed.');
 
     try {
@@ -308,7 +320,7 @@ export async function* showManualLoginPrompt(ctx: any) {
         }
 
         if (authenticated) {
-            console.log('indeed.login', 'Login confirmed! Proceeding...');
+            userLog('indeed.login', 'Login confirmed! Proceeding...');
             if (ctx.overlay) {
                 await ctx.overlay.updateJobProgress(0, 0, 'Login confirmed, proceeding...', 1).catch(() => { });
             }
@@ -355,7 +367,7 @@ function normalizeExperienceLevel(lvl: string): string {
 async function handleLocationDialog(ctx: any): Promise<void> {
     const page = ctx.page;
     try {
-        console.log('indeed.openJobs', 'Checking for location confirmation or interactive "Yes" dialog...');
+        userLog('indeed.openJobs', 'Checking for location confirmation or interactive "Yes" dialog...');
         
         // Broad selectors to catch the "Yes" button in various contexts (search form, standalone dialog, etc.)
         const yesBtnSelector = 'button.css-1ua5vtl, button:has-text("Yes"), button:has-text("YES")';
@@ -363,7 +375,7 @@ async function handleLocationDialog(ctx: any): Promise<void> {
 
         // Check if a "Yes" button exists and is visible
         if (await yesBtn.count() > 0 && await yesBtn.isVisible()) {
-            console.log('indeed.openJobs', 'Interactive "Yes" button detected — clicking to proceed.');
+            userLog('indeed.openJobs', 'Interactive "Yes" button detected — clicking to proceed.');
             await highlight(yesBtn, '#00ff00');
             await yesBtn.click({ force: true });
             await page.waitForTimeout(2000);
@@ -376,7 +388,7 @@ async function handleLocationDialog(ctx: any): Promise<void> {
         if (await dialog.count() > 0) {
             await highlight(dialog, '#ffff00');
             const dialogText = await dialog.innerText();
-            console.log('indeed.openJobs', `Specific location dialog found: "${dialogText.substring(0, 50)}..."`);
+            userLog('indeed.openJobs', `Specific location dialog found: "${dialogText.substring(0, 50)}..."`);
             const specificYesBtn = dialog.locator('button:has-text("Yes")').first();
             if (await specificYesBtn.count() > 0) {
                 await highlight(specificYesBtn, '#00ff00');
@@ -397,14 +409,14 @@ async function handleDynamicFilters(ctx: any): Promise<void> {
     const config = ctx.config;
 
     try {
-        console.log('indeed.filters', 'Starting dynamic filter discovery...');
+        userLog('indeed.filters', 'Starting dynamic filter discovery...');
 
         // Scan for common filter buttons (ids like taxo1_filter_button, fromAge_filter_button, etc.)
         const filterButtonSelector = 'button[id$="_filter_button"], button[aria-label$=" filter"]';
         const filterButtons = page.locator(filterButtonSelector);
         const count = await filterButtons.count();
 
-        console.log('indeed.filters', `Found ${count} potentially dynamic filter buttons.`);
+        userLog('indeed.filters', `Found ${count} potentially dynamic filter buttons.`);
 
         for (let i = 0; i < count; i++) {
             const btn = filterButtons.nth(i);
@@ -412,7 +424,7 @@ async function handleDynamicFilters(ctx: any): Promise<void> {
             const id = await btn.getAttribute('id') || '';
             const ariaLabel = await btn.getAttribute('aria-label') || '';
 
-            console.log('indeed.filters', `Filter index ${i}: label="${label}", id="${id}", ariaLabel="${ariaLabel}"`);
+            userLog('indeed.filters', `Filter index ${i}: label="${label}", id="${id}", ariaLabel="${ariaLabel}"`);
             await highlight(btn, '#0000ff');
 
             // 1. Handle "Date posted" filter (fromAge)
@@ -436,7 +448,7 @@ async function handleDynamicFilters(ctx: any): Promise<void> {
 
 async function applyFilterOption(page: any, btn: any, value: string, knownOptions: string[], filterType: string): Promise<void> {
     try {
-        console.log('indeed.filters', `Attempting to apply "${value}" to ${filterType} filter...`);
+        userLog('indeed.filters', `Attempting to apply "${value}" to ${filterType} filter...`);
         await highlight(btn, '#0000ff');
         await btn.click({ force: true });
         await page.waitForTimeout(1000);
@@ -450,7 +462,7 @@ async function applyFilterOption(page: any, btn: any, value: string, knownOption
             const opt = optionsList.nth(j);
             const optText = await opt.innerText();
             if (optText.toLowerCase().includes(normalizedValue)) {
-                console.log('indeed.filters', `Found matching option: "${optText}" — clicking`);
+                userLog('indeed.filters', `Found matching option: "${optText}" — clicking`);
                 await highlight(opt, '#00ff00');
                 await opt.click({ force: true });
                 await page.waitForTimeout(1500);
@@ -459,7 +471,7 @@ async function applyFilterOption(page: any, btn: any, value: string, knownOption
         }
 
         // If not found by direct match, try a looser match against knownOptions
-        console.log('indeed.filters', `No direct match for "${value}" in ${filterType}.`);
+        userLog('indeed.filters', `No direct match for "${value}" in ${filterType}.`);
         // Close the dropdown if still open
         await page.keyboard.press('Escape');
     } catch (e) {
@@ -469,7 +481,7 @@ async function applyFilterOption(page: any, btn: any, value: string, knownOption
 
 async function applyDynamicKeywordsFilter(page: any, btn: any, keywords: string): Promise<void> {
     try {
-        console.log('indeed.filters', `Exploring dynamic keywords filter for: ${keywords}...`);
+        userLog('indeed.filters', `Exploring dynamic keywords filter for: ${keywords}...`);
         await highlight(btn, '#0000ff');
         await btn.click({ force: true });
         await page.waitForTimeout(1000);
@@ -485,7 +497,7 @@ async function applyDynamicKeywordsFilter(page: any, btn: any, keywords: string)
 
             for (const kw of individualKeywords) {
                 if (optText.includes(kw)) {
-                    console.log('indeed.filters', `Keyword match: "${kw}" in option "${optText}" — clicking`);
+                    userLog('indeed.filters', `Keyword match: "${kw}" in option "${optText}" — clicking`);
                     await highlight(opt, '#00ff00');
                     await opt.click({ force: true });
                     clickedAny = true;
@@ -512,10 +524,10 @@ async function applyDynamicKeywordsFilter(page: any, btn: any, keywords: string)
 }
 
 export async function* openJobsPage(ctx: any) {
-    console.log('indeed.openJobs', 'Navigating to search page...');
+    userLog('indeed.openJobs', 'Navigating to search page...');
     try {
         const url = buildSearchUrl(ctx);
-        console.log('indeed.openJobs', `Target Search URL: ${url}`);
+        userLog('indeed.openJobs', `Target Search URL: ${url}`);
 
         // Initial navigation
         const currentUrl = ctx.page.url();
@@ -523,10 +535,10 @@ export async function* openJobsPage(ctx: any) {
         // we only navigate again if the current URL doesn't look like a valid search results page.
         // Indeed URLs often append query params like vjk= so we check for the core '/jobs?q=' pattern.
         if (!currentUrl.includes('/jobs?q=') || currentUrl === 'about:blank') {
-            console.log('indeed.openJobs', 'Navigating to search results...');
+            userLog('indeed.openJobs', 'Navigating to search results...');
             await ctx.page.goto(url, { waitUntil: 'domcontentloaded' });
         } else {
-            console.log('indeed.openJobs', 'Already on a search results page. Skipping navigation.');
+            userLog('indeed.openJobs', 'Already on a search results page. Skipping navigation.');
         }
 
         // Indeed often does a series of redirects or loads filters via JS. 
@@ -565,7 +577,7 @@ export async function* setSearchLocation(ctx: any) {
 }
 
 export async function* getPageInfo(ctx: any) {
-    console.log('indeed.pagination', 'Extracting pagination info...');
+    userLog('indeed.pagination', 'Extracting pagination info...');
     ctx.state.currentPage = ctx.state.currentPage || 1;
     ctx.state.scrapedJobs = ctx.state.scrapedJobs || [];
 
@@ -581,7 +593,7 @@ export async function* getPageInfo(ctx: any) {
             if (match) {
                 const totalJobs = parseInt(match[1], 10);
                 ctx.state.totalJobs = totalJobs;
-                console.log('indeed.pagination', `Detected total jobs: ${totalJobs}`);
+                userLog('indeed.pagination', `Detected total jobs: ${totalJobs}`);
 
                 if (ctx.overlay) {
                     await ctx.overlay.addLogEvent(`📊 Found ${totalJobs} jobs on Indeed`).catch(() => { });
@@ -598,7 +610,7 @@ export async function* getPageInfo(ctx: any) {
 }
 
 export async function* extractJobDetails(ctx: any) {
-    console.log('indeed.extract', 'Extracting job cards...');
+    userLog('indeed.extract', 'Extracting job cards...');
     try {
         const containerSelector = ctx.selectors.jobCards?.container || 'div.job_seen_beacon, td.resultContent, div[data-testid="slider_item"]';
 
@@ -848,7 +860,7 @@ export async function* extractJobDetails(ctx: any) {
                     });
 
                     if (result && result.success) {
-                        console.log('indeed.save', `✅ Saved job: ${title} (ID: ${result.id})`);
+                        userLog('indeed.save', `✅ Saved job: ${title} (ID: ${result.id})`);
                         if (ctx.overlay) {
                             await ctx.overlay.addLogEvent(`💾 Saved: ${title}`).catch(() => { });
                         }
@@ -870,7 +882,7 @@ export async function* extractJobDetails(ctx: any) {
                                
             if (isPauseMode) {
                 const nextLabel = (i + 1 < cardCount) ? `Next Job (${i + 2}/${cardCount})` : "Finish Extraction Batch";
-                console.log(`indeed.extract`, `⏸️ Pausing between jobs (${i+1}/${cardCount})`);
+                userLog(`indeed.extract`, `⏸️ Pausing between jobs (${i+1}/${cardCount})`);
                 
                 // Ensure overlay is alive before pausing
                 if (ctx.overlay) {
@@ -892,13 +904,13 @@ export async function* extractJobDetails(ctx: any) {
 export async function* processJobs(ctx: any) {
     if (!ctx.state.scrapedJobs) ctx.state.scrapedJobs = [];
     ctx.state.scrapedJobs = ctx.state.scrapedJobs.concat(ctx.state.currentJobCards || []);
-    console.log('indeed.process', `Job batch sync complete. Total accumulated: ${ctx.state.scrapedJobs.length}`);
+    userLog('indeed.process', `Job batch sync complete. Total accumulated: ${ctx.state.scrapedJobs.length}`);
     ctx.overlay?.updateJobProgress(ctx.state.scrapedJobs.length, ctx.state.scrapedJobs.length, `Finished processing ${ctx.state.currentJobCards?.length || 0} jobs`, 4).catch(() => { });
     yield 'jobs_saved';
 }
 
 export async function* attemptEasyApply(ctx: any) {
-    console.log('indeed.apply', 'Attempting direct apply...');
+    userLog('indeed.apply', 'Attempting direct apply...');
     try {
         if (ctx.config?.directApplyUrl) {
             await ctx.page.goto(ctx.config.directApplyUrl, { waitUntil: 'domcontentloaded' });
@@ -923,7 +935,7 @@ export async function* attemptEasyApply(ctx: any) {
 }
 
 export async function* answerQuestions(ctx: any) {
-    console.log('indeed.forms', 'Processing application steps...');
+    userLog('indeed.forms', 'Processing application steps...');
     let maxSteps = 15;
 
     while (maxSteps > 0) {
@@ -950,7 +962,7 @@ export async function* answerQuestions(ctx: any) {
                 await highlight(nextBtn, '#00ff00');
                 const txt = await nextBtn.innerText();
                 await nextBtn.click({ force: true });
-                console.log('indeed.forms', `Clicked: ${txt}`);
+                userLog('indeed.forms', `Clicked: ${txt}`);
 
                 if (txt.toLowerCase().includes('submit')) {
                     await ctx.page.waitForTimeout(5000);
@@ -964,12 +976,12 @@ export async function* answerQuestions(ctx: any) {
 }
 
 export async function* submitApplication(ctx: any) {
-    console.log('indeed.submit', 'Finished submitting application.');
+    userLog('indeed.submit', 'Finished submitting application.');
     yield 'save_applied_job';
 }
 
 export async function* saveAppliedJob(ctx: any) {
-    console.log('indeed.save_applied', 'Recording job application to backend...');
+    userLog('indeed.save_applied', 'Recording job application to backend...');
     try {
         // Find current job details to pass to recorder
         const jobId = ctx.config?.jobId || ctx.state?.currentJobId || 'unknown';
@@ -1005,7 +1017,7 @@ export async function* saveAppliedJob(ctx: any) {
         });
 
         if (result.ok) {
-            console.log('indeed.save_applied', `✅ Recorded application to DB (ID: ${result.id})`);
+            userLog('indeed.save_applied', `✅ Recorded application to DB (ID: ${result.id})`);
             if (ctx.overlay) {
                 await ctx.overlay.addLogEvent('✅ Application recorded successfully').catch(() => { });
             }
@@ -1029,7 +1041,7 @@ export async function* applicationFailed(ctx: any) {
 }
 
 export async function* navigateToNextPage(ctx: any) {
-    console.log('indeed.pagination', 'Proceeding to next page...');
+    userLog('indeed.pagination', 'Proceeding to next page...');
     try {
         const nextBtnSel = ctx.selectors.pagination?.nextButton || "a[data-testid='pagination-page-next'], a[aria-label='Next Page'], a[aria-label='Next']";
         const nextBtn = ctx.page.locator(nextBtnSel).first();
@@ -1048,7 +1060,7 @@ export async function* navigateToNextPage(ctx: any) {
 }
 
 export async function* finish(ctx: any) {
-    console.log('indeed.finish', `Workflow finished. Scraped total: ${ctx.state?.scrapedJobs?.length || 0}`);
+    userLog('indeed.finish', `Workflow finished. Scraped total: ${ctx.state?.scrapedJobs?.length || 0}`);
     if (ctx.browser) {
         // In Camoufox we may want to keep it open based on keep_open setting, but usually we close.
         if (ctx.config?.keep_open !== true) {
