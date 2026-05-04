@@ -5,7 +5,7 @@
  * Overcomes stealth protections using Firefox Camoufox instead of Chrome.
  */
 
-import fetch from 'node-fetch';
+
 import * as path from 'path';
 import * as fs from 'fs';
 import { UniversalOverlay } from '../core/universal_overlay';
@@ -577,7 +577,8 @@ export async function* getPageInfo(ctx: any) {
             await highlight(countEl, '#00ffff');
             const text = await countEl.innerText();
             // Extract the number (handle "9 jobs" or "Page 1 of 1,234 jobs")
-            const match = text.replace(/,/g, '').match(/(\d+)/);
+            const cleanText = text.replace(/,/g, '');
+            const match = cleanText.match(/(\d+)\s*jobs/i) || cleanText.match(/(\d+)/);
             if (match) {
                 const totalJobs = parseInt(match[1], 10);
                 ctx.state.totalJobs = totalJobs;
@@ -639,7 +640,9 @@ export async function* extractJobDetails(ctx: any) {
                     }
                 } catch (e) { }
 
-                ctx.overlay?.updateJobProgress(i + 1, cardCount, `Extracting: ${title}`, 3).catch(() => { });
+                const totalProgress = (ctx.state.scrapedJobs?.length || 0) + i + 1;
+                const totalTarget = ctx.state.totalJobs || cardCount;
+                ctx.overlay?.updateJobProgress(totalProgress, totalTarget, `Extracting: ${title}`, 3).catch(() => { });
 
                 try {
                     const compEl = card.locator('[data-testid="company-name"]').first();
@@ -893,7 +896,8 @@ export async function* processJobs(ctx: any) {
     if (!ctx.state.scrapedJobs) ctx.state.scrapedJobs = [];
     ctx.state.scrapedJobs = ctx.state.scrapedJobs.concat(ctx.state.currentJobCards || []);
     console.log('indeed.process', `Job batch sync complete. Total accumulated: ${ctx.state.scrapedJobs.length}`);
-    ctx.overlay?.updateJobProgress(ctx.state.scrapedJobs.length, ctx.state.scrapedJobs.length, `Finished processing ${ctx.state.currentJobCards?.length || 0} jobs`, 4).catch(() => { });
+    const totalTarget = ctx.state.totalJobs || ctx.state.scrapedJobs.length;
+    ctx.overlay?.updateJobProgress(ctx.state.scrapedJobs.length, totalTarget, `Finished processing ${ctx.state.currentJobCards?.length || 0} jobs`, 4).catch(() => { });
     yield 'jobs_saved';
 }
 
