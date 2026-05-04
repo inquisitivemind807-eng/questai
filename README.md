@@ -127,16 +127,11 @@ When you update your bot, you update the hosted binary too
 
 ## 🖥️ CLI Commands (`bot_starter.ts`)
 
-All bots are run from the `questai/` directory using Bun. **Exception:** the `indeed` and `indeed_apply` bots must be run with `npx tsx` — not `bun` — because `camoufox-js` internally uses `better-sqlite3`, a native C++ addon compiled for Node.js ABI, which is incompatible with Bun's ABI.
+All bots are run from the `questai/` directory using Bun. This includes Indeed — `camoufox-js` is patched to use `bun:sqlite` instead of the Node-only `better-sqlite3`.
 
 ```bash
 cd questai
-
-# Seek & LinkedIn — use bun
 bun src/bots/bot_starter.ts <bot_name> [options]
-
-# Indeed — use npx tsx (Node.js runtime required)
-npx tsx src/bots/bot_starter.ts <bot_name> [options]
 ```
 
 ### Available Bot Names
@@ -171,11 +166,11 @@ bun src/bots/bot_starter.ts seek
 # LinkedIn — extract jobs from search page
 bun src/bots/bot_starter.ts linkedin
 
-# Indeed — extract jobs from search page (must use npx tsx, not bun)
-npx tsx src/bots/bot_starter.ts indeed
+# Indeed — extract jobs from search page
+bun src/bots/bot_starter.ts indeed
 
 # Indeed — extract with manual confirmation
-npx tsx src/bots/bot_starter.ts indeed_extract_pauseconfirm
+bun src/bots/bot_starter.ts indeed_extract_pauseconfirm
 ```
 
 ---
@@ -191,11 +186,11 @@ bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678
 # LinkedIn — apply to a specific job
 bun src/bots/bot_starter.ts linkedin --url=https://www.linkedin.com/jobs/view/12345678
 
-# Indeed — apply to a specific job (must use npx tsx, not bun)
-npx tsx src/bots/bot_starter.ts indeed_apply --url=https://au.indeed.com/viewjob?jk=abc123
+# Indeed — apply to a specific job
+bun src/bots/bot_starter.ts indeed_apply --url=https://au.indeed.com/viewjob?jk=abc123
 
 # Indeed — apply with manual confirmation
-npx tsx src/bots/bot_starter.ts indeed_apply_pauseconfirm --url=https://au.indeed.com/viewjob?jk=abc123
+bun src/bots/bot_starter.ts indeed_apply_pauseconfirm --url=https://au.indeed.com/viewjob?jk=abc123
 
 # With a specific bot mode (e.g., 'bot' for fully automated, 'review' to pause before submit)
 bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678 --mode=bot
@@ -279,7 +274,7 @@ The Indeed bot uses **Playwright + Camoufox** (stealthy Firefox) instead of Sele
 | Overlay integration | ✅ Done | `UniversalOverlay` integration completed with job progress updates |
 | `indeed_extract_steps.yaml` | ✅ Done | Dedicated extraction workflow YAML |
 | `indeed_apply_pauseconfirm` | ✅ Done | Pause-confirm variants for extraction and application |
-| Tauri runner fix | ❌ Missing | Tauri spawns Indeed with wrong runtime (`bun` instead of correct path) |
+| Tauri runner fix | ✅ Done | All bots (including Indeed) now run via `bun` — `camoufox-js` patched for `bun:sqlite` |
 | Frontend bot mapping | ❌ Missing | `JobTrackerBase.svelte` may not correctly map Indeed jobs to `indeed_apply` |
 
 ---
