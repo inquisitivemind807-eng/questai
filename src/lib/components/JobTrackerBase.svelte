@@ -672,6 +672,8 @@
   }
 
   let showSelectionWarning = false;
+  let showDeleteSuccess = false;
+  let lastDeletedCount = 0;
 
   function toggleJobSelection(jobId) {
     if (selectedJobs.includes(jobId)) {
@@ -735,12 +737,15 @@
 
       const data = await response.json();
       if (data.success) {
+        lastDeletedCount = data.deletedCount ?? selectedJobs.length;
         applications = applications.filter(
           (a) => !selectedJobs.includes(a._id),
         );
         selectedJobs = [];
+        showDeleteSuccess = true;
+        setTimeout(() => (showDeleteSuccess = false), 5000);
       } else {
-        throw new Error(data.error);
+        throw new Error(data.error || "Failed to delete jobs");
       }
     } catch (e) {
       error = String(e);
@@ -921,6 +926,14 @@
       </div>
     {/if}
 
+    {#if showDeleteSuccess}
+      <div class="toast toast-end toast-bottom z-[100]">
+        <div class="alert alert-success shadow-lg text-white font-semibold">
+          <span>Successfully deleted {lastDeletedCount} job(s).</span>
+        </div>
+      </div>
+    {/if}
+
     <!-- Tab Content -->
     {#if isLoading}
       <div class="flex justify-center py-20">
@@ -1014,6 +1027,7 @@
                     <div class="flex gap-2">
                       <button class="btn btn-primary btn-sm shadow-sm" on:click={bulkApply}>✉️ Auto-Apply</button>
                       <button class="btn btn-error btn-outline btn-sm shadow-sm" on:click={() => (selectedJobs = [])}>Clear</button>
+                      <button class="btn btn-error btn-sm" on:click={deleteSelectedJobs}>Delete</button>
                     </div>
                   </div>
                 {/if}
