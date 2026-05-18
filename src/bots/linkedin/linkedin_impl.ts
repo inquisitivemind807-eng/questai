@@ -47,6 +47,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { readCanonicalResumeText } from '../../lib/canonical-resume';
+import { highlightElement } from '../core/highlight';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -423,6 +424,9 @@ export async function waitAndClick(
 
       // Add a small delay for Svelte/React hydration (Crucial for handling modern SPA components)
       await driver.sleep(200);
+
+      // Highlight element before click (outline + glow for visual debugging)
+      await highlightElement(driver, element, '#0000ff').catch(() => {});
 
       // Attempt Click
       await element.click();
@@ -1112,6 +1116,8 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     const pageJobs: Array<{ job_id: string; title: string; company: string; location: string; url: string }> = [];
     for (let i = 0; i < pageJobCount; i++) {
       const card = jobCards[i];
+      // Highlight card being extracted (cyan = processing)
+      await highlightElement(driver, card, '#00ffff').catch(() => {});
       let jobId = '';
       let title = '';
       let company = '';
@@ -1313,6 +1319,9 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
     }
     await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card);
     await driver.sleep(200);
+
+    // Highlight the card being opened (cyan = processing)
+    await highlightElement(driver, card, '#00ffff').catch(() => {});
 
     let jobId = await card.getAttribute('data-occludable-job-id') || await card.getAttribute('data-job-id');
     if (!jobId) {
@@ -1886,6 +1895,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract title
     try {
       const titleElement = await driver.findElement(By.css(selectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1'));
+      await highlightElement(driver, titleElement, '#ff00ff').catch(() => {}); // Magenta = title
       jobDetails.title = (await titleElement.getText()).trim();
     } catch (error) {
       jobDetails.title = currentJob.title || '';
@@ -1894,6 +1904,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract company
     try {
       const companyElement = await driver.findElement(By.css(selectors?.company_name_css || 'div.job-details-jobs-unified-top-card__company-name a'));
+      await highlightElement(driver, companyElement, '#ffff00').catch(() => {}); // Yellow = company
       jobDetails.company = (await companyElement.getText()).trim();
     } catch (error) {
       jobDetails.company = currentJob.company || '';
@@ -1911,6 +1922,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract location
     try {
       const locationElement = await driver.findElement(By.xpath(selectors?.location_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--low-emphasis')][1]"));
+      await highlightElement(driver, locationElement, '#ffff00').catch(() => {}); // Yellow = location
       const rawLocation = (await locationElement.getText()).trim();
       const { cleanedLocation, workplaceType } = cleanLocation(rawLocation);
       jobDetails.location = cleanedLocation;

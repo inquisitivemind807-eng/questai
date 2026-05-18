@@ -44,6 +44,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { loadUserConfig } from '../core/config_loader';
+import { highlightElement } from '../core/highlight';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -733,6 +734,7 @@ export async function* fillSearchForm(ctx: WorkflowContext): AsyncGenerator<stri
           const el = await ctx.driver.findElement(By.css(sel));
           if (!(await el.isDisplayed())) continue;
           await ctx.driver.executeScript('arguments[0].scrollIntoView({block: "center"});', el);
+          await highlightElement(ctx.driver, el, '#00ffff').catch(() => {}); // Cyan = input focused
           await el.click();
           try {
             await el.sendKeys(Key.chord(Key.COMMAND, 'a'), Key.BACK_SPACE);
@@ -832,6 +834,7 @@ export async function* clickSearchButton(ctx: WorkflowContext): AsyncGenerator<s
     try {
       const button = await ctx.driver.findElement(By.css(selector));
       if (await button.isDisplayed()) {
+        await highlightElement(ctx.driver, button, '#0000ff').catch(() => {}); // Blue = action click
         try {
           await button.click();
         } catch {
@@ -1202,6 +1205,7 @@ export async function* clickJobCard(ctx: WorkflowContext): AsyncGenerator<string
 
     await ctx.driver.executeScript("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", currentCard);
     await ctx.driver.sleep(1000); // Give it time to scroll
+    await highlightElement(ctx.driver, currentCard, '#00ffff').catch(() => {}); // Cyan = processing card
     await ctx.driver.executeScript("arguments[0].click();", currentCard);
     await ctx.driver.sleep(2000); // Wait for details panel to load
     ctx.job_index = index + 1;
@@ -2606,6 +2610,11 @@ export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<s
 
     if (clicked?.clicked) {
       printLog(`✅ Submit clicked using selector: ${clicked.selector}`);
+      // Highlight the submit button that was clicked (green = success)
+      try {
+        const submitBtn = await ctx.driver.findElement(By.css(clicked.selector));
+        await highlightElement(ctx.driver, submitBtn, '#00ff00').catch(() => {});
+      } catch { /* element may have navigated away */ }
       await ctx.driver.sleep(5000); // Wait longer for submission to process
       
       // Verify submission was successful by checking for success indicators
