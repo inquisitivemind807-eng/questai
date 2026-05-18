@@ -1,3 +1,33 @@
+/**
+ * Bot Starter — CLI & Programmatic Entry Point
+ * ------------------------------------------------------------------
+ * The main orchestrator that ties together the Bot Registry, Workflow
+ * Engine, and platform implementations. This is the file that runs
+ * when you execute:
+ *
+ *   bun src/bots/bot_starter.ts <bot_name> [options]
+ *
+ * Responsibilities:
+ *   - Load `.env` manually (bun doesn't auto-load for child processes)
+ *   - Discover and validate bots via BotRegistry
+ *   - Load bot configuration, selectors, and implementation modules
+ *   - Create and configure the WorkflowEngine with YAML + step functions
+ *   - Set up emergency cleanup (SIGINT/SIGTERM/exception handlers)
+ *   - Handle CLI flags: --url, --jobs, --mode, --limit, --headless, etc.
+ *   - Support bulk orchestration (--jobs=id1,id2,id3)
+ *   - URL normalization per platform (Seek, LinkedIn, Indeed)
+ *
+ * Event streaming:
+ *   All bot progress is emitted as [BOT_EVENT] JSON lines on stdout.
+ *   The Tauri/Svelte frontend reads these lines to update the dashboard.
+ *
+ * CLI Examples:
+ *   bun src/bots/bot_starter.ts seek
+ *   bun src/bots/bot_starter.ts seek --url=https://seek.com.au/job/123
+ *   bun src/bots/bot_starter.ts linkedin --mode=review
+ *   bun src/bots/bot_starter.ts bulk --jobs=id1,id2 --mode=bot
+ */
+
 import { bot_registry, BotRegistry } from './core/registry.js';
 import { WorkflowEngine, type WorkflowContext } from './core/workflow_engine.js';
 import { killAllChromeProcesses } from './core/browser_manager.js';
@@ -79,8 +109,14 @@ export interface BotRunOptions {
   keep_open?: boolean;
 }
 
+/** Reference to the currently running workflow engine (for abort signals). */
 let activeWorkflowEngine: WorkflowEngine | null = null;
 
+/**
+ * Main orchestrator class. Holds a BotRegistry instance and provides
+ * the `run_bot()` method — the single entry point for executing any
+ * bot workflow (extract, apply, bulk).
+ */
 export class BotStarter {
   private registry: BotRegistry;
 
@@ -88,7 +124,22 @@ export class BotStarter {
     this.registry = registry || bot_registry;
   }
 
-  // Main entry point - like Python's bot_runner.py
+  /**
+   * Run a single bot workflow from start to finish.
+   *
+   * Lifecycle:
+   *  1. Create session ID + set up logger context
+   *  2. Register SIGINT/SIGTERM/exception handlers for graceful shutdown
+   *  3. Discover bots, validate bot name, load config + selectors + impl
+   *  4. Create WorkflowEngine, register step functions, run
+   *  5. Handle post-execution (keep browser open or close)
+   *
+   * @param options.bot_name  - Name of the bot variant (e.g. 'seek_apply')
+   * @param options.bot_id    - Optional override for the auto-generated session ID
+   * @param options.config    - User overrides merged into the bot config
+   * @param options.headless  - Run browser in headless mode
+   * @param options.keep_open - Keep the browser open after workflow completes
+   */
   async run_bot(options: BotRunOptions): Promise<void> {
     const { bot_name, bot_id, config, headless = false, keep_open = false } = options;
     const sessionId = logger.createSessionId(bot_name);
@@ -260,7 +311,11 @@ export class BotStarter {
     }
   }
 
-  // Load bot implementation module
+  /**
+   * Dynamically import a bot implementation module and extract its
+   * step functions. Supports default exports, named export conventions,
+   * and raw module objects.
+   */
   private async load_bot_implementation(impl_path: string): Promise<any> {
     try {
       const bot_module = await import(impl_path);
@@ -285,7 +340,10 @@ export class BotStarter {
     }
   }
 
-  // Register bot's step functions with workflow engine
+  /**
+   * Register all exported functions from a bot implementation module
+   * with the workflow engine so YAML `func` names can reference them.
+   */
   private register_bot_functions(workflow_engine: WorkflowEngine, bot_impl: any): void {
     if (typeof bot_impl === 'object') {
       Object.entries(bot_impl).forEach(([name, func]) => {
@@ -298,7 +356,7 @@ export class BotStarter {
     }
   }
 
-  // Create initial context for workflow
+  /** Merge bot config with user overrides to create the initial workflow context. */
   private create_initial_context(bot_config: any, bot_selectors: any, user_config?: any): any {
     return {
       config: {
@@ -309,7 +367,10 @@ export class BotStarter {
     };
   }
 
-  // Handle cleanup and browser management after execution
+  /**
+   * Post-execution cleanup: stop monitoring, close browser (or keep
+   * it open if `keep_open` was requested).
+   */
   private async handle_post_execution(context: WorkflowContext, keep_open: boolean): Promise<void> {
     // Stop monitoring before closing browser to prevent false recovery attempts
     if (context.driver && context.stopMonitoring) {
@@ -346,20 +407,23 @@ export class BotStarter {
     }
   }
 
-  // Get list of available bots
+  /** Return the list of all discovered bot variant names. */
   get_available_bots(): string[] {
     this.registry.discover_bots();
     return this.registry.get_bot_names();
   }
 
-  // Validate bot exists
+  /** Check if a bot variant name has been discovered and is valid. */
   validate_bot(bot_name: string): boolean {
     this.registry.discover_bots();
     return this.registry.bot_exists(bot_name);
   }
 }
 
-// Convenience function for direct usage
+/**
+ * Convenience function: run a bot with minimal config.
+ * Creates a BotStarter instance and delegates to `run_bot()`.
+ */
 export async function run_bot(bot_name: string, config?: any, options?: Partial<BotRunOptions>): Promise<void> {
   const bot_starter = new BotStarter();
   await bot_starter.run_bot({
@@ -369,7 +433,15 @@ export async function run_bot(bot_name: string, config?: any, options?: Partial<
   });
 }
 
-// Bulk runner for orchestrating multiple applications resiliently
+/**
+ * Bulk runner: process a list of job IDs in sequence.
+ * Each job runs independently; failures in one job do not stop the queue.
+ * Failed jobs are marked as 'failed' in the DB.
+ *
+ * @param jobIds   - Array of MongoDB ObjectId strings
+ * @param mode     - Bot mode: 'review' or 'bot'
+ * @param superbot - Force 'bot' mode globally (overrides per-job mode)
+ */
 export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: boolean): Promise<void> {
   print_log(`\n🚀 [BULK RUNNER] Starting queue orchestration for ${jobIds.length} jobs.`);
   print_log(`⚙️ Config: Mode = ${mode}, Superbot = ${superbot}`);

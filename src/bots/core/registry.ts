@@ -1,3 +1,19 @@
+/**
+ * Bot Registry — Auto-Discovery & Validation
+ * ------------------------------------------------------------------
+ * Scans the `src/bots/` directory tree for platform bot folders
+ * (seek/, linkedin/, indeed/). Each folder is validated by checking
+ * for the three required artifacts:
+ *
+ *   1. `{bot}_impl.ts`     — the step function implementations
+ *   2. `*_steps.yaml`      — workflow definitions (one or more)
+ *   3. `{bot}_selectors.json` — DOM selector maps
+ *
+ * YAML variants (e.g. `seek_apply_steps.yaml`, `seek_extract_steps.yaml`)
+ * are each registered as a first-class bot name (`seek_apply`, `seek_extract`).
+ * All variants share the same impl + selectors + config.
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
@@ -19,16 +35,16 @@ export class BotRegistry {
   private bots_dir: string;
   private discovered_bots: Map<string, BotInfo> = new Map();
 
+  /** @param bots_dir - Root directory to scan; defaults to `src/bots/`. */
   constructor(bots_dir?: string) {
     this.bots_dir = bots_dir || path.join(__dirname, '..');
   }
 
-  // Discover all available bots and their workflow variants.
-  // A single bot folder (e.g. seek/) can contain multiple *_steps.yaml files.
-  // Each YAML becomes a first-class variant:
-  //   seek_extract_steps.yaml  →  variant name "seek_extract"  (or "seek" as default)
-  //   seek_apply_steps.yaml    →  variant name "seek_apply"
-  // All variants share the same impl, selectors, and config from the parent folder.
+  /**
+   * Scan the bots directory and register all discovered bots + variants.
+   * Returns an array of bot name strings (e.g. ['seek', 'seek_apply', 'linkedin']).
+   * Skips dot-directories and well-known non-bot folders (core, sessions, logs, etc.).
+   */
   discover_bots(): string[] {
     const bot_names: string[] = [];
 
@@ -62,10 +78,12 @@ export class BotRegistry {
     return bot_names;
   }
 
-  // Discover all *_steps.yaml files in a bot folder and map them to variant names.
-  // E.g. in seek/:
-  //   seek_extract_steps.yaml  →  "seek" (default) and "seek_extract"
-  //   seek_apply_steps.yaml    →  "seek_apply"
+  /**
+   * Internal: scan a single bot folder for YAML workflow variants.
+   * Returns a Map of variant_name → yaml_path.
+   * The base bot name (e.g. 'seek') maps to the default YAML;
+   * other variants get names like 'seek_apply'.
+   */
   private discover_yaml_variants(bot_name: string, bot_path: string): Map<string, string> {
     const variants = new Map<string, string>();
 
@@ -101,7 +119,10 @@ export class BotRegistry {
     return variants;
   }
 
-  // Pick the default YAML for a bot folder.
+  /**
+   * Pick the default YAML for a bot folder.
+   * Priority: `{bot}_steps.yaml` → `{bot}_extract_steps.yaml` → first available.
+   */
   private resolve_default_yaml(bot_name: string, yaml_files: string[]): string | null {
     // First choice: {bot_name}_steps.yaml (e.g. linkedin_steps.yaml)
     const exact = `${bot_name}_steps.yaml`;
@@ -115,7 +136,10 @@ export class BotRegistry {
     return yaml_files[0] || null;
   }
 
-  // Validate bot has required files: impl + at least one YAML + selectors
+  /**
+   * Validate that a bot folder has all required files:
+   * `{bot}_impl.ts`, at least one `*_steps.yaml`, and `{bot}_selectors.json`.
+   */
   private validate_bot_structure(bot_name: string, bot_path: string): boolean {
     // Check impl file
     const impl_path = path.join(bot_path, `${bot_name}_impl.ts`);
@@ -147,9 +171,11 @@ export class BotRegistry {
     return true;
   }
 
-  // Create bot info object for a variant.
-  // variant_name may differ from bot_name (e.g. "seek_apply" vs "seek")
-  // but impl, selectors, and config always come from the parent bot folder.
+  /**
+   * Build the BotInfo record for a discovered variant.
+   * Variant name may differ from bot folder name
+   * (e.g. variant 'seek_apply' in folder 'seek').
+   */
   private create_bot_info(variant_name: string, bot_name: string, bot_path: string, yaml_path: string): BotInfo {
     // Check if selectors file is in config/ subdirectory
     const selectors_root = path.join(bot_path, `${bot_name}_selectors.json`);
@@ -167,22 +193,27 @@ export class BotRegistry {
     };
   }
 
-  // Format bot name for display
+  /** Capitalize the first letter for display purposes. */
   private format_display_name(bot_name: string): string {
     return bot_name.charAt(0).toUpperCase() + bot_name.slice(1);
   }
 
-  // Get bot information
+  /** Get info for a specific bot by name; null if not registered. */
   get_bot_info(bot_name: string): BotInfo | null {
     return this.discovered_bots.get(bot_name) || null;
   }
 
-  // Get all discovered bots
+  /** Returns all discovered bot variants. */
   get_all_bots(): BotInfo[] {
     return Array.from(this.discovered_bots.values());
   }
 
-  // Load bot configuration
+  /**
+   * Load the bot's user configuration JSON.
+   * Tries the bot-specific config file first, then falls back to
+   * the shared `user-bots-config.json`. Returns a default config
+   * if nothing is found.
+   */
   load_bot_config(bot_name: string): any {
     const bot_info = this.get_bot_info(bot_name);
     if (!bot_info) {
@@ -244,7 +275,7 @@ export class BotRegistry {
     }
   }
 
-  // Load bot selectors
+  /** Load and parse the bot's selectors JSON file. */
   load_bot_selectors(bot_name: string): any {
     const bot_info = this.get_bot_info(bot_name);
     if (!bot_info) {
@@ -259,12 +290,12 @@ export class BotRegistry {
     }
   }
 
-  // Check if bot exists
+  /** Check if a bot name is registered. */
   bot_exists(bot_name: string): boolean {
     return this.discovered_bots.has(bot_name);
   }
 
-  // Get available bot names
+  /** Get all registered bot names as a string array. */
   get_bot_names(): string[] {
     return Array.from(this.discovered_bots.keys());
   }

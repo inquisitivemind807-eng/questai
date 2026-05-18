@@ -1,11 +1,31 @@
+/**
+ * Universal Session Manager
+ * ------------------------------------------------------------------
+ * Manages login-state detection across job platforms (Seek, LinkedIn,
+ * Indeed). Looks for known CSS selectors, DOM indicators, and auth
+ * cookies to determine whether the user is authenticated.  Provides
+ * a `waitForLogin` loop and a red login banner injected into the page
+ * to guide the user through manual authentication.
+ *
+ * Use the pre-built `SessionConfigs` map to get platform-specific
+ * selectors (e.g. `SessionConfigs.linkedin`).
+ */
+
 import { WebDriver, By } from 'selenium-webdriver';
 
 interface SessionConfig {
+  /** CSS selectors for the Sign In / Log In button or link */
   signInSelectors: string[];
+  /** CSS selectors that indicate a logged-in user (profile menu, avatar, etc.) */
   userMenuSelectors: string[];
+  /** Substrings to look for in the page URL or title (e.g. 'dashboard', 'feed') */
   loggedInIndicators: string[];
 }
 
+/**
+ * Platform-agnostic session manager.
+ * Injects login banners and polls for successful manual authentication.
+ */
 export class UniversalSessionManager {
   private driver: WebDriver;
   private config: SessionConfig;
@@ -15,7 +35,16 @@ export class UniversalSessionManager {
     this.config = config;
   }
 
-  // Check if user is logged in to any job site
+  /**
+   * Check whether the user appears to be logged in.
+   *
+   * Strategy (in order):
+   *   1. If `sessionExists` is false → assume not logged in.
+   *   2. Look for user-menu selectors in the DOM.
+   *   3. Check the URL and page title for logged-in indicators.
+   *
+   * Returns false if uncertain (default: require login).
+   */
   async checkLoginStatus(sessionExists: boolean): Promise<boolean> {
     try {
       // If no session exists, definitely not logged in
@@ -59,7 +88,11 @@ export class UniversalSessionManager {
     }
   }
 
-  // Wait for user to complete login manually
+  /**
+   * Block until the user completes login manually.
+   * Polls every 3 seconds for up to 5 minutes.
+   * Resolves when login is detected; rejects on timeout.
+   */
   async waitForLogin(): Promise<void> {
     console.log('🔴 PLEASE COMPLETE LOGIN MANUALLY');
     console.log('🔴 THE BOT WILL WAIT FOR YOU TO LOG IN...');
@@ -99,7 +132,12 @@ export class UniversalSessionManager {
     });
   }
 
-  // Show user-friendly login banner
+  /**
+   * Inject a fixed-position red login banner at the top of the page.
+   * Auto-removes after 30 seconds.
+   *
+   * @param siteName - Platform name shown in the banner (e.g. 'LinkedIn').
+   */
   async showLoginBanner(siteName: string = 'this site'): Promise<void> {
     try {
       await this.driver.executeScript(`
@@ -141,7 +179,7 @@ export class UniversalSessionManager {
     }
   }
 
-  // Remove login banner
+  /** Remove the login banner from the DOM if it exists. */
   async removeLoginBanner(): Promise<void> {
     try {
       await this.driver.executeScript(`

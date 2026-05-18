@@ -1,3 +1,31 @@
+/**
+ * Seek Bot Implementation
+ * ------------------------------------------------------------------
+ * Selenium + Chrome implementation for Seek.com.au. This is the
+ * original and most mature bot — many patterns here were later
+ * adapted for LinkedIn and Indeed.
+ *
+ * The Seek bot has the richest feature set:
+ *   - Job extraction (search page scraping)
+ *   - Direct Apply with employer question handling
+ *   - Intelligent Q&A via DeepSeek (corpus-rag API)
+ *   - Cover letter generation (AI, per-job)
+ *   - Resume selection and upload
+ *   - AI resume tailoring
+ *   - `userLog` system for clean frontend dashboard messages
+ *   - Full pause-confirm support for manual review mode
+ *
+ * Step functions (registered via `seekStepFunctions`):
+ *   step0, directApply, openCheckLogin, loginPrompt,
+ *   openJobsPage, setSearchKeywords, setSearchLocation,
+ *   applyFilters, getPageInfo, extractJobDetails,
+ *   processJobs, saveJobsToFile, resumeHandler,
+ *   coverLetterHandler, extractEmployerQs,
+ *   answerEmployerQs, attemptEasyApply,
+ *   submitApplication, manualReview,
+ *   saveAppliedJob, externalJob, navigateToNextPage, finish
+ */
+
 import { WebDriver, By, Key } from 'selenium-webdriver';
 import { setupChromeDriver } from '../core/browser_manager';
 import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/humanization';
