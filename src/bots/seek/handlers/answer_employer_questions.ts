@@ -57,7 +57,7 @@ export async function fillQuestionFieldDetailed(
 
   const answerIdx = modalScopeSelector ? 2 : 1;
   const getContainerScript = modalScopeSelector
-    ? 'var modal = document.querySelector(arguments[0]); var container = modal ? modal.querySelector(arguments[1]) : null;'
+    ? `var modal = document.querySelector(arguments[0]); if (!modal) { var host = document.querySelector('#interop-outlet'); if (host && host.shadowRoot) modal = host.shadowRoot.querySelector(arguments[0]); } var container = modal ? modal.querySelector(arguments[1]) : null;`
     : 'var container = document.querySelector(arguments[0]);';
   const selectArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
   const radioArgs = modalScopeSelector
@@ -146,11 +146,26 @@ export async function fillQuestionFieldDetailed(
           };
         }
 
-        // Step 2: Click the radio button using Selenium (fires all native events)
+        // Step 2: Click the radio button via executeScript (avoids CSS selector escaping issues with LinkedIn IDs)
         try {
-          const radioElement = await ctx.driver.findElement({ css: `input[id="${radioData.radioId}"]` });
-          await radioElement.click();
-          printLog(`✅ Clicked radio button (ID: ${radioData.radioId})`);
+          const clickResult = await ctx.driver.executeScript(`
+            var radio = document.getElementById(arguments[0]);
+            if (radio) {
+              radio.click();
+              return { success: true };
+            }
+            return { success: false, error: 'Radio button not found in DOM' };
+          `, radioData.radioId);
+          if (clickResult.success) {
+            printLog(`✅ Clicked radio button (ID: ${radioData.radioId})`);
+          } else {
+            printLog(`❌ Failed to click radio button: ${clickResult.error}`);
+            return {
+              success: false,
+              failureReason: 'element_not_found',
+              error: clickResult.error || ''
+            };
+          }
         } catch (clickError) {
           printLog(`❌ Failed to click radio button: ${clickError}`);
           return {
