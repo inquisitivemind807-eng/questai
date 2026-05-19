@@ -99,6 +99,9 @@
   },
   "easy_apply": {
     "button_css_candidates": [
+      "a[aria-label*='Easy Apply']",
+      "a[href*='openSDUIApplyFlow=true']",
+      "//a[contains(., 'Easy Apply')]",
       "button#jobs-apply-button-id",
       "button.jobs-apply-button[aria-label*='Easy Apply']",
       "button.jobs-apply-button[data-job-id]"
@@ -106,7 +109,7 @@
     "button_xpath": ".//button[contains(@class,'jobs-apply-button') and contains(@aria-label, 'Easy Apply')]",
     "general_apply_button_xpath": ".//button[contains(@class,'jobs-apply-button')]",
     "modal_class": "jobs-easy-apply-modal",
-    "modal_container_css": "div.jobs-easy-apply-modal",
+    "modal_container_css": "div.jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal'], .artdeco-modal",
     "review_button_xpath": "//button[contains(., 'Review')]",
     "next_button_xpath": "//button[contains(., 'Next') or contains(., 'Continue')]",
     "submit_button_xpath": "//button[contains(., 'Submit application') or contains(., 'Submit')]",
