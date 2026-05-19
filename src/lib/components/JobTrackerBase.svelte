@@ -9,6 +9,7 @@
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import { botProgressStore } from "$lib/stores/botProgressStore";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import {
     Chart,
     Title,
@@ -725,12 +726,12 @@
     paginatedJobs.every((j) => selectedJobs.includes(j._id));
 
   async function deleteSelectedJobs() {
-    if (
-      !confirm(
-        `Are you sure you want to delete ${selectedJobs.length} selected job(s)?`,
-      )
-    )
-      return;
+    console.log("Delete button clicked", selectedJobs);
+    const confirmed = await ask(
+      `Are you sure you want to delete ${selectedJobs.length} selected job(s)?`,
+      { title: "Confirm Deletion", kind: "warning" }
+    );
+    if (!confirmed) return;
 
     isLoading = true;
     try {
