@@ -736,7 +736,7 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
 
     // Build command with arguments
     // Use tsx for consistency.
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
     cmd.arg("tsx").arg(path.to_str().unwrap());
 
     // Add arguments if provided
@@ -795,7 +795,7 @@ async fn run_bot_streaming(
     // Spawn bot process with piped stdout
     // Use tsx for all bots to ensure consistent runtime, especially for native modules like SQLite.
     // Use setsid on Unix to create a process group for reliable termination.
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
     cmd.arg("tsx").arg(script_path.to_str().unwrap()).arg(&bot_name);
 
     #[cfg(unix)]
@@ -900,7 +900,7 @@ async fn run_bot_for_job(
 
     // Spawn bot process with piped stdout and explicit params
     // Use tsx for all bots and setsid on Unix for clean termination.
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
     cmd.arg("tsx")
        .arg(script_path.to_str().unwrap())
        .arg(&bot_name)
@@ -1012,7 +1012,7 @@ async fn run_bot_bulk(
     let superbot_str = if superbot { "true" } else { "false" };
 
     // Use tsx for all bots and setsid on Unix for clean termination.
-    let mut cmd = Command::new("npx");
+    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
     cmd.arg("tsx")
         .arg(script_path.to_str().unwrap())
         .arg("bulk") // Trigger the bulk runner routine

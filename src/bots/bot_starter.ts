@@ -4,7 +4,7 @@ import { killAllChromeProcesses } from './core/browser_manager.js';
 import { logger } from './core/logger.js';
 import * as path from 'path';
 import * as fs from 'fs';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 
 // Load .env manually — bun doesn't auto-load .env when spawned as a child process by Tauri
 try {
@@ -263,7 +263,8 @@ export class BotStarter {
   // Load bot implementation module
   private async load_bot_implementation(impl_path: string): Promise<any> {
     try {
-      const bot_module = await import(impl_path);
+      const importUrl = path.isAbsolute(impl_path) ? pathToFileURL(impl_path).href : impl_path;
+      const bot_module = await import(importUrl);
 
       // Look for step functions export
       if (bot_module.default) {
