@@ -47,6 +47,16 @@
     "job_list_item_xpath": "//li[@data-occludable-job-id]",
     "job_time_posted_relative_xpath": ".//span[contains(normalize-space(), ' ago')]",
     "keywords_label_xpath": ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']",
+    "easy_apply_badge_css": [
+      ".job-card-container__apply-method",
+      ".jobs-apply-button",
+      "span[class*='job-card-container__footer-job-state']"
+    ],
+    "card_time_posted_css": [
+      "time",
+      ".job-card-container__footer-job-state",
+      "span[class*='job-card-container__footer']"
+    ],
     "job_details_panel": {
       "container_css": "div.jobs-details__main-content",
       "title_css": "div.job-details-jobs-unified-top-card__job-title h1",
@@ -58,7 +68,14 @@
       "applicants_count_xpath": "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(text(), 'applicants')]",
       "job_type_tags_css": "div.job-details-fit-level-preferences button",
       "description_css": "div.jobs-description__content article",
-      "description_text_css": "div.jobs-box__html-content"
+      "description_text_css": "div.jobs-box__html-content",
+      "salary_css": [
+        "div.salary-compensation__salary",
+        "span[class*='salary']",
+        "span[class*='compensation']",
+        "div[class*='salary-compensation'] span",
+        "div[class*='job-details-jobs-unified-top-card__job-insight'] span"
+      ]
     }
   },
   "pagination": {

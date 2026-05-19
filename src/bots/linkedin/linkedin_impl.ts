@@ -1113,7 +1113,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     printLog(`Found ${jobCards.length} jobs on current page`);
     const remaining = extractLimit > 0 ? Math.max(0, extractLimit - alreadyExtracted) : jobCards.length;
     const pageJobCount = Math.min(jobCards.length, remaining);
-    const pageJobs: Array<{ job_id: string; title: string; company: string; location: string; url: string }> = [];
+    const pageJobs: Array<{ job_id: string; title: string; company: string; location: string; url: string; isEasyApply: boolean; applicationType: string; time_posted: string }> = [];
     for (let i = 0; i < pageJobCount; i++) {
       const card = jobCards[i];
       // Highlight card being extracted (cyan = processing)
@@ -1122,6 +1122,9 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
       let title = '';
       let company = '';
       let location = '';
+      let isEasyApply = false;
+      let applicationType = 'external';
+      let time_posted = '';
       try {
         jobId = (await card.getAttribute('data-occludable-job-id')) || (await card.getAttribute('data-job-id')) || '';
       } catch {
@@ -1152,13 +1155,67 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
       } catch {
         // ignore
       }
+      try {
+        const easyApplySelectors = ctx.selectors?.jobs?.easy_apply_badge_css || [
+          '.job-card-container__apply-method',
+          '.jobs-apply-button'
+        ];
+        for (const sel of easyApplySelectors) {
+          try {
+            const badgeEl = await card.findElement(By.css(sel));
+            const badgeText = (await badgeEl.getText()).trim();
+            if (badgeText.includes('Easy Apply')) {
+              isEasyApply = true;
+              applicationType = 'internal';
+              await highlightElement(driver, badgeEl, '#00ff00').catch(() => {}); // Green = Easy Apply found
+              break;
+            }
+          } catch {
+            // try next selector
+          }
+        }
+        if (!isEasyApply) {
+          const cardText = await card.getText();
+          if (cardText.includes('Easy Apply')) {
+            isEasyApply = true;
+            applicationType = 'internal';
+          }
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        const timeSelectors = ctx.selectors?.jobs?.card_time_posted_css || [
+          'time',
+          '.job-card-container__footer-job-state',
+          'span[class*="job-card-container__footer"]'
+        ];
+        for (const sel of timeSelectors) {
+          try {
+            const timeEl = await card.findElement(By.css(sel));
+            const timeText = (await timeEl.getText()).trim();
+            if (timeText && /\b(?:minute|hour|day|week|month|second|min|hr|wk|mo)s?\s+ago\b/i.test(timeText)) {
+              time_posted = timeText;
+              await highlightElement(driver, timeEl, '#ffff00').catch(() => {}); // Yellow = time found
+              break;
+            }
+          } catch {
+            // try next selector
+          }
+        }
+      } catch {
+        // ignore
+      }
       if (jobId) {
         pageJobs.push({
           job_id: String(jobId),
           title,
           company,
           location,
-          url: `https://www.linkedin.com/jobs/view/${jobId}`
+          url: `https://www.linkedin.com/jobs/view/${jobId}`,
+          isEasyApply,
+          applicationType,
+          time_posted
         });
       }
     }
@@ -1201,7 +1258,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     // linkedin_extract uses the extract-only pipeline (jobs_prepared → open_current_job_card).
     // linkedin / linkedin_apply uses the legacy path (proceed_to_process_jobs → process_jobs).
     const resolvedBotName = (ctx as any).bot_name || (ctx.config as any)?.botName || '';
-    if (resolvedBotName === 'linkedin_extract') {
+    if (resolvedBotName.startsWith('linkedin_extract')) {
       yield "jobs_prepared";
     } else {
       // Backward-compatible path for legacy linkedin_steps.yaml
@@ -1271,7 +1328,7 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
   try {
     const driver = ctx.driver;
     const panelSelectors = ctx.selectors?.jobs?.job_details_panel;
-    const preparedPageJobs = (((ctx as any).page_jobs || []) as Array<{ job_id: string; title: string; company: string; location: string; url: string }>);
+    const preparedPageJobs = (((ctx as any).page_jobs || []) as Array<{ job_id: string; title: string; company: string; location: string; url: string; isEasyApply: boolean; applicationType: string; time_posted: string }>);
     const totalJobs = Number(ctx.total_jobs || 0);
     const currentIndex = Number(ctx.current_job_index || 0);
     const pageJobCount = Number((ctx as any).page_job_count || 0);
@@ -1575,6 +1632,9 @@ export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenera
       location: jobData.location || ctx.current_job?.work_location || undefined,
       description: jobData.description || jobData.details || undefined,
       postedDate: jobData.time_posted || jobData.postedDate || undefined,
+      time_posted: jobData.time_posted || undefined,
+      applicationType: jobData.applicationType || undefined,
+      applicantsCount: jobData.applicants_count || undefined,
       workMode: Array.isArray(jobData.job_type_tags)
         ? (jobData.job_type_tags.find((tag: string) => /remote|hybrid|on[- ]?site|onsite/i.test(String(tag))) || undefined)
         : undefined,
@@ -1938,6 +1998,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract time posted
     try {
       const timeElement = await driver.findElement(By.xpath(selectors?.time_posted_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--positive')]//span"));
+      await highlightElement(driver, timeElement, '#ffff00').catch(() => {}); // Yellow = time posted
       jobDetails.time_posted = (await timeElement.getText()).trim();
     } catch (error) {
       jobDetails.time_posted = '';
@@ -1946,9 +2007,78 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract applicants count
     try {
       const applicantsElement = await driver.findElement(By.xpath(selectors?.applicants_count_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(text(), 'applicants')]"));
+      await highlightElement(driver, applicantsElement, '#ffff00').catch(() => {}); // Yellow = applicants count
       jobDetails.applicants_count = (await applicantsElement.getText()).trim();
     } catch (error) {
       jobDetails.applicants_count = '';
+    }
+
+    // Detect Easy Apply from panel Apply button
+    try {
+      const easyApplySelectors = ctx.selectors?.easy_apply?.button_css_candidates || [
+        'button#jobs-apply-button-id',
+        'button.jobs-apply-button'
+      ];
+      let buttonText = '';
+      for (const sel of easyApplySelectors) {
+        if (sel.startsWith('//')) continue;
+        try {
+          const btn = await driver.findElement(By.css(sel));
+          const isDisplayed = await btn.isDisplayed().catch(() => false);
+          if (isDisplayed) {
+            buttonText = (await btn.getText()).trim();
+            await highlightElement(driver, btn, '#0000ff').catch(() => {}); // Blue = Easy Apply button
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (!buttonText) {
+        try {
+          const btn = await driver.findElement(By.xpath(".//button[contains(@class,'jobs-apply-button')]"));
+          buttonText = (await btn.getText()).trim();
+        } catch {
+          // ignore
+        }
+      }
+      if (buttonText.includes('Easy Apply')) {
+        jobDetails.applicationType = 'internal';
+        jobDetails.easy_apply = true;
+      } else {
+        jobDetails.applicationType = 'external';
+        jobDetails.easy_apply = false;
+      }
+    } catch (error) {
+      jobDetails.applicationType = 'external';
+      jobDetails.easy_apply = false;
+    }
+
+    // Extract salary
+    try {
+      const salarySelectors = selectors?.salary_css || [
+        'div.salary-compensation__salary',
+        'span[class*="salary"]',
+        'span[class*="compensation"]'
+      ];
+      for (const sel of salarySelectors) {
+        try {
+          const salaryEl = await driver.findElement(By.css(sel));
+          await highlightElement(driver, salaryEl, '#ffff00').catch(() => {}); // Yellow = salary
+          const salaryText = (await salaryEl.getText()).trim();
+          if (salaryText && /\$|USD|EUR|GBP|\d/.test(salaryText)) {
+            jobDetails.salary = salaryText;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (!jobDetails.salary) {
+        jobDetails.salary = '';
+      }
+    } catch (error) {
+      jobDetails.salary = '';
     }
 
     // Extract job type tags (Remote, Full-time, etc.)
@@ -1957,7 +2087,10 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
       const tags = [];
       for (const tag of tagElements) {
         const tagText = (await tag.getText()).trim();
-        if (tagText) tags.push(tagText);
+        if (tagText) {
+          tags.push(tagText);
+          await highlightElement(driver, tag, '#ffff00').catch(() => {}); // Yellow = job type tag
+        }
         
         // Secondary check for workplace type in tags
         if (!jobDetails.workMode) {
@@ -1973,6 +2106,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract description
     try {
       const descElement = await driver.findElement(By.css(selectors?.description_text_css || 'div.jobs-box__html-content'));
+      await highlightElement(driver, descElement, '#00ffff').catch(() => {}); // Cyan = description
       jobDetails.description = (await descElement.getText()).trim();
     } catch (error) {
       jobDetails.description = '';

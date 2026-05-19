@@ -48,6 +48,9 @@
   // Mark as used to avoid Svelte's unused-export warning when routes pass it.
   $: bots;
 
+  export let enableEasyApplyFilter = false;
+  $: enableEasyApplyFilter;
+
   const PLATFORM_LABELS = {
     linkedin: "LinkedIn",
     seek: "Seek",
@@ -191,8 +194,10 @@
     { id: "workplace_type", label: "Workplace Type", visible: true },
     { id: "salary", label: "Salary", visible: true },
     { id: "type", label: "Type", visible: true },
+    { id: "posted", label: "Posted", visible: true },
+    { id: "applicants", label: "Applicants", visible: true },
     { id: "date", label: "Date", visible: true },
-    { id: "status", label: "Status", visible: false },
+    { id: "status", label: "Status", visible: true },
     { id: "actions", label: "Actions", visible: true, disableToggle: true }
   ];
 
@@ -241,6 +246,14 @@
         const ta = a.applicationType || "";
         const tb = b.applicationType || "";
         result = ta.localeCompare(tb);
+      } else if (sortColumn === "posted") {
+        const pa = a.postedDate || a.posted_date || a.time_posted || "";
+        const pb = b.postedDate || b.posted_date || b.time_posted || "";
+        result = pa.localeCompare(pb);
+      } else if (sortColumn === "applicants") {
+        const aa = a.applicantsCount || a.applicants_count || "";
+        const ab = b.applicantsCount || b.applicants_count || "";
+        result = aa.localeCompare(ab);
       } else if (sortColumn === "status") {
         const sa = a.status || "";
         const sb = b.status || "";
@@ -1084,6 +1097,16 @@
                             Type {sortColumn === 'type' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
                           </th>
                         {/if}
+                        {#if columns.find(c => c.id === 'posted')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200 text-center w-[120px] min-w-[120px]" on:click={() => toggleSort('posted')}>
+                            Posted {sortColumn === 'posted' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'applicants')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200 text-center w-[110px] min-w-[110px]" on:click={() => toggleSort('applicants')}>
+                            Applicants {sortColumn === 'applicants' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
                         {#if columns.find(c => c.id === 'date')?.visible}
                           <th class="cursor-pointer hover:bg-base-200 text-center w-[160px] min-w-[160px]" on:click={() => toggleSort('date')}>
                             Date {sortColumn === 'date' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
@@ -1170,6 +1193,20 @@
                               {:else}
                                 <span class="text-base-content/50 text-xs">—</span>
                               {/if}
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'posted')?.visible}
+                            <td class="text-center w-[120px] min-w-[120px]">
+                              <div class="text-sm whitespace-nowrap">
+                                {job.postedDate || job.posted_date || job.time_posted || "—"}
+                              </div>
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'applicants')?.visible}
+                            <td class="text-center w-[110px] min-w-[110px]">
+                              <div class="text-sm">
+                                {job.applicantsCount || job.applicants_count || "—"}
+                              </div>
                             </td>
                           {/if}
                           {#if columns.find(c => c.id === 'date')?.visible}
