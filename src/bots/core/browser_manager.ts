@@ -1,3 +1,21 @@
+/**
+ * Chrome Driver Setup & Browser Lifecycle Management
+ * ------------------------------------------------------------------
+ * Creates a stealth-configured Chrome WebDriver session for Seek and
+ * LinkedIn bots. Handles:
+ *
+ * - Chrome profile directories (with session persistence)
+ * - Wayland vs X11 detection on Linux
+ * - Stale LOCK file cleanup (prevents "profile in use" errors)
+ * - Real Chrome profile copying for stealth (USE_REAL_CHROME=1)
+ * - Browser closing monitoring (detects manual window close)
+ * - Page load strategy: 'eager' (don't wait for images/stylesheets)
+ * - CDP (Chrome DevTools Protocol) port allocation
+ * - Emergency Chrome process killing (SIGINT/SIGTERM handler)
+ *
+ * NOTE: Indeed bot uses Playwright + Camoufox, NOT this module.
+ */
+
 import { Builder, WebDriver } from 'selenium-webdriver';
 import { Options, ServiceBuilder } from 'selenium-webdriver/chrome';
 import * as fs from 'fs';
@@ -49,6 +67,11 @@ const printLog = (message: string) => {
  * Check if driver session is valid and ready for use
  * Returns true if driver is ready, false if session is invalid
  */
+/**
+ * Quick health check: does the driver still respond?
+ * Returns true if `driver.getCurrentUrl()` succeeds, false if the
+ * session is dead or has been quit.
+ */
 export async function isDriverReady(driver: WebDriver): Promise<boolean> {
   try {
     await driver.getCurrentUrl();
@@ -63,7 +86,11 @@ export async function isDriverReady(driver: WebDriver): Promise<boolean> {
   }
 }
 
-// Kill all Chrome processes spawned by this bot
+/**
+ * Force-kill all Chrome/Chromium processes owned by the current user.
+ * Used during emergency cleanup (SIGINT, SIGTERM, uncaught exceptions)
+ * to prevent orphaned browser processes and stale LOCK files.
+ */
 export const killAllChromeProcesses = async (): Promise<void> => {
   printLog("🔥 Emergency: Killing all Chrome processes...");
 
@@ -99,7 +126,23 @@ export const killAllChromeProcesses = async (): Promise<void> => {
   }
 };
 
-// Monitor browser windows and detect manual closure
+/**
+ * Monitor the browser window for manual closure.
+ *
+ * Polls `driver.getAllWindowHandles()` every 2 seconds after a 20-second
+ * grace period (allows the driver to fully initialize first).
+ *
+ * Features:
+ * - Grace period during driver initialization
+ * - 5 consecutive errors before declaring the browser dead
+ * - Session recovery attempt via `driver.__recoverDriver` callback
+ * - Temporary monitoring disable for window operations
+ * - Respects `driver.__workflowCompleted` to skip checks after finish
+ *
+ * @param driver          - The WebDriver instance to monitor
+ * @param onBrowserClosed - Optional callback when browser closure is detected
+ * @returns A stop function to clean up the monitoring interval
+ */
 export const monitorBrowserClose = (driver: WebDriver, onBrowserClosed?: () => void): (() => void) => {
   let consecutiveErrors = 0;
   const MAX_CONSECUTIVE_ERRORS = 5; // Require 5 consecutive errors (10 seconds) before shutdown
@@ -335,6 +378,24 @@ const cleanStaleLockFiles = (sessionDir: string): void => {
   }
 };
 
+/**
+ * Main entry point: create a stealth Chrome WebDriver session.
+ *
+ *  1. Creates session directories (sessions/{botName}/)
+ *  2. Cleans stale LOCK files
+ *  3. Configures Chrome options:
+ *     - Page load strategy: 'eager'
+ *     - CDP enabled (--remote-debugging-port=0, --remote-debugging-pipe)
+ *     - Wayland support on Linux
+ *     - Headless mode when HEADLESS=1
+ *     - Real profile copying when USE_REAL_CHROME=1 (stealth)
+ *     - Automation flag removal (--disable-blink-features=AutomationControlled)
+ *  4. Sets Selenium timeouts (pageLoad: 20s, implicit: 0)
+ *  5. Maximizes the window (or falls back to 1920x1080)
+ *  6. Starts browser close monitoring
+ *
+ * @returns { driver, actions, sessionExists, sessionsDir, stopMonitoring }
+ */
 export const setupChromeDriver = async (botName: string = 'seek'): Promise<{ driver: WebDriver; actions: any; sessionExists: boolean; sessionsDir: string; stopMonitoring?: () => void }> => {
   try {
     const configPath = path.join(__dirname, '../user-bots-config.json');

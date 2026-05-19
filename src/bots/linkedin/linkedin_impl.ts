@@ -1,3 +1,35 @@
+/**
+ * LinkedIn Bot Implementation
+ * ------------------------------------------------------------------
+ * Selenium + Chrome implementation for LinkedIn.com. This is the most
+ * complex bot in the system — LinkedIn's dynamic SPA (React-based)
+ * requires robust wait-and-click strategies, stale-element retries,
+ * panel sync verification, and multi-stage Easy Apply handling.
+ *
+ * Core challenges this file solves:
+ *   - LinkedIn's scroll-to-load / lazy-rendered job cards
+ *   - Reactive details panel (right pane) that re-renders on click
+ *   - Panel sync verification (did the clicked card actually load?)
+ *   - Easy Apply multi-stage forms with AI-driven Q&A
+ *   - Cookie consent / messaging overlay dismissal
+ *   - Session persistence via Chrome user-data-dir
+ *   - Cover letter generation via corpus-rag API
+ *   - Resume upload + AI-tailored resume generation
+ *
+ * Step functions registered by this file:
+ *   step0, navigateToDirectApplyUrl, openCheckLogin, credentialLogin,
+ *   showManualLoginPrompt, openJobsPage, setSearchLocation,
+ *   setSearchKeywords, applyFilters, getPageInfo, extractJobDetails,
+ *   processJobs, openCurrentExtractJobCard, saveLinkedInScrapedJob,
+ *   advanceExtractCursor, extractJobDetailsFromPanel, attemptEasyApply,
+ *   uploadResume, handleCoverLetter, extractEmployerQuestions,
+ *   answerQuestions, submitApplication, saveAppliedJob, externalApply,
+ *   saveExternalJob, applicationFailed, continueProcessing,
+ *   navigateToNextPage, finish, waitForNextConfirm
+ *
+ * Export convention: `linkedinStepFunctions` object (all step functions).
+ */
+
 import { WebDriver, By, until, Key, error } from 'selenium-webdriver';
 import { setupChromeDriver } from '../core/browser_manager';
 import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/humanization';
@@ -15,6 +47,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { readCanonicalResumeText } from '../../lib/canonical-resume';
+import { highlightElement } from '../core/highlight';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,6 +56,10 @@ const printLog = (message: string) => {
   console.log(message);
 };
 
+/**
+ * Extract a LinkedIn job ID from a job URL.
+ * Handles both `/jobs/view/123456/` paths and `?currentJobId=123456` query params.
+ */
 function parseLinkedInJobId(rawUrl: string | undefined): string {
   if (!rawUrl) return '';
   try {
@@ -37,6 +74,11 @@ function parseLinkedInJobId(rawUrl: string | undefined): string {
   }
 }
 
+/**
+ * Resolve the extraction limit from config, checking multiple possible
+ * field names (maxJobsToProcess, extractLimit, extract_limit, etc.).
+ * Returns 0 if no limit is configured (= unlimited).
+ */
 function getLinkedInExtractLimit(ctx: WorkflowContext): number {
   const cfg: any = (ctx as any)?.config || {};
   const candidates = [
@@ -55,6 +97,10 @@ function getLinkedInExtractLimit(ctx: WorkflowContext): number {
   return 0;
 }
 
+/**
+ * Compute current overlay progress numbers from context.
+ * Used by every step to keep the dashboard overlay accurate.
+ */
 function getLinkedInOverlayProgress(ctx: WorkflowContext): { done: number; total: number } {
   const done = Number((ctx as any).jobs_extracted || 0);
   const configuredTotal = getLinkedInExtractLimit(ctx);
@@ -63,6 +109,10 @@ function getLinkedInOverlayProgress(ctx: WorkflowContext): { done: number; total
   return { done, total: total > 0 ? total : 0 };
 }
 
+/**
+ * Simple Promise.race timeout wrapper.
+ * Rejects with a descriptive message when the promise exceeds the timeout.
+ */
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -77,6 +127,10 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: str
   }
 }
 
+/**
+ * Normalize text for fuzzy comparison: lowercase, strip non-alphanumeric.
+ * Used to compare job titles/companies between the card list and details panel.
+ */
 function normalizeComparableText(value: string): string {
   return String(value || '')
     .toLowerCase()
@@ -84,6 +138,11 @@ function normalizeComparableText(value: string): string {
     .trim();
 }
 
+/**
+ * Extract workplace type (Remote/Hybrid/On-site) from a location string.
+ * Returns the cleaned location (without the workplace keyword) and the
+ * detected workplace type separately.
+ */
 function cleanLocation(location: string): { cleanedLocation: string, workplaceType?: string } {
   if (!location) return { cleanedLocation: '' };
   
@@ -108,6 +167,15 @@ function cleanLocation(location: string): { cleanedLocation: string, workplaceTy
   return { cleanedLocation: cleaned, workplaceType };
 }
 
+/**
+ * Fuzzy match two text strings to determine if they likely refer to
+ * the same thing (same job title, same company name).
+ *
+ * Uses a token overlap ratio:
+ *   - Short strings (1-3 tokens): require ALL tokens to match
+ *   - Longer strings: 60% token overlap threshold
+ * Also checks if the first 28 chars match as a fast path.
+ */
 function isLikelySameText(a: string, b: string): boolean {
   const left = normalizeComparableText(a);
   const right = normalizeComparableText(b);
@@ -138,6 +206,26 @@ function isLikelySameText(a: string, b: string): boolean {
   return Boolean(leftPrefix) && leftPrefix === rightPrefix;
 }
 
+/**
+ * Wait for the LinkedIn details panel to sync to a clicked job card.
+ *
+ * LinkedIn's SPA re-renders the right pane asynchronously after a
+ * card click. This function polls until one of these signals matches:
+ *   - URL contains the expected job ID
+ *   - Panel's data-job-id attribute matches
+ *   - aria-current="true" on the target card in the list
+ *   - Title and company text fuzzy-match the expected values
+ *
+ * The panel sync is the single most common source of bugs — if the
+ * panel shows the wrong job, we extract wrong data. This function is
+ * critical infrastructure.
+ *
+ * @param expected.job_id  - The job ID we expect to see loaded
+ * @param expected.title   - Expected job title (for fuzzy match)
+ * @param expected.company - Expected company name (for fuzzy match)
+ * @param timeoutMs        - Max time to wait (default 9000ms)
+ * @returns { synced, lastSnapshot } with debug info if sync fails
+ */
 async function waitForLinkedInPanelSync(
   driver: WebDriver,
   selectors: any,
@@ -255,6 +343,11 @@ const DEBUG_LOG = (location: string, message: string, data: Record<string, unkno
 /**
  * Dismiss common LinkedIn overlays (cookie banner, modals) that block the search form.
  */
+/**
+ * Dismiss common LinkedIn overlays that block interactions.
+ * Handles cookie banners, "Got it" dialogs, modal dismiss buttons,
+ * and privacy consent prompts.
+ */
 async function dismissLinkedInOverlays(driver: WebDriver): Promise<void> {
   const dismissSelectors = [
     "button[data-test-id='dialog-primary-action-btn']", // LinkedIn dialog primary action
@@ -286,6 +379,19 @@ async function dismissLinkedInOverlays(driver: WebDriver): Promise<void> {
  * Handles stale elements with retries to account for SPAs.
  * Adds a small delay for Svelte/React hydration interactions.
  * Accounts for LinkedIn skeletons/overlays.
+ */
+/**
+ * Robust click wrapper that handles LinkedIn's dynamic SPA behavior.
+ *
+ * Retries up to 3 times on StaleElementReferenceError (DOM re-rendered
+ * between find and click). Falls back to JS click on intercepted errors
+ * (e.g. messaging tab overlay blocking the button).
+ *
+ * Before clicking:
+ *   1. Waits for LinkedIn skeleton loaders to disappear
+ *   2. Waits for the element to be located, visible, and enabled
+ *   3. Scrolls the element into view (center of viewport)
+ *   4. Adds a 200ms hydration delay (SPA re-render settling)
  */
 export async function waitAndClick(
   driver: WebDriver,
@@ -319,6 +425,9 @@ export async function waitAndClick(
       // Add a small delay for Svelte/React hydration (Crucial for handling modern SPA components)
       await driver.sleep(200);
 
+      // Highlight element before click (outline + glow for visual debugging)
+      await highlightElement(driver, element, '#0000ff').catch(() => {});
+
       // Attempt Click
       await element.click();
       return; // Success!
@@ -350,6 +459,10 @@ export async function waitAndClick(
 
 /**
  * Wait for the jobs page search form to be present and ready, dismiss overlays if needed.
+ */
+/**
+ * Wait for the jobs search form to be ready and dismiss overlays.
+ * Tries both keywords and location input selectors, up to 3 attempts.
  */
 async function waitForJobsSearchFormReady(driver: WebDriver, selectors: { jobs?: { keywords_input_candidates?: string[]; location_input_candidates?: string[] } }): Promise<boolean> {
   const keywordCandidates = selectors?.jobs?.keywords_input_candidates ?? [];
@@ -387,7 +500,10 @@ async function waitForJobsSearchFormReady(driver: WebDriver, selectors: { jobs?:
 
 
 
-// Open LinkedIn and check login status
+/**
+ * STEP 1: Navigate to LinkedIn jobs page and check if the user is logged in.
+ * Sets up the Chrome driver, session, overlay, and stealth features on first call.
+ */
 export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     // Only setup Chrome if driver doesn't exist yet
@@ -464,7 +580,7 @@ export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<stri
   }
 }
 
-// Attempt credential login (skipped - users login manually like Seek)
+/** Skipped — users always log in manually (no credential auto-fill). */
 export async function* credentialLogin(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("Skipping credential login - users login manually");
 
@@ -473,7 +589,10 @@ export async function* credentialLogin(ctx: WorkflowContext): AsyncGenerator<str
   yield "no_login_credentials_found";
 }
 
-// Show manual login prompt
+/**
+ * Show the manual login prompt via UniversalOverlay and wait up to
+ * ~6 minutes for the user to authenticate.
+ */
 export async function* showManualLoginPrompt(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("Showing manual login prompt");
 
@@ -518,7 +637,7 @@ export async function* showManualLoginPrompt(ctx: WorkflowContext): AsyncGenerat
   }
 }
 
-// Open jobs page (navigate to search URL when keywords/location set so search bar is present)
+/** Navigate to the LinkedIn jobs search URL (or jobs home if no keywords). */
 export async function* openJobsPage(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -579,7 +698,7 @@ export async function* openJobsPage(ctx: WorkflowContext): AsyncGenerator<string
   }
 }
 
-// Set search location
+/** Set the search location in LinkedIn's location input field. Uses multiple fallback selectors. */
 export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -709,7 +828,7 @@ export async function* setSearchLocation(ctx: WorkflowContext): AsyncGenerator<s
   }
 }
 
-// Set search keywords
+/** Set search keywords in LinkedIn's keyword input field. Uses multiple fallback selectors. */
 export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -806,7 +925,7 @@ export async function* setSearchKeywords(ctx: WorkflowContext): AsyncGenerator<s
   }
 }
 
-// Apply filters
+/** Apply LinkedIn search filters (All filters modal → location, Easy Apply, date posted). */
 export async function* applyFilters(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
 
   try {
@@ -907,7 +1026,7 @@ export async function* applyFilters(ctx: WorkflowContext): AsyncGenerator<string
   }
 }
 
-// Get page info
+/** Detect pagination state: current page number, has_pagination flag. */
 export async function* getPageInfo(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
 
   try {
@@ -933,7 +1052,11 @@ export async function* getPageInfo(ctx: WorkflowContext): AsyncGenerator<string,
   }
 }
 
-// Extract job details
+/**
+ * Extract job cards from the current LinkedIn search results page.
+ * Scrapes job_id, title, company, location, and URL from each card.
+ * Works with both `li[data-occludable-job-id]` and `a[href*="/jobs/view/"]`.
+ */
 export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -990,13 +1113,18 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     printLog(`Found ${jobCards.length} jobs on current page`);
     const remaining = extractLimit > 0 ? Math.max(0, extractLimit - alreadyExtracted) : jobCards.length;
     const pageJobCount = Math.min(jobCards.length, remaining);
-    const pageJobs: Array<{ job_id: string; title: string; company: string; location: string; url: string }> = [];
+    const pageJobs: Array<{ job_id: string; title: string; company: string; location: string; url: string; isEasyApply: boolean; applicationType: string; time_posted: string }> = [];
     for (let i = 0; i < pageJobCount; i++) {
       const card = jobCards[i];
+      // Highlight card being extracted (cyan = processing)
+      await highlightElement(driver, card, '#00ffff').catch(() => {});
       let jobId = '';
       let title = '';
       let company = '';
       let location = '';
+      let isEasyApply = false;
+      let applicationType = 'external';
+      let time_posted = '';
       try {
         jobId = (await card.getAttribute('data-occludable-job-id')) || (await card.getAttribute('data-job-id')) || '';
       } catch {
@@ -1027,13 +1155,67 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
       } catch {
         // ignore
       }
+      try {
+        const easyApplySelectors = ctx.selectors?.jobs?.easy_apply_badge_css || [
+          '.job-card-container__apply-method',
+          '.jobs-apply-button'
+        ];
+        for (const sel of easyApplySelectors) {
+          try {
+            const badgeEl = await card.findElement(By.css(sel));
+            const badgeText = (await badgeEl.getText()).trim();
+            if (badgeText.includes('Easy Apply')) {
+              isEasyApply = true;
+              applicationType = 'internal';
+              await highlightElement(driver, badgeEl, '#00ff00').catch(() => {}); // Green = Easy Apply found
+              break;
+            }
+          } catch {
+            // try next selector
+          }
+        }
+        if (!isEasyApply) {
+          const cardText = await card.getText();
+          if (cardText.includes('Easy Apply')) {
+            isEasyApply = true;
+            applicationType = 'internal';
+          }
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        const timeSelectors = ctx.selectors?.jobs?.card_time_posted_css || [
+          'time',
+          '.job-card-container__footer-job-state',
+          'span[class*="job-card-container__footer"]'
+        ];
+        for (const sel of timeSelectors) {
+          try {
+            const timeEl = await card.findElement(By.css(sel));
+            const timeText = (await timeEl.getText()).trim();
+            if (timeText && /\b(?:minute|hour|day|week|month|second|min|hr|wk|mo)s?\s+ago\b/i.test(timeText)) {
+              time_posted = timeText;
+              await highlightElement(driver, timeEl, '#ffff00').catch(() => {}); // Yellow = time found
+              break;
+            }
+          } catch {
+            // try next selector
+          }
+        }
+      } catch {
+        // ignore
+      }
       if (jobId) {
         pageJobs.push({
           job_id: String(jobId),
           title,
           company,
           location,
-          url: `https://www.linkedin.com/jobs/view/${jobId}`
+          url: `https://www.linkedin.com/jobs/view/${jobId}`,
+          isEasyApply,
+          applicationType,
+          time_posted
         });
       }
     }
@@ -1076,7 +1258,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
     // linkedin_extract uses the extract-only pipeline (jobs_prepared → open_current_job_card).
     // linkedin / linkedin_apply uses the legacy path (proceed_to_process_jobs → process_jobs).
     const resolvedBotName = (ctx as any).bot_name || (ctx.config as any)?.botName || '';
-    if (resolvedBotName === 'linkedin_extract') {
+    if (resolvedBotName.startsWith('linkedin_extract')) {
       yield "jobs_prepared";
     } else {
       // Backward-compatible path for legacy linkedin_steps.yaml
@@ -1091,7 +1273,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
   }
 }
 
-// Process jobs
+/** Save extracted jobs to the backend (legacy path via /api/scraped-jobs). */
 export async function* processJobs(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const extractedJobs = ctx.extracted_jobs || [];
 
@@ -1137,12 +1319,16 @@ export async function* processJobs(ctx: WorkflowContext): AsyncGenerator<string,
   yield "jobs_saved";
 }
 
-// Open current card from prepared extracted_jobs list (extract-only pipeline).
+/**
+ * Open a specific job card and verify the details panel synced.
+ * Uses escalating click strategies (JS click → Selenium click → direct nav)
+ * and panel sync verification. Core step for the extract-only pipeline.
+ */
 export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
     const panelSelectors = ctx.selectors?.jobs?.job_details_panel;
-    const preparedPageJobs = (((ctx as any).page_jobs || []) as Array<{ job_id: string; title: string; company: string; location: string; url: string }>);
+    const preparedPageJobs = (((ctx as any).page_jobs || []) as Array<{ job_id: string; title: string; company: string; location: string; url: string; isEasyApply: boolean; applicationType: string; time_posted: string }>);
     const totalJobs = Number(ctx.total_jobs || 0);
     const currentIndex = Number(ctx.current_job_index || 0);
     const pageJobCount = Number((ctx as any).page_job_count || 0);
@@ -1190,6 +1376,9 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
     }
     await driver.executeScript("arguments[0].scrollIntoView({block:'center'});", card);
     await driver.sleep(200);
+
+    // Highlight the card being opened (cyan = processing)
+    await highlightElement(driver, card, '#00ffff').catch(() => {});
 
     let jobId = await card.getAttribute('data-occludable-job-id') || await card.getAttribute('data-job-id');
     if (!jobId) {
@@ -1402,7 +1591,10 @@ export async function* openCurrentExtractJobCard(ctx: WorkflowContext): AsyncGen
   }
 }
 
-// Save a parsed LinkedIn job one-by-one, using Seek-style robust save path.
+/**
+ * Save one parsed LinkedIn job to the backend, with duplicate
+ * suppression and panel-sync mismatch guards.
+ */
 export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     if (!ctx.currentJobFile || !fs.existsSync(ctx.currentJobFile)) {
@@ -1440,6 +1632,9 @@ export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenera
       location: jobData.location || ctx.current_job?.work_location || undefined,
       description: jobData.description || jobData.details || undefined,
       postedDate: jobData.time_posted || jobData.postedDate || undefined,
+      time_posted: jobData.time_posted || undefined,
+      applicationType: jobData.applicationType || undefined,
+      applicantsCount: jobData.applicants_count || undefined,
       workMode: Array.isArray(jobData.job_type_tags)
         ? (jobData.job_type_tags.find((tag: string) => /remote|hybrid|on[- ]?site|onsite/i.test(String(tag))) || undefined)
         : undefined,
@@ -1521,7 +1716,7 @@ export async function* saveLinkedInScrapedJob(ctx: WorkflowContext): AsyncGenera
   }
 }
 
-// Move to next card or next page for extract-only flow.
+/** Advance to the next job card (or next page) in the extract-only flow. */
 export async function* advanceExtractCursor(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const pageJobCount = Number((ctx as any).page_job_count || 0);
   const currentIndex = Number(ctx.current_job_index || 0);
@@ -1556,7 +1751,12 @@ export async function* advanceExtractCursor(ctx: WorkflowContext): AsyncGenerato
   yield "page_complete";
 }
 
-// Attempt Easy Apply
+/**
+ * Attempt to click the Easy Apply button on the job details page.
+ * Differentiates between Easy Apply and the regular Apply button
+ * (only proceeds if the button text includes "Easy Apply").
+ * Detects the profile setup form for new users.
+ */
 export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -1690,7 +1890,11 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
   }
 }
 
-// Extract job details from the job details panel and save to JSON
+/**
+ * Extract job details (title, company, location, description, job type,
+ * time posted, applicants count) from the details panel and save to
+ * `jobs/linkedin/{jobId}/job_details.json`.
+ */
 export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -1751,6 +1955,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract title
     try {
       const titleElement = await driver.findElement(By.css(selectors?.title_css || 'div.job-details-jobs-unified-top-card__job-title h1'));
+      await highlightElement(driver, titleElement, '#ff00ff').catch(() => {}); // Magenta = title
       jobDetails.title = (await titleElement.getText()).trim();
     } catch (error) {
       jobDetails.title = currentJob.title || '';
@@ -1759,6 +1964,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract company
     try {
       const companyElement = await driver.findElement(By.css(selectors?.company_name_css || 'div.job-details-jobs-unified-top-card__company-name a'));
+      await highlightElement(driver, companyElement, '#ffff00').catch(() => {}); // Yellow = company
       jobDetails.company = (await companyElement.getText()).trim();
     } catch (error) {
       jobDetails.company = currentJob.company || '';
@@ -1776,6 +1982,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract location
     try {
       const locationElement = await driver.findElement(By.xpath(selectors?.location_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--low-emphasis')][1]"));
+      await highlightElement(driver, locationElement, '#ffff00').catch(() => {}); // Yellow = location
       const rawLocation = (await locationElement.getText()).trim();
       const { cleanedLocation, workplaceType } = cleanLocation(rawLocation);
       jobDetails.location = cleanedLocation;
@@ -1791,6 +1998,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract time posted
     try {
       const timeElement = await driver.findElement(By.xpath(selectors?.time_posted_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(@class, 'tvm__text--positive')]//span"));
+      await highlightElement(driver, timeElement, '#ffff00').catch(() => {}); // Yellow = time posted
       jobDetails.time_posted = (await timeElement.getText()).trim();
     } catch (error) {
       jobDetails.time_posted = '';
@@ -1799,9 +2007,78 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract applicants count
     try {
       const applicantsElement = await driver.findElement(By.xpath(selectors?.applicants_count_xpath || "//div[contains(@class, 'job-details-jobs-unified-top-card__tertiary-description')]//span[contains(text(), 'applicants')]"));
+      await highlightElement(driver, applicantsElement, '#ffff00').catch(() => {}); // Yellow = applicants count
       jobDetails.applicants_count = (await applicantsElement.getText()).trim();
     } catch (error) {
       jobDetails.applicants_count = '';
+    }
+
+    // Detect Easy Apply from panel Apply button
+    try {
+      const easyApplySelectors = ctx.selectors?.easy_apply?.button_css_candidates || [
+        'button#jobs-apply-button-id',
+        'button.jobs-apply-button'
+      ];
+      let buttonText = '';
+      for (const sel of easyApplySelectors) {
+        if (sel.startsWith('//')) continue;
+        try {
+          const btn = await driver.findElement(By.css(sel));
+          const isDisplayed = await btn.isDisplayed().catch(() => false);
+          if (isDisplayed) {
+            buttonText = (await btn.getText()).trim();
+            await highlightElement(driver, btn, '#0000ff').catch(() => {}); // Blue = Easy Apply button
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (!buttonText) {
+        try {
+          const btn = await driver.findElement(By.xpath(".//button[contains(@class,'jobs-apply-button')]"));
+          buttonText = (await btn.getText()).trim();
+        } catch {
+          // ignore
+        }
+      }
+      if (buttonText.includes('Easy Apply')) {
+        jobDetails.applicationType = 'internal';
+        jobDetails.easy_apply = true;
+      } else {
+        jobDetails.applicationType = 'external';
+        jobDetails.easy_apply = false;
+      }
+    } catch (error) {
+      jobDetails.applicationType = 'external';
+      jobDetails.easy_apply = false;
+    }
+
+    // Extract salary
+    try {
+      const salarySelectors = selectors?.salary_css || [
+        'div.salary-compensation__salary',
+        'span[class*="salary"]',
+        'span[class*="compensation"]'
+      ];
+      for (const sel of salarySelectors) {
+        try {
+          const salaryEl = await driver.findElement(By.css(sel));
+          await highlightElement(driver, salaryEl, '#ffff00').catch(() => {}); // Yellow = salary
+          const salaryText = (await salaryEl.getText()).trim();
+          if (salaryText && /\$|USD|EUR|GBP|\d/.test(salaryText)) {
+            jobDetails.salary = salaryText;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      if (!jobDetails.salary) {
+        jobDetails.salary = '';
+      }
+    } catch (error) {
+      jobDetails.salary = '';
     }
 
     // Extract job type tags (Remote, Full-time, etc.)
@@ -1810,7 +2087,10 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
       const tags = [];
       for (const tag of tagElements) {
         const tagText = (await tag.getText()).trim();
-        if (tagText) tags.push(tagText);
+        if (tagText) {
+          tags.push(tagText);
+          await highlightElement(driver, tag, '#ffff00').catch(() => {}); // Yellow = job type tag
+        }
         
         // Secondary check for workplace type in tags
         if (!jobDetails.workMode) {
@@ -1826,6 +2106,7 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
     // Extract description
     try {
       const descElement = await driver.findElement(By.css(selectors?.description_text_css || 'div.jobs-box__html-content'));
+      await highlightElement(driver, descElement, '#00ffff').catch(() => {}); // Cyan = description
       jobDetails.description = (await descElement.getText()).trim();
     } catch (error) {
       jobDetails.description = '';
@@ -1960,7 +2241,10 @@ Focus on demonstrating value and enthusiasm for the role.`
   throw new Error('No cover_letter field returned from API');
 }
 
-// Handle cover letter (Easy Apply modal – detect textarea, API, fill via selectors)
+/**
+ * Generate and fill the cover letter in the Easy Apply modal.
+ * Uses the corpus-rag DeepSeek API for job-tailored content.
+ */
 export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -2154,7 +2438,10 @@ export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGene
   }
 }
 
-// Upload resume (Easy Apply modal – use selectors; optional AI resume, else config path; no file input → resume_not_required)
+/**
+ * Upload resume in the Easy Apply modal. Supports AI-generated
+ * resumes via corpus-rag API and manually configured paths.
+ */
 export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("Uploading resume...");
 
@@ -2225,7 +2512,11 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
   }
 }
 
-// Extract employer questions from Easy Apply modal (same output shape as Seek: question, type, options, containerSelector)
+/**
+ * Extract employer questions from the Easy Apply modal.
+ * Scans for selects, textareas, text inputs, radio buttons, and
+ * checkboxes; saves to job_details.json for the Q&A handler.
+ */
 export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -2336,7 +2627,12 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
   }
 }
 
-// Answer questions (Easy Apply modal – generic + intelligent answers, fill by type via Seek fillQuestionField)
+/**
+ * Answer employer questions in the Easy Apply modal.
+ * Uses the intelligent Q&A handler (shared with Seek bot) plus
+ * a basic fallback for phone/email fields and selects/radios.
+ * Supports multi-stage forms (clicks Next and loops).
+ */
 export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("Answering questions...");
 
@@ -2592,7 +2888,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
   }
 }
 
-// Submit application (Easy Apply modal – use easy_apply selectors, scope to modal)
+/** Click the Submit button in the Easy Apply modal and increment the applied counter. */
 export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("Submitting application...");
 
@@ -2676,7 +2972,7 @@ export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<s
   }
 }
 
-// Save applied job (persist applied ID and record to backend)
+/** Persist the applied job ID and record the application to the backend. */
 export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   printLog("Saving applied job...");
 
@@ -2720,7 +3016,7 @@ export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<stri
   }
 }
 
-// External apply - Extract job details and save to JSON
+/** Handle external (off-platform) applications — extract and save to JSON. */
 export async function* externalApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -2777,12 +3073,12 @@ export async function* externalApply(ctx: WorkflowContext): AsyncGenerator<strin
   }
 }
 
-// Save external job
+/** Transition step for externally saved jobs. */
 export async function* saveExternalJob(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   yield "external_job_saved";
 }
 
-// Application failed
+/** Mark the application as failed and update the overlay. */
 export async function* applicationFailed(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const currentJob = ctx.current_job;
 
@@ -2800,7 +3096,7 @@ export async function* applicationFailed(ctx: WorkflowContext): AsyncGenerator<s
   yield "application_marked_failed";
 }
 
-// Continue processing
+/** Move to the next job in the extracted list, or navigate to the next page. */
 export async function* continueProcessing(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const extractedJobs = ctx.extracted_jobs || [];
   const currentIndex = ctx.current_job_index || 0;
@@ -2816,7 +3112,7 @@ export async function* continueProcessing(ctx: WorkflowContext): AsyncGenerator<
   }
 }
 
-// Navigate to next page
+/** Click the LinkedIn pagination button for the next page of results. */
 export async function* navigateToNextPage(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
@@ -2842,7 +3138,7 @@ export async function* navigateToNextPage(ctx: WorkflowContext): AsyncGenerator<
   }
 }
 
-// Finish
+/** Final step: log completion stats and clean up. */
 export async function* finish(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const appliedCount = ctx.applied_jobs || 0;
@@ -2866,7 +3162,11 @@ export async function* finish(ctx: WorkflowContext): AsyncGenerator<string, void
   yield "done";
 }
 
-// Export step functions
+/**
+ * Named export: all LinkedIn step functions in one object.
+ * BotStarter.register_bot_functions() iterates this to register
+ * every function with the WorkflowEngine by name.
+ */
 export const linkedinStepFunctions = {
   step0,
   navigateToDirectApplyUrl,

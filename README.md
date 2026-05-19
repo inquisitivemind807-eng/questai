@@ -1,6 +1,49 @@
 # Quest Bot (FinalBoss) — AI-Driven Autonomous Job Search & Application Platform
 
+> ⚠️ **Honest Status: ~60% complete.** This is a work-in-progress. The bots run, but there are known bugs,
+> inconsistencies, and missing features. See [Current Project Status](#-current-project-status-real-talk) below.
+
 Quest Bot is an advanced, high-performance automation suite designed to transform the job application process from a manual grind into an autonomous, AI-optimized journey. Built on **SvelteKit**, **Tauri**, and **Bun**, it combines high-level AI reasoning with low-level browser automation to help users land their next role with minimal effort.
+
+---
+
+## 🔴 Current Project Status (Real Talk)
+
+This project is **~60% complete**. Here's the honest breakdown.
+
+### What Actually Works ✅
+- **Seek bot**: Most mature. Extract + apply + employer Q&A + cover letters all work.
+- **LinkedIn bot**: Extract and basic apply work. Session persistence works. Cover letter generation works.
+- **Indeed bot**: Extract works (Camoufox stealth). Direct Apply navigation works. Pagination works.
+- **Workflow Engine**: YAML-driven state machine is solid. Retry loops, timeouts, transitions work.
+- **Universal Overlay**: Browser overlay injection + heartbeat self-healing works.
+- **Bot Dashboard**: Frontend panel shows progress, logs, bot status. `botProgressStore` works.
+- **Humanization**: Selenium human-like typing + clicking + scrolling. Camoufox for Indeed.
+- **CLI**: `bot_starter.ts` with full flag support (`--url`, `--mode`, `--limit`, `--jobs`, etc.).
+- **Job Application Recorder**: POSTs structured data to the backend API.
+- **AI Cover Letters**: Works for Seek and LinkedIn (corpus-rag DeepSeek API).
+
+### What's Broken / Incomplete ❌
+- **LinkedIn apply**: LinkedIn recently changed their UI (new job tracker component). Apply selectors may be broken.
+- **Indeed form answering**: Stub only — clicks Continue/Submit without LLM-driven Q&A.
+- **Indeed `userLog`**: Missing. Only `console.log`, no clean frontend dashboard messages.
+- **Indeed frontend bot mapping**: `JobTrackerBase.svelte` may not correctly route Indeed jobs.
+- **Overlay/App log inconsistency**: Logs between browser overlay and frontend dashboard sometimes disagree.
+- **No human-in-the-loop**: Currently a single-developer project. No Telegram/Slack pings, no manual review queue.
+- **No self-healing scrapers**: When platforms change DOM, bots break and need manual code fixes.
+- **No test coverage**: Minimal automated tests. Most testing is manual / visual.
+- **No JSON exchange bridge**: Tauri doesn't yet write `job_payload.json` for external agent pickup.
+- **Indeed "outline selectors"**: Indeed highlights elements with colored outlines during interaction. LinkedIn and Seek don't have this.
+
+### Architecture To-Do 📋
+- [ ] Set up OpenClaw/OpenCode agent hierarchy (Manager + Intern agents)
+- [ ] Build JSON exchange directory (Tauri → `job_payload.json` → OpenClaw → server Gateway)
+- [ ] Add self-healing selector logic for DOM breakage recovery
+- [ ] Add human-in-the-loop routing (Slack/Telegram pings for 2FA, CAPTCHAs)
+- [ ] Add `highlight()` outline selectors to LinkedIn and Seek bots
+- [ ] Implement Indeed form-answering with LLM integration
+- [ ] Standardize logging across all bots (`userLog` vs `console.log`)
+- [ ] Comprehensive JSDoc on all source files ✅ (done 2026-05-18)
 
 ---
 
@@ -127,16 +170,11 @@ When you update your bot, you update the hosted binary too
 
 ## 🖥️ CLI Commands (`bot_starter.ts`)
 
-All bots are run from the `questai/` directory using Bun. **Exception:** the `indeed` and `indeed_apply` bots must be run with `npx tsx` — not `bun` — because `camoufox-js` internally uses `better-sqlite3`, a native C++ addon compiled for Node.js ABI, which is incompatible with Bun's ABI.
+All bots are run from the `questai/` directory using Bun. This includes Indeed — `camoufox-js` is patched to use `bun:sqlite` instead of the Node-only `better-sqlite3`.
 
 ```bash
 cd questai
-
-# Seek & LinkedIn — use bun
 bun src/bots/bot_starter.ts <bot_name> [options]
-
-# Indeed — use npx tsx (Node.js runtime required)
-npx tsx src/bots/bot_starter.ts <bot_name> [options]
 ```
 
 ### Available Bot Names
@@ -171,11 +209,11 @@ bun src/bots/bot_starter.ts seek
 # LinkedIn — extract jobs from search page
 bun src/bots/bot_starter.ts linkedin
 
-# Indeed — extract jobs from search page (must use npx tsx, not bun)
-npx tsx src/bots/bot_starter.ts indeed
+# Indeed — extract jobs from search page
+bun src/bots/bot_starter.ts indeed
 
 # Indeed — extract with manual confirmation
-npx tsx src/bots/bot_starter.ts indeed_extract_pauseconfirm
+bun src/bots/bot_starter.ts indeed_extract_pauseconfirm
 ```
 
 ---
@@ -191,11 +229,11 @@ bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678
 # LinkedIn — apply to a specific job
 bun src/bots/bot_starter.ts linkedin --url=https://www.linkedin.com/jobs/view/12345678
 
-# Indeed — apply to a specific job (must use npx tsx, not bun)
-npx tsx src/bots/bot_starter.ts indeed_apply --url=https://au.indeed.com/viewjob?jk=abc123
+# Indeed — apply to a specific job
+bun src/bots/bot_starter.ts indeed_apply --url=https://au.indeed.com/viewjob?jk=abc123
 
 # Indeed — apply with manual confirmation
-npx tsx src/bots/bot_starter.ts indeed_apply_pauseconfirm --url=https://au.indeed.com/viewjob?jk=abc123
+bun src/bots/bot_starter.ts indeed_apply_pauseconfirm --url=https://au.indeed.com/viewjob?jk=abc123
 
 # With a specific bot mode (e.g., 'bot' for fully automated, 'review' to pause before submit)
 bun src/bots/bot_starter.ts seek --url=https://www.seek.com.au/job/12345678 --mode=bot
@@ -270,17 +308,61 @@ The Indeed bot uses **Playwright + Camoufox** (stealthy Firefox) instead of Sele
 |---|---|---|
 | Browser boot (Camoufox) | ✅ Done | Loads persistent session from `sessions/indeed/camoufox_profile/` |
 | Login detection | ✅ Done | `openCheckLogin` checks for auth cookies & sign-in button |
-| Manual login prompt | ✅ Done | Injects red banner, waits up to 3 mins for cookie-based auth confirmation |
+| Manual login prompt | ✅ Done | Injects red banner, waits up to 6 mins for cookie-based auth confirmation |
 | Job extraction (search) | ✅ Done | Extracts title, company, location, salary, description, saves to DB incrementally |
 | Pagination | ✅ Done | `navigateToNextPage` follows next-page links |
 | Direct Apply (URL) | ✅ Done | `indeed_apply` bot navigates to URL and attempts Easy Apply |
 | Form answering | ⚠️ Stub | Currently just clicks Continue/Submit — no LLM Q&A |
 | `userLog` (clean frontend logs) | ❌ Missing | All logging is `console.log` — no user-facing dashboard messages |
+| Outline selectors (`highlight()`) | ✅ Done | Visual element outlines during interaction for debugging |
 | Overlay integration | ✅ Done | `UniversalOverlay` integration completed with job progress updates |
 | `indeed_extract_steps.yaml` | ✅ Done | Dedicated extraction workflow YAML |
 | `indeed_apply_pauseconfirm` | ✅ Done | Pause-confirm variants for extraction and application |
-| Tauri runner fix | ❌ Missing | Tauri spawns Indeed with wrong runtime (`bun` instead of correct path) |
+| Tauri runner fix | ✅ Done | All bots (including Indeed) now run via `bun` — `camoufox-js` patched for `bun:sqlite` |
 | Frontend bot mapping | ❌ Missing | `JobTrackerBase.svelte` may not correctly map Indeed jobs to `indeed_apply` |
+
+## 🟠 LinkedIn Bot — Current Status
+
+> ⚠️ LinkedIn recently updated their UI (new job tracker component). Apply selectors may be broken.
+
+The LinkedIn bot uses **Selenium + Chrome** with session persistence via user-data-dir.
+
+| Feature | Status | Notes |
+|---|---|---|
+| Browser boot (Chrome) | ✅ Done | Persistent session from `sessions/linkedin/` |
+| Login detection + manual prompt | ✅ Done | Overlay-based login prompt with cookie detection |
+| Job extraction | ✅ Done | Extracts job_id, title, company, location, URL from card list |
+| Panel sync verification | ✅ Done | `waitForLinkedInPanelSync` polls URL, data-attributes, aria-current, text match |
+| Details extraction | ✅ Done | Extracts full description, job type, applicants count |
+| Easy Apply | ⚠️ Fragile | Recent UI changes may break selectors |
+| Employer Q&A | ✅ Done | Uses Seek's intelligent Q&A handler + LLM |
+| Cover letter generation | ✅ Done | corpus-rag DeepSeek API |
+| Resume upload | ✅ Done | Supports AI resume and manual upload paths |
+| Outline selectors (`highlight()`) | ❌ Missing | Indeed has this; LinkedIn needs it for debugging |
+| `userLog` (clean frontend logs) | ✅ Done | User-facing log messages consistent with Seek |
+
+## 🔮 Planned Architecture (OpenClaw + OpenCode)
+
+The remaining 40% involves building the agent orchestration layer:
+
+```
+[ User Machine: Tauri / Svelte ]
+       │  (Scrapes Job Data via Chrome/Camoufox)
+       ▼
+ [ Local OpenClaw Node ] 
+       │  (Watches for job_payload.json)
+       │  (Asynchronous JSON Payload: Job Data + User Resume)
+       ▼
+[ Cloud Server: OpenClaw Gateway ] ──> [ DeepSeek Agent ] ──> (Generates Cover Letter)
+       │                                                                  │
+       └─────────────────── (Returns PDF / Text Output) ──────────────────┘
+```
+
+### Key Integration Points
+1. **JSON Exchange Directory**: Tauri writes `job_payload.json` to a watched folder. OpenClaw node picks it up.
+2. **Server Route**: Server's OpenClaw Gateway accepts payloads, routes to DeepSeek, returns PDFs/text.
+3. **Self-Healing Scrapers**: OpenCode watches error logs, auto-fixes broken CSS selectors.
+4. **Human-in-the-Loop**: Telegram/Slack pings for 2FA, CAPTCHAs, and manual review.
 
 ---
 

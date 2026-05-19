@@ -1,3 +1,32 @@
+/**
+ * Structured JSONL Logger
+ * ------------------------------------------------------------------
+ * Writes structured, timestamped, redacted log entries to daily JSONL
+ * files under `logs/YYYY-MM-DD/{category}.jsonl`. Each entry includes:
+ *
+ * - timestamp (ISO 8601)
+ * - level (debug | info | warn | error)
+ * - service identifier ('finalboss-bot')
+ * - event name, message, and optional `data` payload
+ *
+ * Logging categories (separate files):
+ *   api       → API request/response/error logs
+ *   workflow  → bot step execution and transitions
+ *   error     → errors and failures
+ *   auth      → authentication events
+ *
+ * Security: automatically redacts authorization headers, tokens,
+ * cookies, passwords, and secrets from logged data. Never crashes
+ * the bot when logging fails.
+ *
+ * Usage:
+ * ```ts
+ * logger.info('bot.start', 'Bot runner started', { botName: 'seek' });
+ * logger.setContext({ sessionId: 'run_123', botName: 'seek' });
+ * const childLogger = logger.child({ jobId: 'abc123' });
+ * ```
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';

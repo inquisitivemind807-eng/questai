@@ -1,0 +1,12 @@
+diff --git a/dist/webgl/sample.js b/dist/webgl/sample.js
+index 3673382a95a0ca752e1c7c80b57d42577aec6e01..953e60ce15f412d8d87027e74f0838b740643cf2 100644
+--- a/dist/webgl/sample.js
++++ b/dist/webgl/sample.js
+@@ -1,6 +1,6 @@
+ import { OS_ARCH_MATRIX } from '../pkgman.js';
+ import path from 'node:path';
+-import Database from 'better-sqlite3';
++import { Database } from 'bun:sqlite';
+ // Get database path relative to this file
+ const DB_PATH = path.join(import.meta.dirname, '..', 'data-files', 'webgl_data.db');
+ export async function sampleWebGL(os, vendor, renderer) {

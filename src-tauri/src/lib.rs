@@ -1,15 +1,16 @@
-use serde::{Deserialize, Serialize};
-use tauri::Emitter;
 use base64::Engine;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::Component;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::sync::{Mutex, LazyLock};
+use tauri::Emitter;
 
-static RUNNING_BOTS: LazyLock<Mutex<HashMap<String, u32>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static RUNNING_BOTS: LazyLock<Mutex<HashMap<String, u32>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 const APP_NAME: &str = "FinalBoss";
 const MANAGED_FILES_INDEX_VERSION: u32 = 1;
@@ -183,7 +184,10 @@ fn get_app_data_root() -> Result<PathBuf, String> {
     }
     if cfg!(target_os = "macos") {
         let home_dir = home.ok_or_else(|| "Cannot resolve HOME path".to_string())?;
-        return Ok(PathBuf::from(home_dir).join("Library").join("Application Support").join(APP_NAME));
+        return Ok(PathBuf::from(home_dir)
+            .join("Library")
+            .join("Application Support")
+            .join(APP_NAME));
     }
     let base = std::env::var("XDG_DATA_HOME")
         .map(PathBuf::from)
@@ -201,7 +205,9 @@ fn get_user_root(user_id: &str) -> Result<PathBuf, String> {
 }
 
 fn get_index_path(user_id: &str) -> Result<PathBuf, String> {
-    Ok(get_user_root(user_id)?.join("index").join("files-index.json"))
+    Ok(get_user_root(user_id)?
+        .join("index")
+        .join("files-index.json"))
 }
 
 fn load_index(user_id: &str) -> Result<ManagedFileIndex, String> {
@@ -234,7 +240,9 @@ fn load_index(user_id: &str) -> Result<ManagedFileIndex, String> {
 }
 
 fn lock_path_for_user(user_id: &str) -> Result<PathBuf, String> {
-    Ok(get_user_root(user_id)?.join("index").join("files-index.lock"))
+    Ok(get_user_root(user_id)?
+        .join("index")
+        .join("files-index.lock"))
 }
 
 struct IndexLock {
@@ -271,8 +279,13 @@ fn acquire_index_lock(user_id: &str) -> Result<IndexLock, String> {
 fn save_index(user_id: &str, index: &ManagedFileIndex) -> Result<(), String> {
     let index_path = get_index_path(user_id)?;
     if let Some(parent) = index_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed creating index directory {}: {}", parent.display(), e))?;
+        std::fs::create_dir_all(parent).map_err(|e| {
+            format!(
+                "Failed creating index directory {}: {}",
+                parent.display(),
+                e
+            )
+        })?;
     }
     let content = serde_json::to_string_pretty(index)
         .map_err(|e| format!("Failed serializing index: {}", e))?;
@@ -326,7 +339,11 @@ fn open_path_in_os(path: &Path) -> Result<(), String> {
 
 fn resolve_entry_path(user_id: &str, entry: &ManagedFileEntry) -> Result<PathBuf, String> {
     let root = get_user_root(user_id)?;
-    let rel = PathBuf::from(entry.relative_path.replace('/', std::path::MAIN_SEPARATOR_STR));
+    let rel = PathBuf::from(
+        entry
+            .relative_path
+            .replace('/', std::path::MAIN_SEPARATOR_STR),
+    );
     if rel.is_absolute() {
         return Err("Managed file path must be relative".to_string());
     }
@@ -415,9 +432,13 @@ fn collect_storage_files(user_root: &Path) -> Result<Vec<(PathBuf, String)>, Str
             if !path.is_file() {
                 continue;
             }
-            let rel = path
-                .strip_prefix(user_root)
-                .map_err(|e| format!("Failed creating relative path for {}: {}", path.display(), e))?;
+            let rel = path.strip_prefix(user_root).map_err(|e| {
+                format!(
+                    "Failed creating relative path for {}: {}",
+                    path.display(),
+                    e
+                )
+            })?;
             let rel_norm = rel
                 .components()
                 .map(|c| c.as_os_str().to_string_lossy().to_string())
@@ -494,22 +515,26 @@ fn list_files(path: &str) -> Result<Vec<String>, String> {
     use std::env;
 
     // Resolve path from project root (same logic as read_file_async)
-    let full_path = if path.starts_with("/") || (cfg!(windows) && path.len() > 1 && path.chars().nth(1) == Some(':')) {
+    let full_path = if path.starts_with("/")
+        || (cfg!(windows) && path.len() > 1 && path.chars().nth(1) == Some(':'))
+    {
         std::path::PathBuf::from(path)
     } else {
-        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let mut project_root =
+            env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
         if project_root.ends_with("src-tauri") {
             project_root.pop();
         }
         project_root.join(path)
     };
 
-    let entries = full_path.read_dir()
+    let entries = full_path
+        .read_dir()
         .map_err(|e| format!("Failed to read directory {}: {}", full_path.display(), e))?
         .filter_map(|entry| {
-            entry.ok().and_then(|e| {
-                e.file_name().to_str().map(|s| s.to_owned())
-            })
+            entry
+                .ok()
+                .and_then(|e| e.file_name().to_str().map(|s| s.to_owned()))
         })
         .collect::<Vec<String>>();
 
@@ -518,135 +543,149 @@ fn list_files(path: &str) -> Result<Vec<String>, String> {
 
 #[tauri::command]
 async fn write_file_async(filename: &str, content: &str) -> Result<String, String> {
-    use tokio::fs;
     use std::env;
-    
+    use tokio::fs;
+
     // Get the current working directory and resolve relative paths
-    let path = if filename.starts_with("/") || (cfg!(windows) && filename.len() > 1 && filename.chars().nth(1) == Some(':')) {
+    let path = if filename.starts_with("/")
+        || (cfg!(windows) && filename.len() > 1 && filename.chars().nth(1) == Some(':'))
+    {
         // Absolute path
         std::path::PathBuf::from(filename)
     } else {
         // Relative path - resolve from project root
-        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let mut project_root =
+            env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
         if project_root.ends_with("src-tauri") {
             project_root.pop(); // Go up one level if we're in src-tauri
         }
         project_root.join(filename)
     };
-    
+
     // Create parent directories if they don't exist
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).await.map_err(|e| format!("Failed to create parent directories: {}", e))?;
+        fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create parent directories: {}", e))?;
     }
-    
+
     match fs::write(&path, content).await {
         Ok(_) => Ok(format!("Successfully wrote to {}", path.display())),
-        Err(e) => Err(format!("Failed to write file: {}", e))
+        Err(e) => Err(format!("Failed to write file: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn read_file_async(filename: &str) -> Result<String, String> {
-    use tokio::fs;
     use std::env;
-    
+    use tokio::fs;
+
     // Get the current working directory and resolve relative paths
-    let path = if filename.starts_with("/") || (cfg!(windows) && filename.len() > 1 && filename.chars().nth(1) == Some(':')) {
+    let path = if filename.starts_with("/")
+        || (cfg!(windows) && filename.len() > 1 && filename.chars().nth(1) == Some(':'))
+    {
         // Absolute path
         std::path::PathBuf::from(filename)
     } else {
         // Relative path - resolve from project root
-        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let mut project_root =
+            env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
         if project_root.ends_with("src-tauri") {
             project_root.pop(); // Go up one level if we're in src-tauri
         }
         project_root.join(filename)
     };
-    
+
     match fs::read_to_string(&path).await {
         Ok(content) => Ok(content),
-        Err(e) => Err(format!("Failed to read file {}: {}", path.display(), e))
+        Err(e) => Err(format!("Failed to read file {}: {}", path.display(), e)),
     }
 }
 
 #[tauri::command]
 async fn copy_file_async(source: &str, destination: &str) -> Result<String, String> {
     use tokio::fs;
-    
+
     match fs::copy(source, destination).await {
-        Ok(bytes_copied) => Ok(format!("Successfully copied {} bytes from {} to {}", bytes_copied, source, destination)),
-        Err(e) => Err(format!("Failed to copy file: {}", e))
+        Ok(bytes_copied) => Ok(format!(
+            "Successfully copied {} bytes from {} to {}",
+            bytes_copied, source, destination
+        )),
+        Err(e) => Err(format!("Failed to copy file: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn rename_file_async(old_name: &str, new_name: &str) -> Result<String, String> {
     use tokio::fs;
-    
+
     match fs::rename(old_name, new_name).await {
         Ok(_) => Ok(format!("Successfully renamed {} to {}", old_name, new_name)),
-        Err(e) => Err(format!("Failed to rename file: {}", e))
+        Err(e) => Err(format!("Failed to rename file: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn delete_file_async(filename: &str) -> Result<String, String> {
     use tokio::fs;
-    
+
     match fs::remove_file(filename).await {
         Ok(_) => Ok(format!("Successfully deleted {}", filename)),
-        Err(e) => Err(format!("Failed to delete file: {}", e))
+        Err(e) => Err(format!("Failed to delete file: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn create_directory_async(dirname: &str) -> Result<String, String> {
-    use tokio::fs;
     use std::env;
-    
+    use tokio::fs;
+
     // Get the current working directory and resolve relative paths
-    let path = if dirname.starts_with("/") || (cfg!(windows) && dirname.len() > 1 && dirname.chars().nth(1) == Some(':')) {
+    let path = if dirname.starts_with("/")
+        || (cfg!(windows) && dirname.len() > 1 && dirname.chars().nth(1) == Some(':'))
+    {
         // Absolute path
         std::path::PathBuf::from(dirname)
     } else {
         // Relative path - resolve from project root
-        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let mut project_root =
+            env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
         if project_root.ends_with("src-tauri") {
             project_root.pop(); // Go up one level if we're in src-tauri
         }
         project_root.join(dirname)
     };
-    
+
     match fs::create_dir_all(&path).await {
         Ok(_) => Ok(format!("Successfully created directory {}", path.display())),
-        Err(e) => Err(format!("Failed to create directory: {}", e))
+        Err(e) => Err(format!("Failed to create directory: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn remove_directory_async(dirname: &str) -> Result<String, String> {
     use tokio::fs;
-    
+
     match fs::remove_dir_all(dirname).await {
         Ok(_) => Ok(format!("Successfully removed directory {}", dirname)),
-        Err(e) => Err(format!("Failed to remove directory: {}", e))
+        Err(e) => Err(format!("Failed to remove directory: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn file_exists_async(filename: &str) -> Result<bool, String> {
     use tokio::fs;
-    
+
     match fs::try_exists(filename).await {
         Ok(exists) => Ok(exists),
-        Err(e) => Err(format!("Failed to check file existence: {}", e))
+        Err(e) => Err(format!("Failed to check file existence: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn get_file_metadata_async(filename: &str) -> Result<String, String> {
     use tokio::fs;
-    
+
     match fs::metadata(filename).await {
         Ok(metadata) => {
             let info = format!(
@@ -659,39 +698,43 @@ async fn get_file_metadata_async(filename: &str) -> Result<String, String> {
                 metadata.modified()
             );
             Ok(info)
-        },
-        Err(e) => Err(format!("Failed to get metadata: {}", e))
+        }
+        Err(e) => Err(format!("Failed to get metadata: {}", e)),
     }
 }
 
 #[tauri::command]
 async fn run_python_script(script_path: &str) -> Result<String, String> {
-    use tokio::process::Command;
     use std::env;
-    
+    use tokio::process::Command;
+
     // Get the current working directory and resolve relative paths
-    let path = if script_path.starts_with("/") || (cfg!(windows) && script_path.len() > 1 && script_path.chars().nth(1) == Some(':')) {
+    let path = if script_path.starts_with("/")
+        || (cfg!(windows) && script_path.len() > 1 && script_path.chars().nth(1) == Some(':'))
+    {
         // Absolute path
         std::path::PathBuf::from(script_path)
     } else {
         // Relative path - resolve from project root
-        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let mut project_root =
+            env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
         if project_root.ends_with("src-tauri") {
             project_root.pop(); // Go up one level if we're in src-tauri
         }
         project_root.join(script_path)
     };
-    
+
     // Check if the script exists
     if !path.exists() {
         return Err(format!("Python script not found: {}", path.display()));
     }
-    
+
     // Run the Python script
     let output = Command::new("python3")
         .arg(path.to_str().unwrap())
         .current_dir({
-            let mut dir = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+            let mut dir = env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?;
             if dir.ends_with("src-tauri") {
                 dir.pop(); // Go up one level if we're in src-tauri
             }
@@ -700,29 +743,42 @@ async fn run_python_script(script_path: &str) -> Result<String, String> {
         .output()
         .await
         .map_err(|e| format!("Failed to execute python script: {}", e))?;
-    
+
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(format!("Script executed successfully!\nOutput: {}\nErrors: {}", stdout, stderr))
+        Ok(format!(
+            "Script executed successfully!\nOutput: {}\nErrors: {}",
+            stdout, stderr
+        ))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Script execution failed with exit code: {}\nError: {}", output.status.code().unwrap_or(-1), stderr))
+        Err(format!(
+            "Script execution failed with exit code: {}\nError: {}",
+            output.status.code().unwrap_or(-1),
+            stderr
+        ))
     }
 }
 
 #[tauri::command]
-async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> Result<String, String> {
-    use tokio::process::Command;
+async fn run_javascript_script(
+    script_path: &str,
+    args: Option<Vec<String>>,
+) -> Result<String, String> {
     use std::env;
+    use tokio::process::Command;
 
     // Get the current working directory and resolve relative paths
-    let path = if script_path.starts_with("/") || (cfg!(windows) && script_path.len() > 1 && script_path.chars().nth(1) == Some(':')) {
+    let path = if script_path.starts_with("/")
+        || (cfg!(windows) && script_path.len() > 1 && script_path.chars().nth(1) == Some(':'))
+    {
         // Absolute path
         std::path::PathBuf::from(script_path)
     } else {
         // Relative path - resolve from project root
-        let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+        let mut project_root =
+            env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
         if project_root.ends_with("src-tauri") {
             project_root.pop(); // Go up one level if we're in src-tauri
         }
@@ -735,9 +791,9 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
     }
 
     // Build command with arguments
-    // Use tsx for consistency.
-    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
-    cmd.arg("tsx").arg(path.to_str().unwrap());
+    // Use bun for all JS/TS execution.
+    let mut cmd = Command::new("bun");
+    cmd.arg(path.to_str().unwrap());
 
     // Add arguments if provided
     if let Some(args) = args {
@@ -748,7 +804,8 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
 
     let output = cmd
         .current_dir({
-            let mut dir = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+            let mut dir = env::current_dir()
+                .map_err(|e| format!("Failed to get current directory: {}", e))?;
             if dir.ends_with("src-tauri") {
                 dir.pop(); // Go up one level if we're in src-tauri
             }
@@ -756,15 +813,22 @@ async fn run_javascript_script(script_path: &str, args: Option<Vec<String>>) -> 
         })
         .output()
         .await
-        .map_err(|e| format!("Failed to execute javascript script with bun: {}", e))?;
+        .map_err(|e| format!("Failed to execute javascript script: {}", e))?;
 
     if output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Ok(format!("Script executed successfully!\nOutput: {}\nErrors: {}", stdout, stderr))
+        Ok(format!(
+            "Script executed successfully!\nOutput: {}\nErrors: {}",
+            stdout, stderr
+        ))
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        Err(format!("Script execution failed with exit code: {}\nError: {}", output.status.code().unwrap_or(-1), stderr))
+        Err(format!(
+            "Script execution failed with exit code: {}\nError: {}",
+            output.status.code().unwrap_or(-1),
+            stderr
+        ))
     }
 }
 
@@ -773,15 +837,16 @@ async fn run_bot_streaming(
     app: tauri::AppHandle,
     bot_id: String,
     bot_name: String,
-    extract_limit: Option<u32>
+    extract_limit: Option<u32>,
 ) -> Result<String, String> {
-    use tokio::process::Command;
-    use tokio::io::{BufReader, AsyncBufReadExt};
-    use std::process::Stdio;
     use std::env;
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
 
     // Resolve project root
-    let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let mut project_root =
+        env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
     if project_root.ends_with("src-tauri") {
         project_root.pop();
     }
@@ -789,14 +854,17 @@ async fn run_bot_streaming(
     let script_path = project_root.join("src/bots/bot_starter.ts");
 
     if !script_path.exists() {
-        return Err(format!("Bot starter script not found: {}", script_path.display()));
+        return Err(format!(
+            "Bot starter script not found: {}",
+            script_path.display()
+        ));
     }
 
     // Spawn bot process with piped stdout
-    // Use tsx for all bots to ensure consistent runtime, especially for native modules like SQLite.
+    // Use bun for all bots. camoufox-js is patched to use bun:sqlite.
     // Use setsid on Unix to create a process group for reliable termination.
-    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
-    cmd.arg("tsx").arg(script_path.to_str().unwrap()).arg(&bot_name);
+    let mut cmd = Command::new("bun");
+    cmd.arg(script_path.to_str().unwrap()).arg(&bot_name);
 
     #[cfg(unix)]
     {
@@ -811,7 +879,8 @@ async fn run_bot_streaming(
         cmd.env("BOT_EXTRACT_LIMIT", limit.to_string());
     }
 
-    let mut child = cmd.current_dir(&project_root)
+    let mut child = cmd
+        .current_dir(&project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -835,10 +904,13 @@ async fn run_bot_streaming(
     tokio::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
             // Forward ALL lines as bot-log with authoritative botId
-            let _ = app_clone.emit("bot-log", serde_json::json!({
-                "line": line,
-                "botId": bot_id_log
-            }));
+            let _ = app_clone.emit(
+                "bot-log",
+                serde_json::json!({
+                    "line": line,
+                    "botId": bot_id_log
+                }),
+            );
 
             // Additionally parse structured events with [BOT_EVENT] prefix
             if line.starts_with("[BOT_EVENT]") {
@@ -861,11 +933,14 @@ async fn run_bot_streaming(
             bots.remove(&bot_name_exit);
         }
         let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
-        let _ = app_exit.emit("bot-stopped", serde_json::json!({
-            "botId": bot_id_exit,
-            "botName": bot_name_exit,
-            "exitCode": exit_code
-        }));
+        let _ = app_exit.emit(
+            "bot-stopped",
+            serde_json::json!({
+                "botId": bot_id_exit,
+                "botName": bot_name_exit,
+                "exitCode": exit_code
+            }),
+        );
     });
 
     Ok(format!("Bot '{}' started successfully", bot_name))
@@ -879,15 +954,16 @@ async fn run_bot_for_job(
     job_url: String,
     job_id: Option<String>,
     mode: String,
-    keep_open: bool
+    keep_open: bool,
 ) -> Result<String, String> {
-    use tokio::process::Command;
-    use tokio::io::{BufReader, AsyncBufReadExt};
-    use std::process::Stdio;
     use std::env;
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
 
     // Resolve project root
-    let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let mut project_root =
+        env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
     if project_root.ends_with("src-tauri") {
         project_root.pop();
     }
@@ -895,24 +971,26 @@ async fn run_bot_for_job(
     let script_path = project_root.join("src/bots/bot_starter.ts");
 
     if !script_path.exists() {
-        return Err(format!("Bot starter script not found: {}", script_path.display()));
+        return Err(format!(
+            "Bot starter script not found: {}",
+            script_path.display()
+        ));
     }
 
     // Spawn bot process with piped stdout and explicit params
-    // Use tsx for all bots and setsid on Unix for clean termination.
-    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
-    cmd.arg("tsx")
-       .arg(script_path.to_str().unwrap())
-       .arg(&bot_name)
-       .arg(format!("--url={}", job_url))
-       .arg(format!("--mode={}", mode));
+    // Use bun for all bots and setsid on Unix for clean termination.
+    let mut cmd = Command::new("bun");
+    cmd.arg(script_path.to_str().unwrap())
+        .arg(&bot_name)
+        .arg(format!("--url={}", job_url))
+        .arg(format!("--mode={}", mode));
 
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
-       
+
     if let Some(id) = job_id {
         cmd.arg(format!("--jobId={}", id));
     }
@@ -923,7 +1001,8 @@ async fn run_bot_for_job(
 
     cmd.env("BOT_ID", &bot_id);
 
-    let mut child = cmd.current_dir(&project_root)
+    let mut child = cmd
+        .current_dir(&project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit()) // Debug logs show in terminal
         .spawn()
@@ -941,15 +1020,18 @@ async fn run_bot_for_job(
 
     let app_clone = app.clone();
     let bot_id_log = bot_id.clone();
-    
+
     // Background task to read output and emit to frontend
     tauri::async_runtime::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
             // Forward ALL lines as bot-log with authoritative botId
-            let _ = app_clone.emit("bot-log", serde_json::json!({
-                "line": line,
-                "botId": bot_id_log
-            }));
+            let _ = app_clone.emit(
+                "bot-log",
+                serde_json::json!({
+                    "line": line,
+                    "botId": bot_id_log
+                }),
+            );
 
             // Additionally parse structured events with [BOT_EVENT] prefix
             if line.starts_with("[BOT_EVENT]") {
@@ -974,11 +1056,14 @@ async fn run_bot_for_job(
             bots.remove(&bot_name_exit);
         }
         let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
-        let _ = app_exit.emit("bot-stopped", serde_json::json!({
-            "botId": bot_id_exit,
-            "botName": bot_name_exit,
-            "exitCode": exit_code
-        }));
+        let _ = app_exit.emit(
+            "bot-stopped",
+            serde_json::json!({
+                "botId": bot_id_exit,
+                "botName": bot_name_exit,
+                "exitCode": exit_code
+            }),
+        );
     });
 
     Ok(format!("Bot {} started for job {}", bot_name, job_url))
@@ -990,31 +1075,34 @@ async fn run_bot_bulk(
     bot_id: String,
     job_ids: Vec<String>,
     mode: String,
-    superbot: bool
+    superbot: bool,
 ) -> Result<String, String> {
-    use tokio::process::Command;
-    use tokio::io::{BufReader, AsyncBufReadExt};
-    use std::process::Stdio;
     use std::env;
+    use std::process::Stdio;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
 
-    let mut project_root = env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
+    let mut project_root =
+        env::current_dir().map_err(|e| format!("Failed to get current directory: {}", e))?;
     if project_root.ends_with("src-tauri") {
         project_root.pop();
     }
 
     let script_path = project_root.join("src/bots/bot_starter.ts");
     if !script_path.exists() {
-        return Err(format!("Bot starter script not found: {}", script_path.display()));
+        return Err(format!(
+            "Bot starter script not found: {}",
+            script_path.display()
+        ));
     }
 
     // Pass job IDs as a comma-separated string, and mode as explicit args
     let ids_str = job_ids.join(",");
     let superbot_str = if superbot { "true" } else { "false" };
 
-    // Use tsx for all bots and setsid on Unix for clean termination.
-    let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
-    cmd.arg("tsx")
-        .arg(script_path.to_str().unwrap())
+    // Use bun for all bots and setsid on Unix for clean termination.
+    let mut cmd = Command::new("bun");
+    cmd.arg(script_path.to_str().unwrap())
         .arg("bulk") // Trigger the bulk runner routine
         .arg(format!("--jobs={}", ids_str))
         .arg(format!("--mode={}", mode))
@@ -1028,7 +1116,8 @@ async fn run_bot_bulk(
 
     cmd.env("BOT_ID", &bot_id);
 
-    let mut child = cmd.current_dir(&project_root)
+    let mut child = cmd
+        .current_dir(&project_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -1050,10 +1139,13 @@ async fn run_bot_bulk(
     tauri::async_runtime::spawn(async move {
         while let Ok(Some(line)) = lines.next_line().await {
             // Forward ALL lines as bot-log with authoritative botId
-            let _ = app_clone.emit("bot-log", serde_json::json!({
-                "line": line,
-                "botId": bot_id_log
-            }));
+            let _ = app_clone.emit(
+                "bot-log",
+                serde_json::json!({
+                    "line": line,
+                    "botId": bot_id_log
+                }),
+            );
 
             // Additionally parse structured events with [BOT_EVENT] prefix
             if line.starts_with("[BOT_EVENT]") {
@@ -1076,17 +1168,22 @@ async fn run_bot_bulk(
             bots.remove(&bot_name_exit);
         }
         let exit_code = status.map(|s| s.code().unwrap_or(-1)).unwrap_or(-1);
-        let _ = app_exit.emit("bot-stopped", serde_json::json!({
-            "botId": bot_id_exit,
-            "botName": bot_name_exit,
-            "exitCode": exit_code
-        }));
+        let _ = app_exit.emit(
+            "bot-stopped",
+            serde_json::json!({
+                "botId": bot_id_exit,
+                "botName": bot_name_exit,
+                "exitCode": exit_code
+            }),
+        );
     });
     Ok(format!("Bulk bot started for {} jobs", job_ids.len()))
 }
 
 #[tauri::command]
-async fn register_managed_file(input: RegisterManagedFileInput) -> Result<ManagedFileEntry, String> {
+async fn register_managed_file(
+    input: RegisterManagedFileInput,
+) -> Result<ManagedFileEntry, String> {
     let user_root = get_user_root(&input.user_id)?;
     let stored_name = input.filename.clone();
     let full_path = user_root.join("resumes").join(&stored_name);
@@ -1113,7 +1210,11 @@ async fn register_managed_file(input: RegisterManagedFileInput) -> Result<Manage
         .map_err(|e| format!("Failed reading managed file metadata: {}", e))?;
 
     let now = now_iso_like();
-    let id = format!("mf_{}_{}", epoch_seconds(), sanitize_segment(&input.filename));
+    let id = format!(
+        "mf_{}_{}",
+        epoch_seconds(),
+        sanitize_segment(&input.filename)
+    );
     let entry = ManagedFileEntry {
         id,
         user_id: input.user_id.clone(),
@@ -1152,7 +1253,9 @@ async fn register_managed_file(input: RegisterManagedFileInput) -> Result<Manage
 }
 
 #[tauri::command]
-async fn register_managed_file_base64(input: RegisterManagedFileBase64Input) -> Result<ManagedFileEntry, String> {
+async fn register_managed_file_base64(
+    input: RegisterManagedFileBase64Input,
+) -> Result<ManagedFileEntry, String> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(input.content_base64.as_bytes())
         .map_err(|e| format!("Invalid base64 payload: {}", e))?;
@@ -1183,7 +1286,11 @@ async fn register_managed_file_base64(input: RegisterManagedFileBase64Input) -> 
         .map_err(|e| format!("Failed reading managed file metadata: {}", e))?;
 
     let now = now_iso_like();
-    let id = format!("mf_{}_{}", epoch_seconds(), sanitize_segment(&input.filename));
+    let id = format!(
+        "mf_{}_{}",
+        epoch_seconds(),
+        sanitize_segment(&input.filename)
+    );
     let entry = ManagedFileEntry {
         id,
         user_id: input.user_id.clone(),
@@ -1276,7 +1383,11 @@ async fn rebuild_managed_files_index(user_id: String) -> Result<ManagedFilesRebu
                 .unwrap_or_else(|| "managed-file".to_string());
 
             rebuilt_entries.push(ManagedFileEntry {
-                id: format!("mf_rebuild_{}_{}", epoch_seconds(), sanitize_segment(&stored_name)),
+                id: format!(
+                    "mf_rebuild_{}_{}",
+                    epoch_seconds(),
+                    sanitize_segment(&stored_name)
+                ),
                 user_id: user_id.clone(),
                 feature: sanitize_segment(&feature),
                 job_id,
@@ -1349,7 +1460,8 @@ async fn preview_managed_file(query: ManagedFilePreviewQuery) -> Result<String, 
         .find(|f| f.id == query.file_id)
         .ok_or_else(|| "Managed file not found".to_string())?;
     let full_path = resolve_entry_path(&query.user_id, entry)?;
-    let file_name = full_path.file_name()
+    let file_name = full_path
+        .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("")
         .to_lowercase();
@@ -1382,19 +1494,24 @@ async fn preview_managed_file(query: ManagedFilePreviewQuery) -> Result<String, 
 
     // DOC/DOCX: still return binary message (no Rust crate in use for docx extraction)
     if file_name.ends_with(".doc") || file_name.ends_with(".docx") {
-        return Ok(format!("[Binary file: {}. Use file opening to view content.]",
-                         full_path.file_name().unwrap_or_default().to_string_lossy()));
+        return Ok(format!(
+            "[Binary file: {}. Use file opening to view content.]",
+            full_path.file_name().unwrap_or_default().to_string_lossy()
+        ));
     }
 
     let content = tokio::fs::read_to_string(&full_path)
         .await
-        .or_else(|_| std::fs::read(&full_path).map(|bytes| String::from_utf8_lossy(&bytes).to_string()))
+        .or_else(|_| {
+            std::fs::read(&full_path).map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+        })
         .map_err(|e| format!("Failed reading file preview {}: {}", full_path.display(), e))?;
 
     let limit = query.max_chars.unwrap_or(8000);
     if content.len() > limit {
         // Use char_indices to find safe UTF-8 boundary
-        let truncated = content.char_indices()
+        let truncated = content
+            .char_indices()
             .nth(limit)
             .map(|(i, _)| &content[..i])
             .unwrap_or(&content);
@@ -1435,18 +1552,30 @@ async fn move_managed_files(input: ManagedFileBulkMoveInput) -> Result<usize, St
                 continue;
             }
             let old_path = resolve_entry_path(&input.user_id, entry)?;
-            let rel_path = build_storage_rel_path(&target_feature, target_job.as_deref(), &entry.stored_name);
+            let rel_path =
+                build_storage_rel_path(&target_feature, target_job.as_deref(), &entry.stored_name);
             let new_path = user_root.join(rel_path.replace('/', std::path::MAIN_SEPARATOR_STR));
             if !new_path.starts_with(&user_root) {
                 return Err("Resolved target path escaped user root".to_string());
             }
 
             if let Some(parent) = new_path.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|e| format!("Failed creating target directory {}: {}", parent.display(), e))?;
+                std::fs::create_dir_all(parent).map_err(|e| {
+                    format!(
+                        "Failed creating target directory {}: {}",
+                        parent.display(),
+                        e
+                    )
+                })?;
             }
-            std::fs::rename(&old_path, &new_path)
-                .map_err(|e| format!("Failed moving {} to {}: {}", old_path.display(), new_path.display(), e))?;
+            std::fs::rename(&old_path, &new_path).map_err(|e| {
+                format!(
+                    "Failed moving {} to {}: {}",
+                    old_path.display(),
+                    new_path.display(),
+                    e
+                )
+            })?;
 
             entry.feature = target_feature.clone();
             entry.job_id = input.target_job_id.clone();
@@ -1492,19 +1621,19 @@ async fn save_managed_file_to_downloads(input: ManagedFileOpenInput) -> Result<S
         .find(|f| f.id == input.file_id)
         .ok_or_else(|| "Managed file not found".to_string())?;
     let full_path = resolve_entry_path(&input.user_id, entry)?;
-    
+
     // Get the Downloads folder
-    let downloads_dir = dirs::download_dir()
-        .ok_or_else(|| "Could not find Downloads folder".to_string())?;
-    
+    let downloads_dir =
+        dirs::download_dir().ok_or_else(|| "Could not find Downloads folder".to_string())?;
+
     // Get the filename from the entry
     let filename = entry.filename.clone();
     let dest_path = downloads_dir.join(&filename);
-    
+
     // Copy the file to Downloads
     std::fs::copy(&full_path, &dest_path)
         .map_err(|e| format!("Failed to copy file to Downloads: {}", e))?;
-    
+
     Ok(format!("Saved to:\n{}", dest_path.display()))
 }
 
@@ -1539,7 +1668,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<(), String> {
         std::fs::create_dir_all(dst)
             .map_err(|e| format!("Failed creating destination {}: {}", dst.display(), e))?;
     }
-    for entry in std::fs::read_dir(src).map_err(|e| format!("Failed reading {}: {}", src.display(), e))? {
+    for entry in
+        std::fs::read_dir(src).map_err(|e| format!("Failed reading {}: {}", src.display(), e))?
+    {
         let entry = entry.map_err(|e| format!("Failed reading directory entry: {}", e))?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
@@ -1565,7 +1696,9 @@ async fn export_managed_files_backup(input: ManagedFilesBackupInput) -> Result<S
     if !user_root.exists() {
         return Err("No local managed files found for this user".to_string());
     }
-    let backup_root = get_app_data_root()?.join("backups").join(sanitize_segment(&input.user_id));
+    let backup_root = get_app_data_root()?
+        .join("backups")
+        .join(sanitize_segment(&input.user_id));
     let backup_dir = backup_root.join(format!("backup-{}", epoch_seconds()));
     std::fs::create_dir_all(&backup_dir)
         .map_err(|e| format!("Failed creating backup directory: {}", e))?;
@@ -1607,7 +1740,9 @@ async fn import_managed_files_backup(input: ManagedFilesImportInput) -> Result<u
                 continue;
             }
             let exists = dest_index.entries.iter().any(|e| {
-                e.relative_path == entry.relative_path && e.filename == entry.filename && e.feature == entry.feature
+                e.relative_path == entry.relative_path
+                    && e.filename == entry.filename
+                    && e.feature == entry.feature
             });
             if exists {
                 continue;
@@ -1615,7 +1750,11 @@ async fn import_managed_files_backup(input: ManagedFilesImportInput) -> Result<u
             if projected_bytes.saturating_add(entry.size) > MAX_MANAGED_FILES_TOTAL_BYTES {
                 break;
             }
-            entry.id = format!("mf_import_{}_{}", epoch_seconds(), sanitize_segment(&entry.stored_name));
+            entry.id = format!(
+                "mf_import_{}_{}",
+                epoch_seconds(),
+                sanitize_segment(&entry.stored_name)
+            );
             entry.user_id = input.user_id.clone();
             entry.updated_at = now_iso_like();
             projected_bytes = projected_bytes.saturating_add(entry.size);
@@ -1636,7 +1775,7 @@ async fn stop_bot(bot_id: String) -> Result<String, String> {
         Some(pid) => {
             #[cfg(unix)]
             unsafe {
-                // Send SIGTERM to the process group to kill npx, node, and the browser
+                // Send SIGTERM to the process group to kill bun and the browser
                 libc::kill(-(pid as i32), libc::SIGTERM);
             }
             #[cfg(windows)]
@@ -1646,7 +1785,10 @@ async fn stop_bot(bot_id: String) -> Result<String, String> {
                     .spawn()
                     .ok();
             }
-            Ok(format!("Sent stop signal to bot '{}' (PID {})", bot_id, pid))
+            Ok(format!(
+                "Sent stop signal to bot '{}' (PID {})",
+                bot_id, pid
+            ))
         }
         None => Err(format!("Bot '{}' is not running", bot_id)),
     }
@@ -1655,6 +1797,7 @@ async fn stop_bot(bot_id: String) -> Result<String, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .invoke_handler(tauri::generate_handler![

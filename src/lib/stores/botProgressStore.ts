@@ -1,3 +1,21 @@
+/**
+ * Bot Progress Store (Svelte writable store)
+ * ------------------------------------------------------------------
+ * The frontend's real-time bridge to running bot processes. Listens
+ * for Tauri events (`bot-progress`, `bot-log`, `bot-stopped`) and
+ * maintains a reactive state map of all active/completed bots.
+ *
+ * Each bot gets a `BotState` with: status, job counters, logs (up to
+ * 500 entries), current step, and attention flags (login needed).
+ *
+ * Derived stores:
+ *   - `activeBots` — running + stopping bots only
+ *   - `allBots`    — every bot (running, completed, failed, stopped)
+ *
+ * IMPORTANT: Tauri listeners are lazy-initialized via `initBotListeners()`.
+ * Must be called once at app startup (safe to call multiple times).
+ */
+
 import { writable, derived, get } from 'svelte/store';
 
 export interface BotState {

@@ -31,6 +31,8 @@ export interface JobApplicationPayload {
   salary?: string;
   jobType?: string;
   workMode?: string;
+  applicationType?: string;
+  applicantsCount?: string;
   postedDate?: string;
   closingDate?: string;
   hrContact?: { name?: string; email?: string; phone?: string };
@@ -346,6 +348,7 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
     jobType: jobData.work_type || jobData.jobType,
     workMode: jobData.workMode,
     applicationType: jobData.applicationType || jobData.application_type,
+    applicantsCount: jobData.applicantsCount || jobData.applicants_count || jobData.application_volume,
     postedDate: typeof jobData.posted === 'string' ? jobData.posted : undefined,
     hrContact: jobData.hrContact,
     requiredSkills: Array.isArray(jobData.requiredSkills) ? jobData.requiredSkills : undefined,

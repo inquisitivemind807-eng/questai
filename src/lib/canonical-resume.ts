@@ -1,3 +1,16 @@
+/**
+ * Canonical Resume Reader
+ * ------------------------------------------------------------------
+ * Resolves the user's "canonical resume" (the primary/main resume
+ * file) from the managed files index. Supports .doc, .docx, and .pdf.
+ *
+ * The managed files index is stored at:
+ *   {appData}/FinalBoss/users/{userId}/index/files-index.json
+ *
+ * When a .txt sidecar exists next to the binary file, it's preferred
+ * (gives bots plain text to work with without PDF/DOCX parsing).
+ */
+
 import fs from 'fs';
 import path from 'path';
 
@@ -104,6 +117,10 @@ function sortByUpdatedDesc(a: ManagedFileEntry, b: ManagedFileEntry): number {
   return bTs - aTs;
 }
 
+/**
+ * List all resume filenames registered for this user, sorted by
+ * most-recently-updated first.
+ */
 export function listCanonicalResumeNames(userId: string): string[] {
   const index = loadIndex(userId);
   return index.entries
@@ -112,6 +129,21 @@ export function listCanonicalResumeNames(userId: string): string[] {
     .map((entry) => entry.filename);
 }
 
+/**
+ * Read the canonical resume text content.
+ *
+ * Resolves in this priority order:
+ *   1. The preferred resume (by filename), if provided
+ *   2. A file with 'resume' in the name
+ *   3. The most recently updated resume file
+ *
+ * Prefers .txt sidecar files (e.g. resume.txt next to resume.pdf)
+ * over binary readers so bots get plain text directly.
+ *
+ * @param userId - The user's ID (required; throws if missing)
+ * @param preferredResumeFileName - Optional preferred filename hint
+ * @returns { filename, content } — the filename and its text content
+ */
 export function readCanonicalResumeText(userId: string, preferredResumeFileName = ''): { filename: string; content: string } {
   if (!userId) {
     throw new Error('Missing userId. Cannot resolve canonical resume.');

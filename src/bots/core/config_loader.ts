@@ -1,3 +1,11 @@
+/**
+ * Config Loader
+ * ------------------------------------------------------------------
+ * Loads the shared `user-bots-config.json` from the bots directory.
+ * Returns a sensible default config when the file is missing or
+ * unparseable, so bots never crash on config load failures.
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';

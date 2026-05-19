@@ -1,19 +1,51 @@
+/**
+ * Workflow Engine — YAML-Driven State Machine
+ * ------------------------------------------------------------------
+ * The heart of the bot orchestration system. Reads a YAML workflow
+ * definition (e.g. `seek_apply_steps.yaml`) and executes it as a
+ * finite state machine. Each step maps to an async generator function
+ * that yields a transition event string; the engine looks up that
+ * event in the step's `transitions` map to determine the next step.
+ *
+ * Key features:
+ *   - Retry loops (max_retries + on_max_retries fallback)
+ *   - Per-step timeouts via Promise.race
+ *   - Browser overlay integration (UniversalOverlay)
+ *   - Progress event emission via stdout [BOT_EVENT] JSON lines
+ *   - Max-step guard to prevent infinite loops (default 1200)
+ *
+ * This file is the single most important piece of infrastructure in
+ * the bot system. All bots (Seek, LinkedIn, Indeed) depend on it.
+ */
+
 import * as fs from 'fs';
 import * as path from 'path';
 import * as yaml from 'js-yaml';
 import { UniversalOverlay } from './universal_overlay';
 import { logger } from './logger.js';
 
+/**
+ * Single step definition read from a YAML workflow file.
+ * Each step has a numbered index, a function name to call,
+ * a map of yield→nextStep transitions, and optional retry/timeout config.
+ */
 export interface WorkflowStep {
   step: number;
+  /** Name of the JS generator function to call (e.g. 'openCheckLogin') */
   func: string;
+  /** Maps a yielded event string to the next step name */
   transitions: Record<string, string>;
+  /** Seconds before the step times out (triggers on_timeout_event) */
   timeout: number;
+  /** Event to yield when the step times out */
   on_timeout_event: string;
+  /** Max consecutive retries when step transitions to itself (default 5) */
   max_retries?: number;
+  /** Fallback event after exceeding max_retries (defaults to 'finish') */
   on_max_retries?: string;
 }
 
+/** Parsed YAML workflow config */
 export interface WorkflowConfig {
   workflow_meta: {
     title: string;
@@ -23,12 +55,35 @@ export interface WorkflowConfig {
   steps_config: Record<string, WorkflowStep>;
 }
 
+/**
+ * Mutable shared state bag passed to every step function.
+ * Bots stash driver, page, overlay, config, selectors, counters,
+ * and any other runtime data here. It's shaped by conventions;
+ * see each bot's impl for the keys it expects.
+ */
 export interface WorkflowContext {
   [key: string]: any;
 }
 
+/**
+ * Signature for a workflow step function.
+ * Must be an async generator that yields transition event strings.
+ *
+ * Example:
+ * ```ts
+ * async function* openCheckLogin(ctx: WorkflowContext) {
+ *   // ... navigate and check login ...
+ *   if (loggedIn) yield 'login_not_needed';
+ *   else yield 'user_needs_to_login';
+ * }
+ * ```
+ */
 export type StepFunction = (ctx: WorkflowContext) => AsyncGenerator<string, void, unknown>;
 
+/**
+ * Progress event emitted on stdout as a [BOT_EVENT] JSON line.
+ * Consumed by the Tauri/Svelte frontend to update the dashboard in real time.
+ */
 export interface BotProgressEvent {
   type: 'step_start' | 'step_complete' | 'transition' | 'error' | 'info' | 'job_stat';
   timestamp: number;
@@ -45,12 +100,22 @@ export class WorkflowEngine {
   private stepFunctions: Map<string, StepFunction> = new Map();
   private currentStep: string;
   private context: WorkflowContext = {};
+  /** Fallback overlay created by the engine when the bot doesn't provide one */
   private overlay: UniversalOverlay | null = null;
+  /** Unique session identifier, used for event correlation with the frontend */
   private botId: string;
+  /** Kept for backward compat; not actively used */
   private eventsFilePath: string;
+  /** Tracks consecutive self-transition retries per step (for retry loops) */
   private stepRetryCount: Map<string, number> = new Map();
+  /** Set to true when the user or a signal handler requests workflow abort */
   private aborted: boolean = false;
 
+  /**
+   * Create a workflow engine from a YAML config file.
+   * @param configPath - Absolute or relative path to a `*_steps.yaml` file.
+   * @param botId      - Optional session ID; auto-generated if omitted.
+   */
   constructor(configPath: string, botId?: string) {
     const configContent = fs.readFileSync(configPath, 'utf8');
     this.config = yaml.load(configContent) as WorkflowConfig;
@@ -63,6 +128,11 @@ export class WorkflowEngine {
     // Initial event is emitted by bot_starter after context is set up.
   }
 
+  /**
+   * Emit a structured progress event on stdout for the frontend dashboard.
+   * Format: `[BOT_EVENT] { type, timestamp, step, ...data, botId }`
+   * Never throws — logging failures must not break the workflow.
+   */
   private emitProgress(event: BotProgressEvent): void {
     try {
       const payload = { ...event, botId: this.botId };
@@ -70,10 +140,15 @@ export class WorkflowEngine {
     } catch { /* never break workflow for logging */ }
   }
 
+  /** Returns the unique bot session ID (used for event correlation). */
   getBotId(): string {
     return this.botId;
   }
 
+  /**
+   * Request a graceful abort. The workflow loop will exit at the next
+   * step boundary. Does NOT kill the process — only sets the flag.
+   */
   abort(): void {
     this.aborted = true;
     logger.info('workflow.abort', 'Abort requested by user', {}, {
@@ -82,18 +157,36 @@ export class WorkflowEngine {
     });
   }
 
+  /**
+   * Register a named generator function so the YAML's `func` field can
+   * reference it. Called by `BotStarter` after loading each platform's
+   * implementation module (e.g. `linkedin_impl.ts`).
+   */
   registerStepFunction(stepName: string, func: StepFunction): void {
     this.stepFunctions.set(stepName, func);
   }
 
+  /** Set a key on the shared workflow context (accessible by all steps). */
   setContext(key: string, value: any): void {
     this.context[key] = value;
   }
 
+  /** Read the full mutable workflow context. */
   getContext(): WorkflowContext {
     return this.context;
   }
 
+  /**
+   * Execute a single workflow step by name.
+   *
+   * 1. Looks up the step config (from YAML) and the generator function.
+   * 2. Runs the generator with a timeout via Promise.race.
+   * 3. Updates the browser overlay with progress info.
+   * 4. Returns the transition event string yielded by the step.
+   *
+   * @throws Error if the step or function is missing from the config.
+   * @throws Propagates any error thrown by the step function itself.
+   */
   async executeStep(stepName: string): Promise<string> {
     const stepConfig = this.config.steps_config[stepName];
     if (!stepConfig) {
@@ -202,11 +295,26 @@ export class WorkflowEngine {
     }
   }
 
+  /**
+   * Internal helper: await the first yield of an async generator and return its value.
+   * Falls back to 'unknown' if the generator yields nothing (should never happen).
+   */
   private async executeGenerator(generator: AsyncGenerator<string, void, unknown>): Promise<string> {
     const result = await generator.next();
     return result.value || 'unknown';
   }
 
+  /**
+   * Run the full workflow to completion.
+   *
+   * Main loop:
+   *   while (currentStep !== 'done' && !aborted && stepCount < 1200)
+   *     executeStep(currentStep) → event
+   *     lookup transition in step config → nextStep
+   *
+   * On completion, updates the overlay and emits a final progress event.
+   * Supports retry loops (step transitions to itself, up to max_retries).
+   */
   async run(): Promise<void> {
     console.log(`[DEV] 🤖 ${this.config.workflow_meta.title}`);
     logger.info('workflow.start', 'Workflow started', {

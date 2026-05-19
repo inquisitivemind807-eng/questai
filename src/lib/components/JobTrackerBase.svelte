@@ -9,6 +9,7 @@
   import { goto } from "$app/navigation";
   import { invoke } from "@tauri-apps/api/core";
   import { botProgressStore } from "$lib/stores/botProgressStore";
+  import { ask } from "@tauri-apps/plugin-dialog";
   import {
     Chart,
     Title,
@@ -47,6 +48,9 @@
   export let bots = []; // e.g. ["linkedin_extract_bot", "linkedin_apply_bot"]
   // Mark as used to avoid Svelte's unused-export warning when routes pass it.
   $: bots;
+
+  export let enableEasyApplyFilter = false;
+  $: enableEasyApplyFilter;
 
   const PLATFORM_LABELS = {
     linkedin: "LinkedIn",
@@ -191,8 +195,10 @@
     { id: "workplace_type", label: "Workplace Type", visible: true },
     { id: "salary", label: "Salary", visible: true },
     { id: "type", label: "Type", visible: true },
+    { id: "posted", label: "Posted", visible: true },
+    { id: "applicants", label: "Applicants", visible: true },
     { id: "date", label: "Date", visible: true },
-    { id: "status", label: "Status", visible: false },
+    { id: "status", label: "Status", visible: true },
     { id: "actions", label: "Actions", visible: true, disableToggle: true }
   ];
 
@@ -241,6 +247,14 @@
         const ta = a.applicationType || "";
         const tb = b.applicationType || "";
         result = ta.localeCompare(tb);
+      } else if (sortColumn === "posted") {
+        const pa = a.postedDate || a.posted_date || a.time_posted || "";
+        const pb = b.postedDate || b.posted_date || b.time_posted || "";
+        result = pa.localeCompare(pb);
+      } else if (sortColumn === "applicants") {
+        const aa = a.applicantsCount || a.applicants_count || "";
+        const ab = b.applicantsCount || b.applicants_count || "";
+        result = aa.localeCompare(ab);
       } else if (sortColumn === "status") {
         const sa = a.status || "";
         const sb = b.status || "";
@@ -672,6 +686,8 @@
   }
 
   let showSelectionWarning = false;
+  let showDeleteSuccess = false;
+  let lastDeletedCount = 0;
 
   function toggleJobSelection(jobId) {
     if (selectedJobs.includes(jobId)) {
@@ -710,12 +726,12 @@
     paginatedJobs.every((j) => selectedJobs.includes(j._id));
 
   async function deleteSelectedJobs() {
-    if (
-      !confirm(
-        `Are you sure you want to delete ${selectedJobs.length} selected job(s)?`,
-      )
-    )
-      return;
+    console.log("Delete button clicked", selectedJobs);
+    const confirmed = await ask(
+      `Are you sure you want to delete ${selectedJobs.length} selected job(s)?`,
+      { title: "Confirm Deletion", kind: "warning" }
+    );
+    if (!confirmed) return;
 
     isLoading = true;
     try {
@@ -735,12 +751,15 @@
 
       const data = await response.json();
       if (data.success) {
+        lastDeletedCount = data.deletedCount ?? selectedJobs.length;
         applications = applications.filter(
           (a) => !selectedJobs.includes(a._id),
         );
         selectedJobs = [];
+        showDeleteSuccess = true;
+        setTimeout(() => (showDeleteSuccess = false), 5000);
       } else {
-        throw new Error(data.error);
+        throw new Error(data.error || "Failed to delete jobs");
       }
     } catch (e) {
       error = String(e);
@@ -921,6 +940,14 @@
       </div>
     {/if}
 
+    {#if showDeleteSuccess}
+      <div class="toast toast-end toast-bottom z-[100]">
+        <div class="alert alert-success shadow-lg text-white font-semibold">
+          <span>Successfully deleted {lastDeletedCount} job(s).</span>
+        </div>
+      </div>
+    {/if}
+
     <!-- Tab Content -->
     {#if isLoading}
       <div class="flex justify-center py-20">
@@ -1014,6 +1041,7 @@
                     <div class="flex gap-2">
                       <button class="btn btn-primary btn-sm shadow-sm" on:click={bulkApply}>✉️ Auto-Apply</button>
                       <button class="btn btn-error btn-outline btn-sm shadow-sm" on:click={() => (selectedJobs = [])}>Clear</button>
+                      <button class="btn btn-error btn-sm" on:click={deleteSelectedJobs}>Delete</button>
                     </div>
                   </div>
                 {/if}
@@ -1068,6 +1096,16 @@
                         {#if columns.find(c => c.id === 'type')?.visible}
                           <th class="cursor-pointer hover:bg-base-200" on:click={() => toggleSort('type')}>
                             Type {sortColumn === 'type' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'posted')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200 text-center w-[120px] min-w-[120px]" on:click={() => toggleSort('posted')}>
+                            Posted {sortColumn === 'posted' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
+                          </th>
+                        {/if}
+                        {#if columns.find(c => c.id === 'applicants')?.visible}
+                          <th class="cursor-pointer hover:bg-base-200 text-center w-[110px] min-w-[110px]" on:click={() => toggleSort('applicants')}>
+                            Applicants {sortColumn === 'applicants' ? (sortDirection === 'desc' ? '▼' : '▲') : ''}
                           </th>
                         {/if}
                         {#if columns.find(c => c.id === 'date')?.visible}
@@ -1156,6 +1194,20 @@
                               {:else}
                                 <span class="text-base-content/50 text-xs">—</span>
                               {/if}
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'posted')?.visible}
+                            <td class="text-center w-[120px] min-w-[120px]">
+                              <div class="text-sm whitespace-nowrap">
+                                {job.postedDate || job.posted_date || job.time_posted || "—"}
+                              </div>
+                            </td>
+                          {/if}
+                          {#if columns.find(c => c.id === 'applicants')?.visible}
+                            <td class="text-center w-[110px] min-w-[110px]">
+                              <div class="text-sm">
+                                {job.applicantsCount || job.applicants_count || "—"}
+                              </div>
                             </td>
                           {/if}
                           {#if columns.find(c => c.id === 'date')?.visible}

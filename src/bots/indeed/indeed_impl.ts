@@ -1,11 +1,27 @@
 /**
  * Indeed Bot Implementation
- * -------------------------------------------------------------
- * Playwright + Camoufox implementation of the Indeed bot.
- * Overcomes stealth protections using Firefox Camoufox instead of Chrome.
+ * ------------------------------------------------------------------
+ * Playwright + Camoufox implementation for Indeed.com.
+ *
+ * Why Camoufox (Firefox) instead of Chrome?
+ *   Indeed uses highly aggressive anti-bot detection that detects
+ *   Chromedriver/Selenium signals even with stealth patches. Camoufox
+ *   is a hardened Firefox fork with realistic fingerprint spoofing —
+ *   it passes Indeed's checks where Chrome fails.
+ *
+ * Architecture notes:
+ *   - Uses Playwright API (ctx.page) instead of Selenium (ctx.driver)
+ *   - PlaywrightDriverAdapter bridges the UniversalOverlay (Selenium API)
+ *   - Session persists in sessions/indeed/camoufox_profile/
+ *   - Fallback to software rendering for headless Wayland/X11
+ *   - camoxfox-js patched to use bun:sqlite (not better-sqlite3)
+ *
+ * Workflow YAMLs that use this file:
+ *   indeed_extract_steps.yaml, indeed_extract_pauseconfirm_steps.yaml,
+ *   indeed_apply_steps.yaml, indeed_apply_pauseconfirm_steps.yaml
  */
 
-import fetch from 'node-fetch';
+
 import * as path from 'path';
 import * as fs from 'fs';
 import { UniversalOverlay } from '../core/universal_overlay';
@@ -14,8 +30,9 @@ import { waitForNextConfirmAsync } from '../core/pause_confirm';
 import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
 
 /**
- * Visual helper to highlight elements during bot interaction.
- * Uses outline and box-shadow to avoid layout shifts.
+ * Visual helper: highlight a Playwright locator with an outline and
+ * box-shadow. Does NOT affect layout (uses outline, not border).
+ * Silently swallows all errors — never blocks the bot.
  */
 async function highlight(locator: any, color: string = '#ff0000') {
     if (!locator) return;
@@ -32,6 +49,15 @@ async function highlight(locator: any, color: string = '#ff0000') {
     } catch (e) { }
 }
 
+/**
+ * Adapter that makes a Playwright Page behave like a Selenium WebDriver
+ * for the UniversalOverlay system.
+ *
+ * The UniversalOverlay was built for Selenium's `driver.executeScript()`.
+ * This adapter translates those calls to Playwright's `page.evaluate()`,
+ * converting the `arguments` array into function parameters since Playwright
+ * doesn't support `arguments` in evaluate scripts the same way.
+ */
 class PlaywrightDriverAdapter {
     constructor(private page: any) { }
     async executeScript(script: string, ...args: any[]) {
@@ -59,6 +85,16 @@ class PlaywrightDriverAdapter {
     }
 }
 
+/**
+ * STEP 0: Boot the Camoufox stealth browser and set up initial state.
+ *
+ * Creates a Camoufox instance with a persistent user_data_dir so
+ * login sessions survive across runs. Sets up environment overrides
+ * for software rendering on systems without GPU drivers.
+ *
+ * If `ctx.config.directApplyUrl` is set, transitions to the direct
+ * apply pipeline instead of the search-and-extract pipeline.
+ */
 export async function* step0(ctx: any) {
     if (!ctx.state) ctx.state = {};
     if (!ctx.page) {
@@ -121,6 +157,10 @@ export async function* step0(ctx: any) {
     yield 'step0_complete';
 }
 
+/**
+ * Navigate to a specific Indeed job URL for the Direct Apply workflow.
+ * Normalizes relative URLs (adding https://www.indeed.com prefix).
+ */
 export async function* navigateToDirectApplyUrl(ctx: any) {
     try {
         let jobUrl = ctx.config?.directApplyUrl;
@@ -147,6 +187,12 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
     }
 }
 
+/**
+ * Build an Indeed search URL from the user's configuration.
+ * Supports keywords, location, job type, date posted, remote preference,
+ * radius, experience level, salary, and a raw `indeedSc` query parameter
+ * for advanced taxonomy filters.
+ */
 export function buildSearchUrl(ctx: any): string {
     const fd = ctx.config?.formData || {};
     const keywords = fd.keywords || '';
@@ -181,6 +227,16 @@ export function buildSearchUrl(ctx: any): string {
     return `https://www.indeed.com/jobs?${params.toString()}`;
 }
 
+/**
+ * Check login status on Indeed.
+ *
+ * Strategy:
+ *   1. If no session folder exists → needs login
+ *   2. Navigate to the search URL (if not already there)
+ *   3. Look for a Sign In button in the DOM
+ *   4. Check for auth cookies (SHOE, PassportAuthProxy)
+ *   5. User is 'logged in' only when NO sign-in button AND auth cookies present
+ */
 export async function* openCheckLogin(ctx: any) {
     console.log('indeed.checkLogin', 'Checking login status...');
     try {
@@ -236,6 +292,14 @@ export async function* openCheckLogin(ctx: any) {
     }
 }
 
+/**
+ * Show the manual login prompt (red banner + UniversalOverlay Sign In).
+ *
+ * Clicks the Sign In button first to open the login form, then waits
+ * up to ~6 minutes for the user to authenticate. Polls for:
+ *   - Overlay "Continue" button click (__overlaySignInComplete flag)
+ *   - Auth cookies appearing (PassportAuthProxy, SHOE)
+ */
 export async function* showManualLoginPrompt(ctx: any) {
     console.log('indeed.login', 'Pausing for manual login...');
     console.warn('indeed.login', 'ACTION REQUIRED: Please enter your credentials and log in to Indeed.');
@@ -511,6 +575,13 @@ async function applyDynamicKeywordsFilter(page: any, btn: any, keywords: string)
     }
 }
 
+/**
+ * Step: navigate to/set up the search results page.
+ *
+ * Navigates to the built search URL, handles the "Do you want to see
+ * results in [location] only?" dialog (auto-clicks "Yes"), and
+ * optionally applies dynamic filter buttons in superbot/harvester mode.
+ */
 export async function* openJobsPage(ctx: any) {
     console.log('indeed.openJobs', 'Navigating to search page...');
     try {
@@ -577,7 +648,8 @@ export async function* getPageInfo(ctx: any) {
             await highlight(countEl, '#00ffff');
             const text = await countEl.innerText();
             // Extract the number (handle "9 jobs" or "Page 1 of 1,234 jobs")
-            const match = text.replace(/,/g, '').match(/(\d+)/);
+            const cleanText = text.replace(/,/g, '');
+            const match = cleanText.match(/(\d+)\s*jobs/i) || cleanText.match(/(\d+)/);
             if (match) {
                 const totalJobs = parseInt(match[1], 10);
                 ctx.state.totalJobs = totalJobs;
@@ -597,6 +669,18 @@ export async function* getPageInfo(ctx: any) {
     yield 'page_info_extracted';
 }
 
+/**
+ * Extract job cards from the current Indeed search results page.
+ *
+ * For each card, scrapes:
+ *   - title, company, location, salary, posted date, job ID
+ *   - description (by clicking into the details pane)
+ *   - job type, work mode, benefits, application type (internal/external)
+ *   - external apply URL (if applicable)
+ *
+ * Each job is saved incrementally to the backend via /api/scraped-jobs.
+ * In pauseconfirm mode, pauses between each job for manual review.
+ */
 export async function* extractJobDetails(ctx: any) {
     console.log('indeed.extract', 'Extracting job cards...');
     try {
@@ -639,7 +723,9 @@ export async function* extractJobDetails(ctx: any) {
                     }
                 } catch (e) { }
 
-                ctx.overlay?.updateJobProgress(i + 1, cardCount, `Extracting: ${title}`, 3).catch(() => { });
+                const totalProgress = (ctx.state.scrapedJobs?.length || 0) + i + 1;
+                const totalTarget = ctx.state.totalJobs || cardCount;
+                ctx.overlay?.updateJobProgress(totalProgress, totalTarget, `Extracting: ${title}`, 3).catch(() => { });
 
                 try {
                     const compEl = card.locator('[data-testid="company-name"]').first();
@@ -889,14 +975,20 @@ export async function* extractJobDetails(ctx: any) {
     }
 }
 
+/** Accumulate the batch of scraped jobs into ctx.state.scrapedJobs. */
 export async function* processJobs(ctx: any) {
     if (!ctx.state.scrapedJobs) ctx.state.scrapedJobs = [];
     ctx.state.scrapedJobs = ctx.state.scrapedJobs.concat(ctx.state.currentJobCards || []);
     console.log('indeed.process', `Job batch sync complete. Total accumulated: ${ctx.state.scrapedJobs.length}`);
-    ctx.overlay?.updateJobProgress(ctx.state.scrapedJobs.length, ctx.state.scrapedJobs.length, `Finished processing ${ctx.state.currentJobCards?.length || 0} jobs`, 4).catch(() => { });
+    const totalTarget = ctx.state.totalJobs || ctx.state.scrapedJobs.length;
+    ctx.overlay?.updateJobProgress(ctx.state.scrapedJobs.length, totalTarget, `Finished processing ${ctx.state.currentJobCards?.length || 0} jobs`, 4).catch(() => { });
     yield 'jobs_saved';
 }
 
+/**
+ * Attempt to click the Indeed "Apply" button to open the Easy Apply modal.
+ * Works for both direct URL and search result flows.
+ */
 export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
@@ -922,6 +1014,18 @@ export async function* attemptEasyApply(ctx: any) {
     }
 }
 
+/**
+ * Step through Indeed's multi-page application form.
+ *
+ * Iterates through the modal:
+ *   - Clicks resume cards if present
+ *   - Clicks Next/Continue/Submit buttons
+ *   - Detects post-apply success page (url includes 'post-apply' or 'success')
+ *   - Max 15 steps to prevent infinite loops on unexpected forms
+ *
+ * NOTE: Currently does NOT answer LLM-driven form questions —
+ *       only clicks through with existing data. See TODO in README.
+ */
 export async function* answerQuestions(ctx: any) {
     console.log('indeed.forms', 'Processing application steps...');
     let maxSteps = 15;
@@ -963,11 +1067,17 @@ export async function* answerQuestions(ctx: any) {
     yield 'error_answering_questions';
 }
 
+/** Transition step: marks the end of the application submission flow. */
 export async function* submitApplication(ctx: any) {
     console.log('indeed.submit', 'Finished submitting application.');
     yield 'save_applied_job';
 }
 
+/**
+ * Record a successful job application to the backend.
+ * Creates a minimal job JSON file if one doesn't already exist
+ * (Indeed bot doesn't always write local job files like Seek does).
+ */
 export async function* saveAppliedJob(ctx: any) {
     console.log('indeed.save_applied', 'Recording job application to backend...');
     try {
@@ -1018,16 +1128,23 @@ export async function* saveAppliedJob(ctx: any) {
     yield 'finish';
 }
 
+/** Handle external (off-platform) applications — log and skip. */
 export async function* externalApply(ctx: any) {
     console.warn('indeed.external', 'This job appears to be external or un-appliable by quick bots.');
     yield 'application_failed';
 }
 
+/** Mark the current application attempt as failed and continue. */
 export async function* applicationFailed(ctx: any) {
     console.error('indeed.apply', 'Application flow failed or hit a roadblock.');
     yield 'application_marked_failed';
 }
 
+/**
+ * Navigate to the next page of search results.
+ * Uses the pagination selector to find and click the "Next" link.
+ * Increments ctx.state.currentPage.
+ */
 export async function* navigateToNextPage(ctx: any) {
     console.log('indeed.pagination', 'Proceeding to next page...');
     try {
@@ -1047,6 +1164,11 @@ export async function* navigateToNextPage(ctx: any) {
     }
 }
 
+/**
+ * Final step: log completion stats and close the browser.
+ * Delays the browser close by 2 seconds to let the user see
+ * the completed overlay.
+ */
 export async function* finish(ctx: any) {
     console.log('indeed.finish', `Workflow finished. Scraped total: ${ctx.state?.scrapedJobs?.length || 0}`);
     if (ctx.browser) {
