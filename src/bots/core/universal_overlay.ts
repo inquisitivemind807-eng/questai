@@ -1312,12 +1312,15 @@ export class UniversalOverlay {
    */
   async hideOverlay(): Promise<void> {
     if (this.overlayUnavailable) return;
+    this.lastState = null;
 
     await this.safeExecute(async () => {
       await this.driver.executeScript(`
         const overlay = document.getElementById('${this.overlayId}');
         if (overlay) overlay.remove();
         sessionStorage.removeItem('universal_overlay_state');
+        window.__overlayCurrentState = null;
+        window.__overlayPendingState = null;
       `);
     }, 'hideOverlay');
   }

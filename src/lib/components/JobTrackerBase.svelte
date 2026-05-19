@@ -134,13 +134,15 @@
       const { listen } = await import("@tauri-apps/api/event");
 
       const unlisten = await listen("bot-log", (event) => {
-        const logLine = event.payload;
+        const payload = event.payload;
+        const line = typeof payload === "object" && payload !== null ? payload.line : String(payload);
 
         if (
-          logLine.includes(
+          line &&
+          (line.includes(
             "Application recorded successfully with status 'applied'",
           ) ||
-          logLine.includes("JobRecorder] API call successful!")
+            line.includes("JobRecorder] API call successful!"))
         ) {
           scheduleApplicationsRefresh();
         }
@@ -196,7 +198,7 @@
     { id: "salary", label: "Salary", visible: true },
     { id: "type", label: "Type", visible: true },
     { id: "posted", label: "Posted", visible: true },
-    { id: "applicants", label: "Applicants", visible: true },
+    { id: "applicants", label: "Applicants", visible: false },
     { id: "date", label: "Date", visible: true },
     { id: "status", label: "Status", visible: true },
     { id: "actions", label: "Actions", visible: true, disableToggle: true }

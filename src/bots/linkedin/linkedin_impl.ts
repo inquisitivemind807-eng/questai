@@ -1814,6 +1814,10 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
 
     let easyApplyButton = null;
 
+    if (ctx.overlay) {
+      await ctx.overlay.hideOverlay().catch(() => {});
+    }
+
     for (const selector of easyApplySelectors) {
       try {
         const byLocator = selector.startsWith('//') || selector.startsWith('(') ? By.xpath(selector) : By.css(selector);
@@ -1845,7 +1849,11 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
 
         // Check if the Easy Apply modal opened
         try {
-          const modal = await driver.findElement(By.css('div.jobs-easy-apply-modal'));
+          const modalCss = ctx.selectors?.easy_apply?.modal_container_css || 'div.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], .artdeco-modal';
+          const modal = await driver.wait(
+            until.elementLocated(By.css(modalCss)),
+            5000
+          );
 
           // Check for initial profile setup form inside modal
           try {
