@@ -46,7 +46,7 @@ import { Document, Paragraph, TextRun, Packer } from 'docx';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
-import { readCanonicalResumeText } from '../../lib/canonical-resume';
+import { readCanonicalResumeText, resolveCanonicalResumePath } from '../../lib/canonical-resume';
 import { highlightElement } from '../core/highlight';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -204,6 +204,58 @@ function isLikelySameText(a: string, b: string): boolean {
   const leftPrefix = left.slice(0, 28);
   const rightPrefix = right.slice(0, 28);
   return Boolean(leftPrefix) && leftPrefix === rightPrefix;
+}
+
+/**
+ * LinkedIn recently (May 2026) moved the Easy Apply modal into a Shadow DOM
+ * hosted by `#interop-outlet`. Standard `driver.findElement(By.css(...))`
+ * cannot pierce shadow roots — all modal queries must go through this helper.
+ *
+ * Strategy:
+ *   1. Try the light DOM first (backward-compatible).
+ *   2. If not found, pierce `#interop-outlet`'s open shadow root.
+ */
+async function findEasyApplyModal(
+  driver: WebDriver,
+  modalCss: string,
+  shadowHostCss: string = '#interop-outlet'
+): Promise<Awaited<ReturnType<WebDriver['findElement']>> | null> {
+  const el = await driver.executeScript(`
+    const modalCss = arguments[0];
+    const shadowHostCss = arguments[1];
+
+    // Light DOM first
+    let el = document.querySelector(modalCss);
+    if (el) return el;
+
+    // Piercing shadow DOM
+    const host = document.querySelector(shadowHostCss);
+    if (host && host.shadowRoot) {
+      el = host.shadowRoot.querySelector(modalCss);
+      if (el) return el;
+    }
+
+    return null;
+  `, modalCss, shadowHostCss);
+  return (el as any) || null;
+}
+
+/**
+ * Polling wait for the Easy Apply modal to appear (with Shadow DOM support).
+ */
+async function waitForEasyApplyModal(
+  driver: WebDriver,
+  modalCss: string,
+  timeoutMs: number = 7000,
+  shadowHostCss: string = '#interop-outlet'
+): Promise<Awaited<ReturnType<WebDriver['findElement']>> | null> {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const el = await findEasyApplyModal(driver, modalCss, shadowHostCss);
+    if (el) return el;
+    await driver.sleep(300);
+  }
+  return null;
 }
 
 /**
@@ -1847,13 +1899,16 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
         await easyApplyButton.click();
         await driver.sleep(2000);
 
-        // Check if the Easy Apply modal opened
+        // Check if the Easy Apply modal opened (Shadow DOM aware)
         try {
-          const modalCss = ctx.selectors?.easy_apply?.modal_container_css || 'div.jobs-easy-apply-modal, [data-test-modal-id="easy-apply-modal"], .artdeco-modal';
-          const modal = await driver.wait(
-            until.elementLocated(By.css(modalCss)),
-            5000
-          );
+          const modalCss = ctx.selectors?.easy_apply?.modal_container_css || 'div.jobs-easy-apply-modal, [data-test-modal], .artdeco-modal';
+          const shadowHostCss = ctx.selectors?.easy_apply?.modal_shadow_host || '#interop-outlet';
+          const modal = await waitForEasyApplyModal(driver, modalCss, 7000, shadowHostCss);
+
+          if (!modal) {
+            yield "modal_failed_to_open";
+            return;
+          }
 
           // Check for initial profile setup form inside modal
           try {
@@ -1895,6 +1950,86 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
     }
   } catch (error) {
     yield "easy_apply_process_error";
+  }
+}
+
+/**
+ * Fill the contact info form (first page of Easy Apply modal).
+ * LinkedIn now shows a contact form with email, phone country code,
+ * and phone number before the resume upload step. This function clears
+ * and refills all fields from config every time.
+ */
+export async function* fillContactInfo(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const driver = ctx.driver;
+    const easyApply = ctx.selectors?.easy_apply;
+    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
+    const emailSel = easyApply?.contact_email_select || "select[id$='-multipleChoice']";
+    const phoneCountrySel = easyApply?.contact_phone_country_select || "select[id$='-phoneNumber-country']";
+    const phoneNumberSel = easyApply?.contact_phone_number_input || "input[id$='-phoneNumber-nationalNumber']";
+
+    const email = ctx.config?.formData?.email || '';
+    const phone = ctx.config?.formData?.phone || '';
+
+    printLog(`Filling contact info: email=${email}, phone=${phone}`);
+
+    const result = await driver.executeScript(`
+      const host = document.querySelector(arguments[0]);
+      if (!host || !host.shadowRoot) return { success: false, error: 'shadow host not found' };
+      const sr = host.shadowRoot;
+
+      const emailSel = arguments[1];
+      const phoneCountrySel = arguments[2];
+      const phoneNumberSel = arguments[3];
+      const email = arguments[4];
+      const phone = arguments[5];
+
+      const details = {};
+
+      // Email select
+      const emailSelect = sr.querySelector(emailSel);
+      if (emailSelect && email) {
+        let found = false;
+        for (const opt of emailSelect.options) {
+          if (opt.value === email || (opt.textContent || '').trim() === email) {
+            emailSelect.value = opt.value;
+            found = true;
+            break;
+          }
+        }
+        details.email = found ? 'filled' : 'option not found';
+      } else {
+        details.email = emailSelect ? 'no config' : 'not found';
+      }
+
+      // Phone country code — keep as-is (LinkedIn pre-fills from profile)
+      const phoneCountry = sr.querySelector(phoneCountrySel);
+      details.phoneCountry = phoneCountry ? 'found' : 'not found';
+
+      // Phone number input — clear and refill
+      const phoneInput = sr.querySelector(phoneNumberSel);
+      if (phoneInput && phone) {
+        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        nativeSetter.call(phoneInput, '');
+        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+        nativeSetter.call(phoneInput, phone);
+        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+        phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
+        details.phone = 'filled';
+      } else {
+        details.phone = phoneInput ? 'no config' : 'not found';
+      }
+
+      return details;
+    `, shadowHostCss, emailSel, phoneCountrySel, phoneNumberSel, email, phone);
+
+    printLog(`Contact info result: ${JSON.stringify(result)}`);
+    await driver.sleep(2500);
+
+    yield "contact_info_filled";
+  } catch (error) {
+    printLog(`fillContactInfo error: ${error}`);
+    yield "contact_info_error";
   }
 }
 
@@ -2258,12 +2393,14 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
     const driver = ctx.driver;
     const easyApply = ctx.selectors?.easy_apply;
     const modalCss = easyApply?.modal_container_css || "div.jobs-easy-apply-modal";
+    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
     const coverLetterCss = easyApply?.cover_letter_textarea_css;
     const coverLetterXpath = easyApply?.cover_letter_textarea_xpath || "//textarea[contains(@placeholder, 'cover letter') or contains(@aria-label, 'cover letter')]";
 
     let textarea: Awaited<ReturnType<WebDriver['findElement']>> | null = null;
     try {
-      const modal = await driver.findElement(By.css(modalCss));
+      const modal = await findEasyApplyModal(driver, modalCss, shadowHostCss);
+      if (!modal) throw new Error('modal not found');
       if (coverLetterCss) {
         try {
           textarea = await modal.findElement(By.css(coverLetterCss));
@@ -2469,18 +2606,27 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
     }
 
     if (!resumePath || !fs.existsSync(resumePath)) {
-      printLog("No resume path or file not found - will try to continue without upload");
+      try {
+        const clientEmail = getClientEmailFromContext(ctx);
+        const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+        const canonicalPath = resolveCanonicalResumePath(clientEmail, preferredResumeFileName);
+        resumePath = canonicalPath;
+        printLog(`Resolved canonical resume path: ${canonicalPath}`);
+      } catch (err) {
+        printLog(`Canonical resume resolution failed: ${err}`);
+      }
     }
 
     const fileInputCss = selectors?.resume_file_input_css || "input[type='file']";
     const fileInputXpath = selectors?.resume_file_input_xpath || ".//input[@type='file']";
     const modalCss = selectors?.modal_container_css || "div.jobs-easy-apply-modal";
+    const shadowHostCss = selectors?.modal_shadow_host || '#interop-outlet';
 
     let fileInput: Awaited<ReturnType<WebDriver['findElement']>> | null = null;
     try {
       try {
-        const modal = await driver.findElement(By.css(modalCss));
-        fileInput = await modal.findElement(By.css(fileInputCss));
+        const modal = await findEasyApplyModal(driver, modalCss, shadowHostCss);
+        if (modal) fileInput = await modal.findElement(By.css(fileInputCss));
       } catch {
         try {
           fileInput = await driver.findElement(By.css(fileInputCss));
@@ -2533,8 +2679,14 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
 
     await driver.sleep(1500);
 
+    const shadowHostCss = ctx.selectors?.easy_apply?.modal_shadow_host || '#interop-outlet';
     const questionsData = await driver.executeScript(`
-  const modal = document.querySelector(arguments[0]);
+  // Piercing shadow DOM if needed
+  let modal = document.querySelector(arguments[0]);
+  if (!modal) {
+    const host = document.querySelector(arguments[2] || '#interop-outlet');
+    if (host && host.shadowRoot) modal = host.shadowRoot.querySelector(arguments[0]);
+  }
   if (!modal) return { questionsFound: 0, questions: [] };
   const containers = Array.from(modal.querySelectorAll(arguments[1]));
   const questions = [];
@@ -2599,20 +2751,12 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
   });
 
   return { questionsFound: questions.length, questions: questions };
-  `, modalCss, containerCss) as { questionsFound: number; questions: Array<{ type: string; question: string; options: string[]; containerSelector: string }> };
+  `, modalCss, containerCss, shadowHostCss) as { questionsFound: number; questions: Array<{ type: string; question: string; options: string[]; containerSelector: string }> };
 
     if (questionsData && questionsData.questionsFound > 0) {
       printLog(`Found ${questionsData.questionsFound} employer questions`);
 
-      let existingJobData: any = {};
-      if (ctx.currentJobFile && fs.existsSync(ctx.currentJobFile)) {
-        try {
-          existingJobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf-8'));
-        } catch {
-          // ignore
-        }
-      }
-
+      const jobId = (ctx.current_job as any)?.job_id || 'unknown';
       const cleanQuestions = questionsData.questions.map((q: any, idx: number) => ({
         id: idx,
         q: q.question,
@@ -2621,10 +2765,21 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
         containerSelector: q.containerSelector
       }));
 
-      const updated = { ...existingJobData, questions: cleanQuestions, lastUpdated: new Date().toISOString() };
-      fs.writeFileSync(ctx.currentJobFile!, JSON.stringify(updated, null, 2));
-      printLog(`Saved questions to ${ctx.currentJobFile} `);
-      yield "employer_questions_saved";
+      try {
+        const { apiRequest } = await import('../core/api_client.js');
+        const saved = await apiRequest('/api/scraped-jobs', 'POST', {
+          platform: 'linkedin',
+          platformJobId: jobId,
+          questions: cleanQuestions
+        });
+
+        ctx.current_job_details = saved;
+        printLog('Saved questions to DB');
+        yield 'employer_questions_saved';
+      } catch (apiErr) {
+        printLog(`Failed to save questions to DB: ${apiErr}`);
+        yield 'employer_questions_saved';
+      }
     } else {
       printLog("No employer questions found");
       yield "no_employer_questions";
@@ -2649,20 +2804,29 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
     (ctx as any).platform = 'linkedin';
 
     let questions: Array<{ question: string; type: string; options: string[]; opts?: string[]; containerSelector: string }> = [];
-    if (ctx.currentJobFile && fs.existsSync(ctx.currentJobFile)) {
+
+    let jobData = ctx.current_job_details;
+    if (!jobData) {
       try {
-        const jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf-8'));
-        const raw = (jobData.questions || []) as Array<{ q: string; type: string; opts?: string[]; containerSelector: string }>;
-        questions = raw.map((q) => ({
-          question: q.q || '',
-          type: q.type || 'text',
-          options: q.opts || [],
-          opts: q.opts,
-          containerSelector: q.containerSelector || ''
-        })).filter((q) => q.question && q.containerSelector);
+        const { apiRequest } = await import('../core/api_client.js');
+        jobData = await apiRequest(
+          `/api/scraped-jobs?platform=linkedin&platformJobId=${(ctx.current_job as any)?.job_id}`,
+          'GET'
+        );
       } catch {
         // ignore
       }
+    }
+
+    if (jobData && jobData.questions) {
+      const raw = (jobData.questions || []) as Array<{ q: string; type: string; opts?: string[]; containerSelector: string }>;
+      questions = raw.map((q) => ({
+        question: q.q || '',
+        type: q.type || 'text',
+        options: q.opts || [],
+        opts: q.opts,
+        containerSelector: q.containerSelector || ''
+      })).filter((q) => q.question && q.containerSelector);
     }
 
     if (questions.length > 0) {
@@ -2712,7 +2876,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         });
 
         if (answer !== null && answer !== undefined) {
-          const configuredModalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal']";
+          const configuredModalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal]";
           const modalScope = `:is(${configuredModalCss})`;
           const fillResult = await fillQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, modalScope);
           const filled = fillResult.success;
@@ -2781,11 +2945,13 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
       printLog("Questions answered (intelligent flow)");
     } else {
       const modalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal";
+      const shadowHostCss = ctx.selectors?.easy_apply?.modal_shadow_host || '#interop-outlet';
       const phone = ctx.config.formData?.phone || '';
       const email = ctx.config.formData?.email || '';
       let root: Awaited<ReturnType<WebDriver['findElement']>> = driver as any;
       try {
-        root = await driver.findElement(By.css(modalCss));
+        const modal = await findEasyApplyModal(driver, modalCss, shadowHostCss);
+        if (modal) root = modal;
       } catch {
         // no modal
       }
@@ -2827,72 +2993,56 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
       }
       printLog("Questions answered (basic flow)");
     }
-
-    // Multi-stage: if primary button is Next/Continue/Review, click it and loop to extract next stage questions
-    // Must scope to Easy Apply overlay only so we never match pagination "View next page" behind the modal
-    let modalRoot: Awaited<ReturnType<WebDriver['findElement']>> | null = null;
-    try {
-      modalRoot = await driver.findElement(By.css("[data-test-modal-id='easy-apply-modal']"));
-    } catch {
-      try {
-        modalRoot = await driver.findElement(By.css(ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal"));
-      } catch {
-        // no modal
-      }
-    }
-    if (!modalRoot) {
-      yield "finished_answering_questions";
-      return;
-    }
-    const nextXPathRel = ".//button[contains(., 'Next') or contains(., 'Continue') or contains(., 'Review')]";
-    const submitXPathRel = ".//button[contains(., 'Submit application') or contains(., 'Submit')]";
-    let primaryButton: Awaited<ReturnType<WebDriver['findElement']>> | null = null;
-    let primaryText = '';
-    try {
-      const submitBtn = await modalRoot.findElement(By.xpath(submitXPathRel));
-      if (submitBtn) {
-        const isDisplayed = await submitBtn.isDisplayed();
-        const isEnabled = await submitBtn.isEnabled();
-        if (isDisplayed && isEnabled) {
-          primaryButton = submitBtn;
-          primaryText = (await submitBtn.getText())?.trim() || '';
-        }
-      }
-    } catch {
-      // submit not found
-    }
-    if (!primaryButton) {
-      try {
-        const nextBtn = await modalRoot.findElement(By.xpath(nextXPathRel));
-        if (nextBtn) {
-          const ariaLabel = (await nextBtn.getAttribute("aria-label")) || "";
-          const className = (await nextBtn.getAttribute("class")) || "";
-          const isPagination = ariaLabel.includes("View next page") || className.includes("jobs-search-pagination");
-          if (!isPagination) {
-            const isDisplayed = await nextBtn.isDisplayed();
-            const isEnabled = await nextBtn.isEnabled();
-            if (isDisplayed && isEnabled) {
-              primaryButton = nextBtn;
-              primaryText = (await nextBtn.getText())?.trim() || '';
-            }
-          }
-        }
-      } catch {
-        // next not found
-      }
-    }
-    const isSubmit = primaryText && (primaryText.includes('Submit') || primaryText.includes('Done'));
-    if (primaryButton && !isSubmit) {
-      await primaryButton.click();
-      printLog(`Clicked "${primaryText}" – advancing to next stage`);
-      await driver.sleep(2000);
-      yield "next_stage";
-      return;
-    }
-    yield "finished_answering_questions";
+    yield "questions_answered";
   } catch (error) {
     printLog(`Error answering questions: ${error} `);
     yield "error_answering_questions";
+  }
+}
+
+/** Click the Next/Continue button in Easy Apply modal to advance to the next page.
+ *  Yields `ready_to_submit` when Submit is visible (final page),
+ *  `clicked_next` when Next was found and clicked,
+ *  or `click_next_error` on failure. */
+export async function* clickNextButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const driver = ctx.driver;
+    const shadowHostCss = ctx.selectors?.easy_apply?.modal_shadow_host || '#interop-outlet';
+
+    const result = await driver.executeScript(`
+      const host = document.querySelector(arguments[0]);
+      if (!host || !host.shadowRoot) return { event: 'click_next_error' };
+      const sr = host.shadowRoot;
+      const buttons = sr.querySelectorAll("button");
+
+      for (const btn of buttons) {
+        const text = (btn.textContent || '').trim();
+        if (text.includes('Submit application') || text.includes('Submit')) {
+          if (!btn.disabled && btn.offsetParent !== null)
+            return { event: 'ready_to_submit' };
+        }
+      }
+      for (const btn of buttons) {
+        const text = (btn.textContent || '').trim();
+        if (text.includes('Next') || text.includes('Continue') || text.includes('Review')) {
+          const aria = btn.getAttribute('aria-label') || '';
+          if (!aria.includes('View next page') && !btn.className.includes('jobs-search-pagination')) {
+            if (!btn.disabled && btn.offsetParent !== null) {
+              btn.click();
+              return { event: 'clicked_next' };
+            }
+          }
+        }
+      }
+      return { event: 'ready_to_submit' };
+    `, shadowHostCss);
+
+    if (result.event === 'clicked_next') {
+      await driver.sleep(2000);
+    }
+    yield result.event;
+  } catch {
+    yield 'click_next_error';
   }
 }
 
@@ -2909,15 +3059,9 @@ export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<s
     const submitButtonXPathRel = ".//button[contains(., 'Submit application') or contains(., 'Submit')]";
 
     let root: Awaited<ReturnType<WebDriver['findElement']>> | null = null;
-    try {
-      root = await driver.findElement(By.css("[data-test-modal-id='easy-apply-modal']"));
-    } catch {
-      try {
-        root = await driver.findElement(By.css(easyApply?.modal_container_css || "div.jobs-easy-apply-modal"));
-      } catch {
-        // no modal
-      }
-    }
+    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
+    const modalContainerCss = easyApply?.modal_container_css || "div.jobs-easy-apply-modal";
+    root = await findEasyApplyModal(driver, modalContainerCss, shadowHostCss);
 
     const findNext = async () => {
       if (root) {
@@ -3192,11 +3336,13 @@ export const linkedinStepFunctions = {
   saveLinkedInScrapedJob,
   advanceExtractCursor,
   attemptEasyApply,
+  fillContactInfo,
   extractJobDetailsFromPanel,
   uploadResume,
   handleCoverLetter,
   extractEmployerQuestions,
   answerQuestions,
+  clickNextButton,
   submitApplication,
   saveAppliedJob,
   externalApply,

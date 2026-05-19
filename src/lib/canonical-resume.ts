@@ -192,3 +192,62 @@ export function readCanonicalResumeText(userId: string, preferredResumeFileName 
     `Failed to read canonical resume for userId ${userId}: ${lastError instanceof Error ? lastError.message : String(lastError)}`
   );
 }
+
+/**
+ * Resolve the binary file path of the canonical resume (PDF/DOCX/DOC).
+ *
+ * Uses the same candidate-resolution logic as readCanonicalResumeText:
+ *   1. The preferred resume (by filename), if provided
+ *   2. A file with 'resume' in the name
+ *   3. The most recently updated resume file
+ *
+ * Returns the path to the original binary file (not a .txt sidecar)
+ * so it can be uploaded to job boards via file input elements.
+ *
+ * @param userId - The user's ID (required; throws if missing)
+ * @param preferredResumeFileName - Optional preferred filename hint
+ * @returns The absolute filesystem path to the binary resume file
+ */
+export function resolveCanonicalResumePath(userId: string, preferredResumeFileName = ''): string {
+  if (!userId) {
+    throw new Error('Missing userId. Cannot resolve canonical resume path.');
+  }
+  const index = loadIndex(userId);
+  const candidates = index.entries
+    .filter((entry) => entry.feature === 'resume' && isSupportedResumeFile(entry.filename))
+    .sort(sortByUpdatedDesc);
+
+  if (candidates.length === 0) {
+    throw new Error(`No canonical .doc/.docx/.pdf resume files found for userId ${userId}`);
+  }
+
+  const preferred =
+    preferredResumeFileName
+      ? candidates.find((entry) => entry.filename === preferredResumeFileName)
+      : undefined;
+  const fallback = candidates.find((entry) => entry.filename.toLowerCase().includes('resume')) || candidates[0];
+  const orderedCandidates: ManagedFileEntry[] = [];
+  if (preferred) orderedCandidates.push(preferred);
+  for (const entry of candidates) {
+    if (!orderedCandidates.includes(entry)) orderedCandidates.push(entry);
+  }
+  if (!orderedCandidates.includes(fallback)) orderedCandidates.push(fallback);
+
+  let lastError: unknown = null;
+  for (const entry of orderedCandidates) {
+    try {
+      const fullPath = resolveEntryPath(userId, entry);
+      if (!fs.existsSync(fullPath)) {
+        throw new Error(`Resume binary not found at ${fullPath}`);
+      }
+      return fullPath;
+    } catch (error) {
+      lastError = error;
+      continue;
+    }
+  }
+
+  throw new Error(
+    `Failed to resolve canonical resume path for userId ${userId}: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+  );
+}
