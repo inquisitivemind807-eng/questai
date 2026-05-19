@@ -47,7 +47,7 @@ export async function fillQuestionFieldDetailed(
   containerSelector: string, // The robust selector for the question's container
   questionType: string,
   answer: any,
-  modalScopeSelector?: string, // Optional: scope to this modal (e.g. "[data-test-modal-id='easy-apply-modal']")
+  modalScopeSelector?: string | null, // Optional: scope to this modal; null = skip modal scoping
   radioName?: string // Optional: name attribute for radio group filtering
 ): Promise<FillQuestionResult> {
   if (!containerSelector) {
@@ -55,10 +55,11 @@ export async function fillQuestionFieldDetailed(
     return { success: false, failureReason: 'missing_container_selector', error: 'containerSelector is missing' };
   }
 
-  const answerIdx = modalScopeSelector ? 2 : 1;
-  const getContainerScript = modalScopeSelector
-    ? `var modal = document.querySelector(arguments[0]); if (!modal) { var host = document.querySelector('#interop-outlet'); if (host && host.shadowRoot) modal = host.shadowRoot.querySelector(arguments[0]); } var container = modal ? modal.querySelector(arguments[1]) : null;`
-    : 'var container = document.querySelector(arguments[0]);';
+  const hasModalScope = !!modalScopeSelector;
+  const answerIdx = hasModalScope ? 2 : 1;
+  const getContainerScript = hasModalScope
+    ? `var doc = document; var iframe = document.querySelector('iframe[active]'); if (iframe && iframe.contentDocument && iframe.contentDocument.body) { doc = iframe.contentDocument; } var modal = doc.querySelector(arguments[0]); if (!modal) { var host = document.querySelector('#interop-outlet'); if (host && host.shadowRoot) modal = host.shadowRoot.querySelector(arguments[0]); } var container = modal ? modal.querySelector(arguments[1]) : null;`
+    : `var doc = document; var iframe = document.querySelector('iframe[active]'); if (iframe && iframe.contentDocument && iframe.contentDocument.body) { doc = iframe.contentDocument; } var container = doc.querySelector(arguments[0]);`;
   const selectArgs = modalScopeSelector ? [modalScopeSelector, containerSelector, answer] : [containerSelector, answer];
   const radioArgs = modalScopeSelector
     ? [modalScopeSelector, containerSelector, answer, radioName || '']
@@ -72,17 +73,11 @@ export async function fillQuestionFieldDetailed(
           ${getContainerScript}
           if (!container) return { success: false, error: 'Container not found' };
 
-          // Debug: what's actually in the container
-          console.log('Container HTML:', container.outerHTML);
-          console.log('Container tagName:', container.tagName);
-
-          // Try multiple ways to find the select element
           let select = container.querySelector('select');
           if (!select && container.tagName === 'SELECT') {
-            select = container; // The container itself is the select
+            select = container;
           }
           if (!select) {
-            // Also check if there's a select as a direct child or sibling
             select = container.parentElement?.querySelector('select');
           }
 
@@ -97,8 +92,7 @@ export async function fillQuestionFieldDetailed(
             success: false,
             error: 'Select element or option not found. Found select: ' + !!select +
                    ', container tagName: ' + container.tagName +
-                   ', has options: ' + (select ? select.options.length : 0) +
-                   ', container id: ' + container.id
+                   ', has options: ' + (select ? select.options.length : 0)
           };
         `, ...selectArgs);
 
@@ -111,6 +105,116 @@ export async function fillQuestionFieldDetailed(
           };
         }
         return { success: true, failureReason: 'none' };
+
+      case 'combobox':  // LinkedIn-native combobox (May 2026) — click-to-open + click option by text
+        const comboboxResult = await ctx.driver.executeScript(`
+          ${getContainerScript}
+          if (!container) return { success: false, error: 'Container not found' };
+
+          const combobox = container.querySelector('combobox, [role="combobox"]');
+          if (!combobox) {
+            return { success: false, error: 'Combobox not found in container' };
+          }
+
+          const answerIndex = arguments[${answerIdx}];
+
+          // Collect option texts from the combobox's own <option> children
+          const opts = Array.from(combobox.querySelectorAll('option'))
+            .map(o => (o.textContent || '').trim())
+            .filter(Boolean);
+
+          if (opts.length > 0 && opts[answerIndex]) {
+            // Try native option selection first (works on some custom elements)
+            const optEls = combobox.querySelectorAll('option');
+            optEls[answerIndex].selected = true;
+            if (typeof combobox.value !== 'undefined') {
+              combobox.value = optEls[answerIndex].value;
+            }
+            combobox.dispatchEvent(new Event('change', { bubbles: true }));
+            combobox.dispatchEvent(new Event('input', { bubbles: true }));
+            return { success: true, method: 'native', optionText: opts[answerIndex] };
+          }
+
+          // No native options — click to open, then we need to click the option
+          combobox.click();
+          combobox.focus();
+          return { success: true, method: 'click_to_open', answerIndex, needsClick: true };
+        `, ...selectArgs);
+
+        if (!comboboxResult.success && !comboboxResult.needsClick) {
+          printLog(`Failed to fill combobox: ${comboboxResult.error}`);
+          return {
+            success: false,
+            failureReason: mapFailureReason(questionType, String(comboboxResult.error || '')),
+            error: String(comboboxResult.error || '')
+          };
+        }
+
+        if (comboboxResult.success && comboboxResult.method === 'native') {
+          return { success: true, failureReason: 'none' };
+        }
+
+        if (comboboxResult.needsClick) {
+          // Wait for dropdown to animate open
+          await ctx.driver.sleep(600);
+
+          // Build the option text to click — match by answer index using container's option texts
+          const clickOptionResult = await ctx.driver.executeScript(`
+            var doc = document;
+            var iframe = document.querySelector('iframe[active]');
+            if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+              doc = iframe.contentDocument;
+            }
+
+            const containerSelector = arguments[0];
+            const answerIndex = arguments[1];
+
+            // First, get the expected option text from the container's combobox <option> children
+            const container = doc.querySelector(containerSelector);
+            if (!container) return { success: false, error: 'Container not found' };
+
+            const combobox = container.querySelector('combobox, [role="combobox"]');
+            if (!combobox) return { success: false, error: 'Combobox not found' };
+
+            const opts = Array.from(combobox.querySelectorAll('option'))
+              .map(o => (o.textContent || '').trim())
+              .filter(Boolean);
+
+            const targetText = opts[answerIndex];
+            if (!targetText) return { success: false, error: 'Option text not found for index ' + answerIndex };
+
+            // Now find the open dropdown options and click the matching one
+            const candidates = doc.querySelectorAll(
+              'generic[role="option"], [role="listbox"] generic, [role="option"], option'
+            );
+            for (const el of candidates) {
+              if ((el.textContent || '').trim() === targetText && el.offsetParent !== null) {
+                el.click();
+                el.dispatchEvent(new Event('mousedown', { bubbles: true }));
+                return { success: true, clickedText: targetText };
+              }
+            }
+
+            return { success: false, error: 'Dropdown option not found: ' + targetText, optionsAvailable: opts };
+          `, containerSelector, answer);
+
+          if (!clickOptionResult.success) {
+            printLog(`Failed to click combobox option: ${clickOptionResult.error}`);
+            return {
+              success: false,
+              failureReason: 'option_not_found',
+              error: String(clickOptionResult.error || '')
+            };
+          }
+          printLog(`✅ Clicked combobox option: ${clickOptionResult.clickedText}`);
+          return { success: true, failureReason: 'none' };
+        }
+
+        return {
+          success: false,
+          failureReason: mapFailureReason(questionType, String(comboboxResult.error || '')),
+          error: String(comboboxResult.error || '')
+        };
 
       case 'radio':
         const radioNameIdx = modalScopeSelector ? 3 : 2;
@@ -201,7 +305,7 @@ export async function fillQuestionFieldDetailed(
             ${getContainerScript}
             if (!container) return null;
 
-            const textElement = container.querySelector('textarea, input[type="text"]');
+            const textElement = container.querySelector('textarea, textbox, input[type="text"], [role="textbox"]');
             if (textElement) {
               return {
                 tagName: textElement.tagName.toLowerCase(),

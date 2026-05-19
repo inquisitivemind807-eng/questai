@@ -207,6 +207,69 @@ function isLikelySameText(a: string, b: string): boolean {
 }
 
 /**
+ * Get the content root for the Easy Apply modal.
+ *
+ * LinkedIn (May 2026) now loads the Easy Apply flow inside an **iframe**
+ * (`iframe[active]` on the jobs page). Older versions used Shadow DOM
+ * via `#interop-outlet`. This helper handles both:
+ *
+ *   1. Try the iframe's contentDocument first (current LinkedIn).
+ *   2. Fall back to `#interop-outlet` shadow root (legacy).
+ *   3. Fall back to light DOM.
+ */
+async function getEasyApplyContentRoot(
+  driver: WebDriver,
+  iframeSelector: string = 'iframe[active]',
+  shadowHostCss: string = '#interop-outlet'
+): Promise<Awaited<ReturnType<WebDriver['findElement']>> | null> {
+  const root = await driver.executeScript(`
+    const iframeSel = arguments[0];
+    const shadowHostCss = arguments[1];
+
+    // 1) Try iframe (current LinkedIn — May 2026)
+    const iframe = document.querySelector(iframeSel);
+    if (iframe && iframe.contentDocument) {
+      const doc = iframe.contentDocument;
+      // Return a marker object — the iframe's body is our root
+      return { rootType: 'iframe', bodyAvailable: !!doc.body, activeElement: doc.activeElement?.tagName || null };
+    }
+
+    // 2) Try shadow DOM (legacy LinkedIn)
+    const host = document.querySelector(shadowHostCss);
+    if (host && host.shadowRoot) {
+      return { rootType: 'shadowRoot', hasShadowRoot: true };
+    }
+
+    // 3) Light DOM fallback
+    return { rootType: 'lightDom' };
+  `, iframeSelector, shadowHostCss);
+
+  if (!root) return null;
+
+  const rootType = (root as any).rootType;
+  if (rootType === 'iframe') {
+    // Switch driver context into the iframe
+    try {
+      const iframeEl = await driver.findElement(By.css(iframeSelector));
+      await driver.switchTo().frame(iframeEl);
+      return iframeEl; // Return the iframe element (caller can use driver directly now)
+    } catch {
+      return null;
+    }
+  }
+
+  // For shadowRoot and lightDom, return null — caller uses findEasyApplyModal
+  return null;
+}
+
+/**
+ * Switch the driver back to the main page (out of the iframe).
+ */
+async function switchToMainPage(driver: WebDriver): Promise<void> {
+  await driver.switchTo().defaultContent();
+}
+
+/**
  * LinkedIn recently (May 2026) moved the Easy Apply modal into a Shadow DOM
  * hosted by `#interop-outlet`. Standard `driver.findElement(By.css(...))`
  * cannot pierce shadow roots — all modal queries must go through this helper.
@@ -220,7 +283,7 @@ async function findEasyApplyModal(
   modalCss: string,
   shadowHostCss: string = '#interop-outlet'
 ): Promise<Awaited<ReturnType<WebDriver['findElement']>> | null> {
-  const el = await driver.executeScript(`
+    const el = await driver.executeScript(`
     const modalCss = arguments[0];
     const shadowHostCss = arguments[1];
 
@@ -232,6 +295,13 @@ async function findEasyApplyModal(
     const host = document.querySelector(shadowHostCss);
     if (host && host.shadowRoot) {
       el = host.shadowRoot.querySelector(modalCss);
+      if (el) return el;
+    }
+
+    // Piercing iframe (current LinkedIn — May 2026)
+    const iframe = document.querySelector('iframe[active]');
+    if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+      el = iframe.contentDocument.querySelector(modalCss);
       if (el) return el;
     }
 
@@ -1962,69 +2032,105 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
 export async function* fillContactInfo(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
-    const easyApply = ctx.selectors?.easy_apply;
-    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
-    const emailSel = easyApply?.contact_email_select || "select[id$='-multipleChoice']";
-    const phoneCountrySel = easyApply?.contact_phone_country_select || "select[id$='-phoneNumber-country']";
-    const phoneNumberSel = easyApply?.contact_phone_number_input || "input[id$='-phoneNumber-nationalNumber']";
-
+    const easyApply = ctx.selectors?.easy_apply || {};
     const email = ctx.config?.formData?.email || '';
     const phone = ctx.config?.formData?.phone || '';
 
     printLog(`Filling contact info: email=${email}, phone=${phone}`);
 
-    const result = await driver.executeScript(`
-      const host = document.querySelector(arguments[0]);
-      if (!host || !host.shadowRoot) return { success: false, error: 'shadow host not found' };
-      const sr = host.shadowRoot;
+    // Try iframe first (current LinkedIn May 2026), fall back to shadow DOM
+    const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
+    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
 
-      const emailSel = arguments[1];
-      const phoneCountrySel = arguments[2];
-      const phoneNumberSel = arguments[3];
-      const email = arguments[4];
-      const phone = arguments[5];
+    const contactResult = await driver.executeScript(`
+      const iframeSel = arguments[0];
+      const shadowHostCss = arguments[1];
+      const email = arguments[2];
+      const phone = arguments[3];
 
-      const details = {};
+      let doc = document;
+      let rootType = 'lightDom';
 
-      // Email select
-      const emailSelect = sr.querySelector(emailSel);
-      if (emailSelect && email) {
-        let found = false;
-        for (const opt of emailSelect.options) {
-          if (opt.value === email || (opt.textContent || '').trim() === email) {
-            emailSelect.value = opt.value;
-            found = true;
-            break;
-          }
-        }
-        details.email = found ? 'filled' : 'option not found';
+      // 1) Try iframe
+      const iframe = document.querySelector(iframeSel);
+      if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+        doc = iframe.contentDocument;
+        rootType = 'iframe';
       } else {
-        details.email = emailSelect ? 'no config' : 'not found';
+        // 2) Try shadow DOM
+        const host = document.querySelector(shadowHostCss);
+        if (host && host.shadowRoot) {
+          doc = host.shadowRoot;
+          rootType = 'shadowRoot';
+        }
       }
 
-      // Phone country code — keep as-is (LinkedIn pre-fills from profile)
-      const phoneCountry = sr.querySelector(phoneCountrySel);
-      details.phoneCountry = phoneCountry ? 'found' : 'not found';
+      const details = { rootType, email: 'not found', phone: 'not found' };
 
-      // Phone number input — clear and refill
-      const phoneInput = sr.querySelector(phoneNumberSel);
-      if (phoneInput && phone) {
-        const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
-        nativeSetter.call(phoneInput, '');
-        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
-        nativeSetter.call(phoneInput, phone);
-        phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
-        phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
-        details.phone = 'filled';
-      } else {
-        details.phone = phoneInput ? 'no config' : 'not found';
+      // Find all textboxes / text inputs in the modal
+      const textInputs = doc.querySelectorAll('textbox, input[type="text"], input[type="email"], input:not([type])');
+      const comboboxes = doc.querySelectorAll('combobox, select, [role="combobox"]');
+
+      // Fill text inputs by matching aria-label / placeholder
+      for (const input of textInputs) {
+        const label = (input.getAttribute('aria-label') || input.getAttribute('placeholder') || '').toLowerCase();
+        const id = input.id || '';
+        // Try label[for] as well
+        let labelText = label;
+        if (id) {
+          const labelEl = doc.querySelector('label[for="' + id + '"]');
+          if (labelEl) labelText = (labelEl.textContent || '').trim().toLowerCase() + ' ' + labelText;
+        }
+
+        if (email && (labelText.includes('email') || id.includes('email'))) {
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) {
+            nativeSetter.call(input, '');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            nativeSetter.call(input, email);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            input.value = '';
+            input.value = email;
+          }
+          details.email = 'filled';
+        } else if (phone && (labelText.includes('phone') || labelText.includes('number') || id.includes('phone'))) {
+          const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+          if (nativeSetter) {
+            nativeSetter.call(input, '');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            nativeSetter.call(input, phone);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+          } else {
+            input.value = '';
+            input.value = phone;
+          }
+          details.phone = 'filled';
+        }
+      }
+
+      // For comboboxes, try to select matching email if it's an email select
+      for (const cb of comboboxes) {
+        const opts = cb.querySelectorAll('option');
+        if (opts.length > 0 && email) {
+          for (const opt of opts) {
+            if ((opt.value || '').toLowerCase() === email.toLowerCase() || (opt.textContent || '').trim().toLowerCase() === email.toLowerCase()) {
+              cb.value = opt.value;
+              cb.dispatchEvent(new Event('change', { bubbles: true }));
+              details.email = details.email === 'not found' ? 'filled' : details.email;
+              break;
+            }
+          }
+        }
       }
 
       return details;
-    `, shadowHostCss, emailSel, phoneCountrySel, phoneNumberSel, email, phone);
+    `, iframeSelector, shadowHostCss, email, phone);
 
-    printLog(`Contact info result: ${JSON.stringify(result)}`);
-    await driver.sleep(2500);
+    printLog(`Contact info result: ${JSON.stringify(contactResult)}`);
+    await driver.sleep(1500);
 
     yield "contact_info_filled";
   } catch (error) {
@@ -2668,90 +2774,186 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
 
 /**
  * Extract employer questions from the Easy Apply modal.
- * Scans for selects, textareas, text inputs, radio buttons, and
- * checkboxes; saves to job_details.json for the Q&A handler.
+ *
+ * LinkedIn (May 2026) loads the Easy Apply flow inside an **iframe**
+ * (`iframe[active]`). Question containers now use `group` + `generic`
+ * elements (not `data-test-form-element` divs). This function handles
+ * both the new iframe-based structure and legacy shadow-DOM forms.
+ *
+ * Detected types:
+ *   - `select` / `combobox` — dropdown (LinkedIn-native uses combobox role)
+ *   - `text` / `textarea` — free-text input (LinkedIn-native uses textbox role)
+ *   - `radio` — single-choice radio group (in `group` or `fieldset`)
+ *   - `checkbox` — multi-select checkboxes (in `group`)
  */
 export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
-    const modalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal";
-    const containerCss = "div[data-test-form-element]";
+    const easyApply = ctx.selectors?.easy_apply || {};
+    const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
+    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
 
     await driver.sleep(1500);
 
-    const shadowHostCss = ctx.selectors?.easy_apply?.modal_shadow_host || '#interop-outlet';
     const questionsData = await driver.executeScript(`
-  // Piercing shadow DOM if needed
-  let modal = document.querySelector(arguments[0]);
-  if (!modal) {
-    const host = document.querySelector(arguments[2] || '#interop-outlet');
-    if (host && host.shadowRoot) modal = host.shadowRoot.querySelector(arguments[0]);
+  const iframeSel = arguments[0];
+  const shadowHostCss = arguments[1];
+
+  // Resolve the document root: iframe > shadow DOM > light DOM
+  let doc = document;
+  let rootType = 'lightDom';
+
+  // 1) Try iframe (current LinkedIn — May 2026)
+  const iframe = document.querySelector(iframeSel);
+  if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+    doc = iframe.contentDocument;
+    rootType = 'iframe';
+  } else {
+    // 2) Try shadow DOM (legacy)
+    const host = document.querySelector(shadowHostCss);
+    if (host && host.shadowRoot) {
+      doc = host.shadowRoot;
+      rootType = 'shadowRoot';
+    }
   }
-  if (!modal) return { questionsFound: 0, questions: [] };
-  const containers = Array.from(modal.querySelectorAll(arguments[1]));
+
+  // Find the dialog/modal inside the resolved document
+  const dialog = doc.querySelector('dialog, [role="dialog"], .jobs-easy-apply-modal, .artdeco-modal');
+  const scope = dialog || doc;
+
+  if (!scope || scope === doc) {
+    return { questionsFound: 0, questions: [], rootType };
+  }
+
+  const placeholderOpts = ['Select...', 'Please select', 'Choose...', 'Select an option', ''];
   const questions = [];
-  const placeholderOpts = ['Select...', 'Please select', 'Choose...', ''];
+
+  // --- Strategy: find ALL form-like containers in the dialog ---
+  // New LinkedIn (May 2026): questions are in <generic> or <group> elements
+  // Legacy LinkedIn: questions are in <div data-test-form-element>
+  // Workable ATS: questions are in <group> elements with radio/checkbox
+
+  // Collect all potential question containers
+  const genericContainers = Array.from(scope.querySelectorAll('generic'));
+  const groupContainers = Array.from(scope.querySelectorAll('group'));
+  const dataTestContainers = Array.from(scope.querySelectorAll('div[data-test-form-element]'));
+
+  // Deduplicate: prefer group > generic > data-test
+  const seenElements = new Set();
+  const containers = [];
+
+  for (const el of [...groupContainers, ...genericContainers, ...dataTestContainers]) {
+    // Skip containers that are children of already-added containers or UI chrome
+    const isChild = containers.some(c => c.contains(el));
+    if (isChild || seenElements.has(el)) continue;
+    // Only include containers that have form inputs
+    const hasFormElement = el.querySelector('textbox, combobox, select, textarea, input[type="text"], input[type="radio"], input[type="checkbox"], radio, checkbox');
+    if (!hasFormElement) continue;
+
+    seenElements.add(el);
+    containers.push(el);
+  }
 
   containers.forEach((container, index) => {
     container.setAttribute('data-linkedin-q-index', String(index));
     const containerSelector = '[data-linkedin-q-index="' + index + '"]';
 
+    // --- Extract question text ---
     let questionText = '';
+    // Try: textContent directly from container (new pattern: generic has text + input)
+    const directText = (container.textContent || '').replace(/\*Required.*/g, '').trim();
+    // Try: first child generic text (new LinkedIn pattern)
+    const firstGeneric = container.querySelector('generic');
+    const firstGenericText = firstGeneric ? (firstGeneric.textContent || '').trim() : '';
+    // Try: label
     const label = container.querySelector('label');
-    if (label) questionText = (label.textContent || '').trim();
-    const titleSpan = container.querySelector('[data-test-form-builder-radio-button-form-component__title], .artdeco-form-element__label');
-    if (!questionText && titleSpan) questionText = (titleSpan.textContent || '').trim();
-    const ariaLabel = container.querySelector('input[aria-label], textarea[aria-label], select');
-    if (!questionText && ariaLabel) questionText = (ariaLabel.getAttribute('aria-label') || '').trim();
-    if (!questionText) questionText = 'Question ' + (index + 1);
+    const labelText = label ? (label.textContent || '').trim() : '';
+    // Try: aria-label on inputs
+    const ariaInput = container.querySelector('textbox[aria-label], combobox[aria-label], input[aria-label], textarea[aria-label], select[aria-label]');
+    const ariaText = ariaInput ? (ariaInput.getAttribute('aria-label') || '').trim() : '';
 
+    // Pick the best question text: prefer aria-label > firstGeneric > label > directText
+    questionText = ariaText || firstGenericText || labelText || directText || ('Question ' + (index + 1));
+    // Clean up: remove "Required" suffix and trailing asterisks
+    questionText = questionText.replace(/\s*\*\s*$/, '').replace(/\s*Required\s*$/i, '').trim();
+
+    // --- Detect question type ---
+
+    // combobox (LinkedIn-native dropdown)
+    const comboboxEl = container.querySelector('combobox, [role="combobox"]');
+    if (comboboxEl && comboboxEl.tagName !== 'INPUT') {
+      const options = Array.from(comboboxEl.querySelectorAll('option'))
+        .map(o => (o.textContent || o.innerText || '').trim())
+        .filter(t => t && !placeholderOpts.includes(t));
+      questions.push({ type: 'combobox', question: questionText, options, containerSelector });
+      return;
+    }
+
+    // select (legacy/LinkedIn-native)
     const selectEl = container.querySelector('select');
     if (selectEl) {
       const options = Array.from(selectEl.options)
         .map(o => (o.textContent || o.innerText || '').trim())
         .filter(t => t && !placeholderOpts.includes(t));
-      questions.push({ type: 'select', question: questionText, options: options, containerSelector: containerSelector });
+      questions.push({ type: 'select', question: questionText, options, containerSelector });
       return;
     }
 
+    // textarea
     const textareaEl = container.querySelector('textarea');
     if (textareaEl) {
-      questions.push({ type: 'textarea', question: questionText, options: [], containerSelector: containerSelector });
+      questions.push({ type: 'textarea', question: questionText, options: [], containerSelector });
       return;
     }
 
-    const textInput = container.querySelector('input[type="text"]');
-    if (textInput) {
-      questions.push({ type: 'text', question: questionText, options: [], containerSelector: containerSelector });
+    // textbox (LinkedIn-native) or input[type="text"]
+    const textboxEl = container.querySelector('textbox, input[type="text"]');
+    if (textboxEl) {
+      questions.push({ type: 'text', question: questionText, options: [], containerSelector });
       return;
     }
 
-    const radioFieldset = container.querySelector('fieldset[data-test-form-builder-radio-button-form-component="true"]');
-    if (radioFieldset) {
-      const options = Array.from(radioFieldset.querySelectorAll('input[type="radio"]'))
-        .map(r => {
-          const labelEl = document.querySelector('label[for="' + r.id + '"]');
-          return labelEl ? (labelEl.textContent || '').trim() : r.value || '';
-        })
-        .filter(Boolean);
-      questions.push({ type: 'radio', question: questionText, options: options, containerSelector: containerSelector });
-      return;
-    }
-
-    const checkboxes = container.querySelectorAll('input[type="checkbox"]');
-    if (checkboxes.length > 0) {
-      const options = Array.from(checkboxes).map(cb => {
-        const labelEl = document.querySelector('label[for="' + cb.id + '"]');
-        return labelEl ? (labelEl.textContent || '').trim() : (cb.getAttribute('aria-label') || '').trim();
+    // radio group — check for <radio> elements (new LinkedIn) or input[type="radio"]
+    const radioEls = container.querySelectorAll('radio, input[type="radio"]');
+    if (radioEls.length > 0) {
+      const options = Array.from(radioEls).map(r => {
+        if (r.tagName === 'RADIO') {
+          // New LinkedIn: radio element has a sibling <generic> with the label
+          const nextGeneric = r.nextElementSibling;
+          return nextGeneric ? (nextGeneric.textContent || '').trim() : '';
+        }
+        // Legacy: input[type="radio"] with label[for]
+        const rInput = r as HTMLInputElement;
+        const labelEl = doc.querySelector('label[for="' + rInput.id + '"]');
+        return labelEl ? (labelEl.textContent || '').trim() : rInput.value || '';
       }).filter(Boolean);
-      if (options.length > 0 || checkboxes.length > 0) {
-        questions.push({ type: 'checkbox', question: questionText, options: options.length ? options : ['Yes'], containerSelector: containerSelector });
+      if (options.length > 0) {
+        questions.push({ type: 'radio', question: questionText, options, containerSelector });
       }
+      return;
+    }
+
+    // checkbox group
+    const checkboxEls = container.querySelectorAll('checkbox, input[type="checkbox"]');
+    if (checkboxEls.length > 0) {
+      const options = Array.from(checkboxEls).map(cb => {
+        if (cb.tagName === 'CHECKBOX') {
+          const nextGeneric = cb.nextElementSibling;
+          return nextGeneric ? (nextGeneric.textContent || '').trim() : '';
+        }
+        const cbInput = cb as HTMLInputElement;
+        const labelEl = doc.querySelector('label[for="' + cbInput.id + '"]');
+        return labelEl ? (labelEl.textContent || '').trim() : (cbInput.getAttribute('aria-label') || '').trim();
+      }).filter(Boolean);
+      if (options.length > 0) {
+        questions.push({ type: 'checkbox', question: questionText, options, containerSelector });
+      }
+      return;
     }
   });
 
-  return { questionsFound: questions.length, questions: questions };
-  `, modalCss, containerCss, shadowHostCss) as { questionsFound: number; questions: Array<{ type: string; question: string; options: string[]; containerSelector: string }> };
+  return { questionsFound: questions.length, questions, rootType };
+  `, iframeSelector, shadowHostCss) as { questionsFound: number; questions: Array<{ type: string; question: string; options: string[]; containerSelector: string }>; rootType?: string };
 
     if (questionsData && questionsData.questionsFound > 0) {
       printLog(`Found ${questionsData.questionsFound} employer questions`);
@@ -2841,7 +3043,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
       for (let i = 0; i < answeredQuestions.length; i++) {
         const q = answeredQuestions[i];
         let answer: number | string | string[] | null = null;
-        if (q.type === 'select' && typeof q.selectedAnswer === 'number') {
+        if ((q.type === 'select' || q.type === 'combobox') && typeof q.selectedAnswer === 'number') {
           answer = q.selectedAnswer;
         } else if (q.type === 'radio' && typeof q.selectedAnswer === 'number') {
           answer = q.selectedAnswer;
@@ -2854,7 +3056,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         let answerDisplay: string;
         if (answer === null || answer === undefined) {
           answerDisplay = "(skipped)";
-        } else if (typeof answer === 'number' && (q.type === 'select' || q.type === 'radio') && Array.isArray(q.options)) {
+        } else if (typeof answer === 'number' && (q.type === 'select' || q.type === 'combobox' || q.type === 'radio') && Array.isArray(q.options)) {
           answerDisplay = q.options[answer] ?? String(answer);
         } else if (Array.isArray(answer)) {
           answerDisplay = answer.join(", ");
@@ -2876,13 +3078,33 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         });
 
         if (answer !== null && answer !== undefined) {
-          const configuredModalCss = ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal]";
-          const modalScope = `:is(${configuredModalCss})`;
+          // Switch driver into the iframe if present (LinkedIn May 2026+)
+          const easyApply = ctx.selectors?.easy_apply || {};
+          const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
+          let switchedToIframe = false;
+          try {
+            const iframeEl = await driver.findElement(By.css(iframeSelector));
+            await driver.switchTo().frame(iframeEl);
+            switchedToIframe = true;
+          } catch {
+            // No iframe — use shadow DOM / light DOM modalScope fallback
+          }
+
+          // Pass undefined modalScope when we're in the iframe (we're already in the right document)
+          const modalScope: string | undefined = switchedToIframe
+            ? undefined
+            : `:is(${ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal]"})`;
+
           const fillResult = await fillQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, modalScope);
+
+          // Switch back to main page
+          if (switchedToIframe) {
+            await driver.switchTo().defaultContent();
+          }
           const filled = fillResult.success;
           const options = q.options || q.opts || [];
           const selected =
-            q.type === 'select' || q.type === 'radio'
+            q.type === 'select' || q.type === 'combobox' || q.type === 'radio'
               ? (typeof answer === 'number' ? answer : null)
               : q.type === 'checkbox'
                 ? (Array.isArray(answer) ? answer : [answer])
@@ -3007,14 +3229,33 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
 export async function* clickNextButton(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
     const driver = ctx.driver;
-    const shadowHostCss = ctx.selectors?.easy_apply?.modal_shadow_host || '#interop-outlet';
+    const easyApply = ctx.selectors?.easy_apply || {};
+    const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
+    const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
 
     const result = await driver.executeScript(`
-      const host = document.querySelector(arguments[0]);
-      if (!host || !host.shadowRoot) return { event: 'click_next_error' };
-      const sr = host.shadowRoot;
-      const buttons = sr.querySelectorAll("button");
+      const iframeSel = arguments[0];
+      const shadowHostCss = arguments[1];
 
+      let doc = document;
+
+      // Try iframe first (current LinkedIn)
+      const iframe = document.querySelector(iframeSel);
+      if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+        doc = iframe.contentDocument;
+      } else {
+        // Try shadow DOM (legacy)
+        const host = document.querySelector(shadowHostCss);
+        if (host && host.shadowRoot) {
+          doc = host.shadowRoot;
+        } else {
+          return { event: 'click_next_error' };
+        }
+      }
+
+      const buttons = doc.querySelectorAll("button");
+
+      // First pass: check if Submit is visible (final step)
       for (const btn of buttons) {
         const text = (btn.textContent || '').trim();
         if (text.includes('Submit application') || text.includes('Submit')) {
@@ -3022,6 +3263,7 @@ export async function* clickNextButton(ctx: WorkflowContext): AsyncGenerator<str
             return { event: 'ready_to_submit' };
         }
       }
+      // Second pass: find Next/Continue/Review
       for (const btn of buttons) {
         const text = (btn.textContent || '').trim();
         if (text.includes('Next') || text.includes('Continue') || text.includes('Review')) {
@@ -3035,7 +3277,7 @@ export async function* clickNextButton(ctx: WorkflowContext): AsyncGenerator<str
         }
       }
       return { event: 'ready_to_submit' };
-    `, shadowHostCss);
+    `, iframeSelector, shadowHostCss);
 
     if (result.event === 'clicked_next') {
       await driver.sleep(2000);
