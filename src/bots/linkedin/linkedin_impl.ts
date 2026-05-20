@@ -40,14 +40,13 @@ import { waitForNextConfirm } from '../core/pause_confirm';
 import { recordJobApplicationToBackend } from '../core/job_application_recorder';
 import { getJobArtifactDir, getClientEmailFromContext } from '../core/client_paths';
 import { logger } from '../core/logger';
-import { getIntelligentAnswers } from '../seek/handlers/intelligent_qa_handler';
-import { fillQuestionFieldDetailed } from '../seek/handlers/answer_employer_questions';
 import { Document, Paragraph, TextRun, Packer } from 'docx';
 import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { readCanonicalResumeText, resolveCanonicalResumePath } from '../../lib/canonical-resume';
 import { highlightElement } from '../core/highlight';
+import { getLinkedInIntelligentAnswers, fillLinkedInQuestionFieldDetailed } from './linkedin_question_handler';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2828,6 +2827,75 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
   const placeholderOpts = ['Select...', 'Please select', 'Choose...', 'Select an option', ''];
   const questions = [];
 
+  function depthOf(el) {
+    let depth = 0;
+    let cur = el;
+    while (cur && cur.parentElement) {
+      depth += 1;
+      cur = cur.parentElement;
+    }
+    return depth;
+  }
+
+  function isOptionRow(el) {
+    const radioCount = el.querySelectorAll('radio, input[type="radio"], [role="radio"]').length;
+    const checkboxCount = el.querySelectorAll('checkbox, input[type="checkbox"], [role="checkbox"]').length;
+    const textLikeCount = el.querySelectorAll('textbox, [role="textbox"], textarea, input[type="text"], select, combobox, [role="combobox"]').length;
+    if (textLikeCount > 0) return false;
+    if (radioCount + checkboxCount !== 1) return false;
+
+    let parent = el.parentElement;
+    while (parent && parent !== scope) {
+      const parentRadioCount = parent.querySelectorAll('radio, input[type="radio"], [role="radio"]').length;
+      const parentCheckboxCount = parent.querySelectorAll('checkbox, input[type="checkbox"], [role="checkbox"]').length;
+      const total = parentRadioCount + parentCheckboxCount;
+      if (total > 1) return true;
+      parent = parent.parentElement;
+    }
+    return false;
+  }
+
+  function cleanQuestionText(text) {
+    return String(text || '')
+      .replace(/\\s*\\*\\s*$/, '')
+      .replace(/\\s*Required\\s*$/i, '')
+      .replace(/^(Yes|No)\\s+/i, '')
+      .replace(/\\s+/g, ' ')
+      .trim();
+  }
+
+  function findQuestionText(container, docRef, fallbackLabel) {
+    const ariaInput = container.querySelector('textbox[aria-label], combobox[aria-label], input[aria-label], textarea[aria-label], select[aria-label]');
+    const ariaText = cleanQuestionText(ariaInput ? ariaInput.getAttribute('aria-label') || '' : '');
+    if (ariaText && !/^(yes|no)$/i.test(ariaText)) return ariaText;
+
+    const headings = Array.from(container.querySelectorAll('legend, label, h1, h2, h3, h4, p, span, generic'))
+      .map((el) => cleanQuestionText(el.textContent || ''))
+      .filter((txt) => txt && txt.length > 3 && !/^(yes|no)$/i.test(txt));
+    const headingCandidate = headings.find((txt) => {
+      if (fallbackLabel && txt === fallbackLabel) return false;
+      return txt.includes('?') || /authorized|sponsorship|citizen|clearance|eligible|commute|relocate|require|experience|years|notice|salary|visa|background/i.test(txt);
+    });
+    if (headingCandidate) return headingCandidate;
+
+    const labelledByIds = Array.from(container.querySelectorAll('[aria-labelledby]'))
+      .flatMap((el) => String(el.getAttribute('aria-labelledby') || '').split(/\\s+/).filter(Boolean))
+      .map((id) => docRef.getElementById(id))
+      .filter(Boolean)
+      .map((el) => cleanQuestionText(el.textContent || ''))
+      .filter((txt) => txt && txt.length > 3 && !/^(yes|no)$/i.test(txt));
+    if (labelledByIds[0]) return labelledByIds[0];
+
+    const directLines = cleanQuestionText(container.textContent || '')
+      .split(/\\n+/)
+      .map((txt) => cleanQuestionText(txt))
+      .filter((txt) => txt && txt.length > 3 && !/^(yes|no)$/i.test(txt));
+    const directCandidate = directLines.find((txt) => txt.includes('?'));
+    if (directCandidate) return directCandidate;
+
+    return fallbackLabel || '';
+  }
+
   // --- Strategy: find ALL form-like containers in the dialog ---
   // New LinkedIn (May 2026): questions are in <generic> or <group> elements
   // Legacy LinkedIn: questions are in <div data-test-form-element>
@@ -2842,13 +2910,24 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
   const seenElements = new Set();
   const containers = [];
 
-  for (const el of [...groupContainers, ...genericContainers, ...dataTestContainers]) {
+  const rankedCandidates = [...groupContainers, ...genericContainers, ...dataTestContainers]
+    .map((el, idx) => ({
+      el,
+      idx,
+      priority: el.tagName === 'GROUP' ? 0 : el.tagName === 'GENERIC' ? 1 : 2,
+      depth: depthOf(el)
+    }))
+    .sort((a, b) => a.depth - b.depth || a.priority - b.priority || a.idx - b.idx)
+    .map((item) => item.el);
+
+  for (const el of rankedCandidates) {
     // Skip containers that are children of already-added containers or UI chrome
     const isChild = containers.some(c => c.contains(el));
     if (isChild || seenElements.has(el)) continue;
     // Only include containers that have form inputs
     const hasFormElement = el.querySelector('textbox, combobox, select, textarea, input[type="text"], input[type="radio"], input[type="checkbox"], radio, checkbox');
     if (!hasFormElement) continue;
+    if (isOptionRow(el)) continue;
 
     seenElements.add(el);
     containers.push(el);
@@ -2859,23 +2938,9 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
     const containerSelector = '[data-linkedin-q-index="' + index + '"]';
 
     // --- Extract question text ---
-    let questionText = '';
-    // Try: textContent directly from container (new pattern: generic has text + input)
-    const directText = (container.textContent || '').replace(/\\*Required.*/g, '').trim();
-    // Try: first child generic text (new LinkedIn pattern)
-    const firstGeneric = container.querySelector('generic');
-    const firstGenericText = firstGeneric ? (firstGeneric.textContent || '').trim() : '';
-    // Try: label
     const label = container.querySelector('label');
-    const labelText = label ? (label.textContent || '').trim() : '';
-    // Try: aria-label on inputs
-    const ariaInput = container.querySelector('textbox[aria-label], combobox[aria-label], input[aria-label], textarea[aria-label], select[aria-label]');
-    const ariaText = ariaInput ? (ariaInput.getAttribute('aria-label') || '').trim() : '';
-
-    // Pick the best question text: prefer aria-label > firstGeneric > label > directText
-    questionText = ariaText || firstGenericText || labelText || directText || ('Question ' + (index + 1));
-    // Clean up: remove "Required" suffix and trailing asterisks
-    questionText = questionText.replace(/\\s*\\*\\s*$/, '').replace(/\\s*Required\\s*$/i, '').trim();
+    const labelText = cleanQuestionText(label ? (label.textContent || '') : '');
+    const questionText = findQuestionText(container, doc, labelText) || ('Question ' + (index + 1));
 
     // --- Detect question type ---
 
@@ -2920,12 +2985,12 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
         if (r.tagName === 'RADIO') {
           // New LinkedIn: radio element has a sibling <generic> with the label
           const nextGeneric = r.nextElementSibling;
-          return nextGeneric ? (nextGeneric.textContent || '').trim() : '';
+          return cleanQuestionText(nextGeneric ? (nextGeneric.textContent || '') : '');
         }
         // Legacy: input[type="radio"] with label[for]
         const rInput = r;
         const labelEl = doc.querySelector('label[for="' + rInput.id + '"]');
-        return labelEl ? (labelEl.textContent || '').trim() : rInput.value || '';
+        return cleanQuestionText(labelEl ? (labelEl.textContent || '') : rInput.value || '');
       }).filter(Boolean);
       if (options.length > 0) {
         questions.push({ type: 'radio', question: questionText, options, containerSelector });
@@ -2939,11 +3004,11 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
       const options = Array.from(checkboxEls).map(cb => {
         if (cb.tagName === 'CHECKBOX') {
           const nextGeneric = cb.nextElementSibling;
-          return nextGeneric ? (nextGeneric.textContent || '').trim() : '';
+          return cleanQuestionText(nextGeneric ? (nextGeneric.textContent || '') : '');
         }
         const cbInput = cb;
         const labelEl = doc.querySelector('label[for="' + cbInput.id + '"]');
-        return labelEl ? (labelEl.textContent || '').trim() : (cbInput.getAttribute('aria-label') || '').trim();
+        return cleanQuestionText(labelEl ? (labelEl.textContent || '') : (cbInput.getAttribute('aria-label') || ''));
       }).filter(Boolean);
       if (options.length > 0) {
         questions.push({ type: 'checkbox', question: questionText, options, containerSelector });
@@ -2994,8 +3059,8 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
 
 /**
  * Answer employer questions in the Easy Apply modal.
- * Uses the intelligent Q&A handler (shared with Seek bot) plus
- * a basic fallback for phone/email fields and selects/radios.
+ * Uses LinkedIn-native intelligent Q&A + form filling so the flow
+ * can work with iframe/shadow-root modals and custom field elements.
  * Supports multi-stage forms (clicks Next and loops).
  */
 export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
@@ -3033,7 +3098,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
 
     if (questions.length > 0) {
       printLog(`Using intelligent answers for ${questions.length} questions`);
-      const answeredQuestions = await getIntelligentAnswers(questions, ctx);
+      const answeredQuestions = await getLinkedInIntelligentAnswers(questions, ctx);
 
       const jobId = (ctx.current_job as any)?.job_id || 'unknown';
       const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
@@ -3078,29 +3143,7 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
         });
 
         if (answer !== null && answer !== undefined) {
-          // Switch driver into the iframe if present (LinkedIn May 2026+)
-          const easyApply = ctx.selectors?.easy_apply || {};
-          const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
-          let switchedToIframe = false;
-          try {
-            const iframeEl = await driver.findElement(By.css(iframeSelector));
-            await driver.switchTo().frame(iframeEl);
-            switchedToIframe = true;
-          } catch {
-            // No iframe — use shadow DOM / light DOM modalScope fallback
-          }
-
-          // Pass undefined modalScope when we're in the iframe (we're already in the right document)
-          const modalScope: string | undefined = switchedToIframe
-            ? undefined
-            : `:is(${ctx.selectors?.easy_apply?.modal_container_css || "div.jobs-easy-apply-modal, [data-test-modal]"})`;
-
-          const fillResult = await fillQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, modalScope);
-
-          // Switch back to main page
-          if (switchedToIframe) {
-            await driver.switchTo().defaultContent();
-          }
+          const fillResult = await fillLinkedInQuestionFieldDetailed(ctx, q.containerSelector, q.type, answer, q.options || q.opts || []);
           const filled = fillResult.success;
           const options = q.options || q.opts || [];
           const selected =
