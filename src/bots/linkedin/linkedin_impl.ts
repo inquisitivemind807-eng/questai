@@ -2861,7 +2861,7 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
     // --- Extract question text ---
     let questionText = '';
     // Try: textContent directly from container (new pattern: generic has text + input)
-    const directText = (container.textContent || '').replace(/\*Required.*/g, '').trim();
+    const directText = (container.textContent || '').replace(/\\*Required.*/g, '').trim();
     // Try: first child generic text (new LinkedIn pattern)
     const firstGeneric = container.querySelector('generic');
     const firstGenericText = firstGeneric ? (firstGeneric.textContent || '').trim() : '';
@@ -2875,7 +2875,7 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
     // Pick the best question text: prefer aria-label > firstGeneric > label > directText
     questionText = ariaText || firstGenericText || labelText || directText || ('Question ' + (index + 1));
     // Clean up: remove "Required" suffix and trailing asterisks
-    questionText = questionText.replace(/\s*\*\s*$/, '').replace(/\s*Required\s*$/i, '').trim();
+    questionText = questionText.replace(/\\s*\\*\\s*$/, '').replace(/\\s*Required\\s*$/i, '').trim();
 
     // --- Detect question type ---
 
@@ -2923,7 +2923,7 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
           return nextGeneric ? (nextGeneric.textContent || '').trim() : '';
         }
         // Legacy: input[type="radio"] with label[for]
-        const rInput = r as HTMLInputElement;
+        const rInput = r;
         const labelEl = doc.querySelector('label[for="' + rInput.id + '"]');
         return labelEl ? (labelEl.textContent || '').trim() : rInput.value || '';
       }).filter(Boolean);
@@ -2941,7 +2941,7 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
           const nextGeneric = cb.nextElementSibling;
           return nextGeneric ? (nextGeneric.textContent || '').trim() : '';
         }
-        const cbInput = cb as HTMLInputElement;
+        const cbInput = cb;
         const labelEl = doc.querySelector('label[for="' + cbInput.id + '"]');
         return labelEl ? (labelEl.textContent || '').trim() : (cbInput.getAttribute('aria-label') || '').trim();
       }).filter(Boolean);
