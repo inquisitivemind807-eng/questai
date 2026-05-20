@@ -225,8 +225,8 @@ export async function fillQuestionFieldDetailed(
 
           var radioNameFilter = arguments[${radioNameIdx}];
           var selector = radioNameFilter
-            ? 'input[type="radio"][name="' + radioNameFilter + '"]'
-            : 'input[type="radio"]';
+            ? 'input[type="radio"][name="' + radioNameFilter + '"], radio[name="' + radioNameFilter + '"]'
+            : 'input[type="radio"], radio';
           var radioButtons = container.querySelectorAll(selector);
           var answerIndex = arguments[${answerIdx}];
 
