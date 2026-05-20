@@ -8,11 +8,34 @@ steps_config:
     step: 0
     func: "step0"
     transitions:
-      direct_apply_requested: "navigate_to_direct_apply_url"
-      step0_complete: "navigate_to_direct_apply_url"
+      direct_apply_requested: "open_check_login"
+      step0_complete: "open_check_login"
       ctx_failed: "finish"
     timeout: 30
     on_timeout_event: "ctx_failed"
+
+  open_check_login:
+    step: 0.1
+    func: "openCheckLogin"
+    transitions:
+      login_not_needed: "navigate_to_direct_apply_url"
+      user_needs_to_login: "show_manual_login_prompt"
+      cannot_determine_login_status: "navigate_to_direct_apply_url"
+      no_available_page: "show_manual_login_prompt"
+      failed_to_navigate: "show_manual_login_prompt"
+      failed_checking_login_status: "show_manual_login_prompt"
+    timeout: 30
+    on_timeout_event: "failed_to_navigate"
+
+  show_manual_login_prompt:
+    step: 0.2
+    func: "showManualLoginPrompt"
+    transitions:
+      login_successful: "navigate_to_direct_apply_url"
+      login_failed: "finish"
+      error_showing_manual_login: "finish"
+    timeout: 300
+    on_timeout_event: "login_failed"
 
   navigate_to_direct_apply_url:
     step: 0.5
