@@ -8,6 +8,12 @@ An autonomous agent (run via OpenClaw on-demand) that:
 2. **Detects** failures — stale selectors, flow changes, auth issues, timeouts
 3. **Repairs** selector issues by inspecting the live page and updating code
 4. **Reports** flow/auth changes that need human attention
+5. **Self-improves**: every run finds cracks in the diagnostic workflow itself
+   and updates this blueprint + the SKILL.md accordingly.
+
+**Early-stage note (2026-05-21)**: This workflow is being actively shakedown-tested.
+The first few runs prioritize finding and fixing workflow gaps over bot repairs.
+Every discovery feeds back into the pre-flight checks and failure patterns.
 5. Slowly transforms bots into **true state machines** that observe page state and branch dynamically
 
 ## Trigger
@@ -69,16 +75,24 @@ Before touching any bot code, verify the infrastructure:
 | Check | How | Failure Action |
 |-------|-----|----------------|
 | LinkedIn/Seek/Indeed logged in? | Navigate to feed/home, check for login wall | Report, abort test |
-| corpus-rag API reachable? | `curl -s -o /dev/null -w "%{http_code}" <api_url>` | Report, continue (only affects Q&A) |
-| JWT token valid? | Decode JWT, check `exp` claim vs current time | Report days remaining |
+| corpus-rag API reachable? | `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` | Report and fix — NOT optional |
+| corpus-rag authenticated? | Hit a protected endpoint (questions-save, etc.); check for 401 | Report, user must re-login to corpus-rag UI |
 | MongoDB connected? | `mongosh --eval "db.runCommand({ping:1})"` | Report, continue (file fallback) |
-| Chrome running on CDP port? | `curl -s http://localhost:18800/json/version` | Attempt restart, or report |
+| Chrome CDP running? | `curl -s http://localhost:18800/json/version` | Relaunch; keep separate from bot's Selenium browser |
+| Browser window maximized? | CDP: `Browser.getWindowForTarget` check bounds.width ≥ 1280 | Maximize — responsive UI breaks selectors at narrow widths |
+| Git clean + on main? | `git status --short && git branch --show-current` | Report, stash or abort |
 
 ---
 
 ## Phase 2 — Find a Test Job
 
-Jobs expire, so we find one fresh each time:
+Jobs expire, so we find one fresh each time.
+
+**Important**: LinkedIn UI is responsive — browser must be ≥1280px wide.
+If `openclaw browser` hangs (embedded/local mode), fall back to raw CDP WebSocket.
+
+**Easy Apply marker**: Check for both `<button>` and `<a>` tags containing "Easy Apply".
+LinkedIn changes this periodically.
 
 ```
 1. Open LinkedIn jobs search with keyword from user config
@@ -119,11 +133,12 @@ Every step that doesn't yield its "success" transition is classified:
 | Failure Type | Signature | Example |
 |-------------|-----------|---------|
 | `SELECTOR_STALE` | `NoSuchElementError` on a known selector | `.jobs-easy-apply-modal` not found |
-| `SELECTOR_WRONG` | Element found but wrong content/state | Found button but it's disabled |
-| `FLOW_CHANGED` | Expected page state never appeared | Clicked Easy Apply, no modal opened |
+| `SELECTOR_WRONG` | Element found but wrong tag/element type | Easy Apply is `<a>` not `<button>` |
+| `FLOW_CHANGED` | Expected page state never appeared, or infinite loop | Clicked Easy Apply, no modal opened; or questions→next→questions forever |
 | `AUTH_BROKEN` | Login wall, CAPTCHA, verification prompt | Redirected to /login or /checkpoint |
 | `TIMEOUT` | Step exceeded its timeout | 30s timeout on `fillContactInfo` |
 | `ANTI_BOT` | 429, rate limit, "unusual activity" | Page shows security check |
+| `INFRA_FAILURE` | Backend API down, token expired, Chrome crash | corpus-rag returns 401, questions loop because save fails |
 
 ### Structured Failure Report
 
@@ -352,6 +367,21 @@ Additional modules (future, if extracted from OpenClaw workflow):
 
 ---
 
+## Known Failure Patterns (Discovered 2026-05-21)
+
+These are recurring failure modes discovered during live diagnostic runs.
+Check these first before diving into deep diagnosis.
+
+| Pattern | Cause | Fix |
+|---------|-------|-----|
+| Easy Apply button not found | LinkedIn changed `<button>` to `<a>` tag | Add `a[aria-label*='Easy Apply']`, `//a[contains(., 'Easy Apply')]` to candidates |
+| Questions → Next → Questions loop | corpus-rag returns 401 (token expired) → DB save fails → bot doesn't detect it's looping | Pre-flight must check corpus-rag auth. Add loop detection to YAML. |
+| `openclaw browser` hangs | Embedded/local mode doesn't support browser tool | Fall back to raw CDP WebSocket via `bun` |
+| Chrome CDP dies mid-diagnosis | Bot's Selenium closes its browser, which may kill shared Chrome | Use separate Chrome instance for CDP diagnostics (dedicated profile at `/tmp/openclaw-chrome-profile`) |
+| Random selector failure | Browser window not maximized → responsive UI → different DOM | Always verify `window.outerWidth ≥ 1280` before running |
+
+---
+
 ## Repair Boundaries
 
 | Can fix | Cannot fix (report only) |
@@ -363,7 +393,9 @@ Additional modules (future, if extracted from OpenClaw workflow):
 | YAML transitions for new page states | Auth token refresh logic |
 | New step functions for discovered flows | MongoDB schema changes |
 | Timeout adjustments | .env or config changes |
-| Adding candidates to selector arrays | Changes outside `src/bots/{bot}/` |
+| Adding candidates to selector arrays | corpus-rag down / 401 token |
+| | Chrome CDP crash |
+| | Changes outside `src/bots/{bot}/` |
 
 All repairs stay within `src/bots/{bot}/` directory.
 All repairs happen on a git branch — never on main.
