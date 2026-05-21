@@ -390,6 +390,7 @@ Check these first before diving into deep diagnosis.
 | DB/collection name mismatch | Code assumes `questai.jobs` but actual is `inquisitive_mind.linkedin_jobs` | All MongoDB queries must use correct DB + collection names. |
 | Shadow DOM contact info skips | `fillContactInfo` yields `contact_info_filled` but email/phone "not found" inside shadowRoot | Bot needs `executeScript` with `shadowRoot.querySelector`. Don't yield success on failure. |
 | clickNextButton jumps to submit | Fallback returns `ready_to_submit` when no buttons found → skips resume/questions | Change fallback to `click_next_error`. Only yield `ready_to_submit` when Submit/Review ACTUALLY visible. |
+| 🚨 Review mode doesn't prevent submit | `--mode=review` supposed to stop at review page, but `submitApplication` may still click Submit | DO NOT run in review mode on real jobs without verifying. Bot must have explicit guard: `if (reviewMode) { yield 'review_reached'; return; }` before clicking submit. |
 | Browser bounds check broken | `Browser.getWindowForTarget` with browser target returns undefined | Use a page target ID (from `curl http://localhost:18800/json`), not browser target. |
 
 ---
