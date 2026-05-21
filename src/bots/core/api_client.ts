@@ -1,33 +1,19 @@
 /**
  * API Client for Corpus RAG API
- * Handles authentication and API calls to the backend
+ * Handles authentication and API calls to the backend.
+ *
+ * Token management delegated to token_manager.ts — the single source
+ * of truth that prevents race-condition token revocation.
  */
 
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
 import { logger } from './logger.js';
+import { tokenManager } from './token_manager.js';
 
 interface ApiConfig {
   baseUrl: string;
-}
-
-interface JwtTokens {
-  accessToken: string;
-  refreshToken: string;
-  expiresAt: number;
-}
-
-function readCachedText(filePath: string): string | null {
-  if (!fs.existsSync(filePath)) return null;
-  const value = fs.readFileSync(filePath, 'utf8').trim();
-  return value || null;
-}
-
-function isLikelyJwt(token: string): boolean {
-  // JWT shape: header.payload.signature (all non-empty)
-  const parts = token.split('.');
-  return parts.length === 3 && parts.every((part) => part.length > 0);
 }
 
 function summarizeBody(body: any): Record<string, unknown> {
@@ -57,138 +43,29 @@ function getApiConfig(): ApiConfig {
 }
 
 /**
- * Get session token from the shared cache.
- * The UI process is responsible for keeping this token valid.
- */
-async function getSessionToken(): Promise<string | null> {
-  const tokenCachePath = path.join(process.cwd(), '.cache', 'api_token.txt');
-  const authAccessTokenPath = path.join(process.cwd(), '.cache', 'auth_access_token.txt');
-
-  const tokenFromSharedCache = readCachedText(tokenCachePath);
-  if (tokenFromSharedCache) {
-    logger.auth('debug', 'auth.session_cache_hit', 'Using shared authentication token');
-    return tokenFromSharedCache;
-  }
-
-  const tokenFromAuthCache = readCachedText(authAccessTokenPath);
-  if (tokenFromAuthCache) {
-    logger.auth('debug', 'auth.access_cache_hit', 'Using auth access token from cache');
-    return tokenFromAuthCache;
-  }
-
-  logger.auth('warn', 'auth.session_cache_miss', 'No shared authentication token available');
-  return null;
-}
-
-/**
- * Get or refresh JWT access token
+ * Get a valid access token via the TokenManager.
+ * The TokenManager handles caching, refresh, locking, and conflict retry.
  */
 async function getAccessToken(): Promise<string | null> {
-  const jwtCachePath = path.join(process.cwd(), '.cache', 'jwt_tokens.json');
-
-  // Check if we have cached JWT tokens
-  if (fs.existsSync(jwtCachePath)) {
-    try {
-      const cached: JwtTokens = JSON.parse(fs.readFileSync(jwtCachePath, 'utf8'));
-
-      // Check if access token is still valid (with 1 minute buffer)
-      if (cached.expiresAt > Date.now() + 60000) {
-        logger.auth('debug', 'auth.jwt_cache_hit', 'Using cached JWT access token');
-        return cached.accessToken;
-      }
-
-      // Try to refresh the token
-      logger.auth('info', 'auth.jwt_refresh_start', 'Access token expired, refreshing');
-      const config = getApiConfig();
-      const response = await fetch(`${config.baseUrl}/api/auth/refresh`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refreshToken: cached.refreshToken })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const newTokens: JwtTokens = {
-          accessToken: data.accessToken,
-          refreshToken: data.refreshToken,
-          expiresAt: Date.now() + (data.expiresIn * 1000)
-        };
-        fs.writeFileSync(jwtCachePath, JSON.stringify(newTokens, null, 2));
-        logger.auth('info', 'auth.jwt_refresh_success', 'JWT token refreshed successfully');
-        return newTokens.accessToken;
-      }
-    } catch (error) {
-      logger.auth('warn', 'auth.jwt_refresh_failed', 'Error refreshing JWT, trying session token conversion', {
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
+  logger.auth('debug', 'auth.token_request', 'Requesting access token from TokenManager');
+  const token = await tokenManager.getAccessToken();
+  if (token) {
+    logger.auth('debug', 'auth.token_ok', 'Valid access token obtained');
+  } else {
+    logger.auth('warn', 'auth.token_missing', 'No valid access token available — login required');
   }
-
-  // Convert session token to JWT
-  const sessionToken = await getSessionToken();
-  if (!sessionToken) {
-    return null;
-  }
-
-  // UI now writes access JWTs directly to shared cache; use as-is.
-  if (isLikelyJwt(sessionToken)) {
-    logger.auth('debug', 'auth.shared_jwt_used', 'Using cached shared JWT token directly');
-    return sessionToken;
-  }
-
-  try {
-    logger.auth('info', 'auth.session_to_jwt_start', 'Converting session token to JWT');
-    const config = getApiConfig();
-    const response = await fetch(`${config.baseUrl}/api/auth/session-to-jwt`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${sessionToken}`,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger.auth('error', 'auth.session_to_jwt_failed', 'Session to JWT conversion failed', {
-        status: response.status,
-        errorText
-      });
-      return null;
-    }
-
-    const data = await response.json();
-    const tokens: JwtTokens = {
-      accessToken: data.accessToken,
-      refreshToken: data.refreshToken,
-      expiresAt: Date.now() + (data.expiresIn * 1000)
-    };
-
-    // Cache the JWT tokens
-    const cacheDir = path.join(process.cwd(), '.cache');
-    if (!fs.existsSync(cacheDir)) {
-      fs.mkdirSync(cacheDir, { recursive: true });
-    }
-    fs.writeFileSync(jwtCachePath, JSON.stringify(tokens, null, 2));
-
-    logger.auth('info', 'auth.session_to_jwt_success', 'Session token converted to JWT successfully');
-    return tokens.accessToken;
-  } catch (error) {
-    logger.auth('error', 'auth.session_to_jwt_error', 'Error converting session token to JWT', {
-      error: error instanceof Error ? error.message : String(error)
-    });
-    // Some backends accept session token directly for bearer auth.
-    logger.auth('warn', 'auth.session_fallback', 'Falling back to shared session token');
-    return sessionToken;
-  }
+  return token;
 }
 
 /**
- * Make an authenticated API request
+ * Make an authenticated API request.
+ * Automatically retries once with a force-refreshed token on 401.
  */
 export async function apiRequest(
   endpoint: string,
   method: string = 'POST',
-  body?: any
+  body?: any,
+  retryOn401: boolean = true
 ): Promise<any> {
   const config = getApiConfig();
   const token = await getAccessToken();
@@ -197,93 +74,106 @@ export async function apiRequest(
     throw new Error('No authentication token available. Please login first.');
   }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
-  };
+  const doRequest = async (authToken: string) => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${authToken}`
+    };
 
-  const url = `${config.baseUrl}${endpoint}`;
-  const requestId = randomUUID().slice(0, 12);
-  const startedAt = Date.now();
+    const url = `${config.baseUrl}${endpoint}`;
+    const requestId = randomUUID().slice(0, 12);
+    const startedAt = Date.now();
 
-  logger.apiRequest(`${method} ${endpoint}`, {
-    requestId,
-    method,
-    endpoint,
-    url,
-    bodySummary: summarizeBody(body),
-    ...(shouldLogFullPayload(endpoint) ? { requestBody: body } : {})
-  });
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 120000); // 120s timeout in case LLM hangs
-
-  try {
-    const response = await fetch(url, {
+    logger.apiRequest(`${method} ${endpoint}`, {
+      requestId,
       method,
-      headers,
-      body: body ? JSON.stringify(body) : undefined,
-      signal: controller.signal
+      endpoint,
+      url,
+      bodySummary: summarizeBody(body),
+      ...(shouldLogFullPayload(endpoint) ? { requestBody: body } : {})
     });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      logger.apiError(`${method} ${endpoint}`, {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.apiError(`${method} ${endpoint}`, {
+          requestId,
+          status: response.status,
+          durationMs: Date.now() - startedAt,
+          errorText
+        });
+        return { ok: false, status: response.status, errorText };
+      }
+
+      const data = await response.json();
+      logger.apiResponse(`${method} ${endpoint}`, {
         requestId,
         status: response.status,
         durationMs: Date.now() - startedAt,
-        errorText
+        success: data?.success !== false,
+        ...(shouldLogFullPayload(endpoint) ? { responseBody: data } : {})
       });
-      throw new Error(`API request failed: ${response.status} - ${errorText}`);
+      return { ok: true, status: response.status, data };
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        logger.apiError(`${method} ${endpoint}`, {
+          requestId,
+          errorText: 'Request timed out after 120 seconds'
+        });
+        throw new Error(`API request timed out (120s): ${endpoint}`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
     }
+  };
 
-    const data = await response.json();
-    logger.apiResponse(`${method} ${endpoint}`, {
-      requestId,
-      status: response.status,
-      durationMs: Date.now() - startedAt,
-      success: data?.success !== false,
-      ...(shouldLogFullPayload(endpoint) ? { responseBody: data } : {})
-    });
-    return data;
-  } catch (error: any) {
-    if (error.name === 'AbortError') {
-      logger.apiError(`${method} ${endpoint}`, {
-        requestId,
-        errorText: 'Request timed out after 120 seconds'
-      });
-      throw new Error(`API request timed out (120s): ${endpoint}`);
+  // First attempt
+  let result = await doRequest(token);
+
+  // On 401, force-refresh the token and retry once
+  if (!result.ok && result.status === 401 && retryOn401) {
+    logger.auth('info', 'auth.401_retry', 'Got 401 — attempting force token refresh and retry');
+    const newToken = await tokenManager.forceRefresh();
+    if (newToken && newToken !== token) {
+      result = await doRequest(newToken);
     }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  if (!result.ok) {
+    throw new Error(`API request failed: ${result.status} - ${result.errorText}`);
+  }
+
+  return result.data;
 }
 
-// The save and clear functions are kept for potential direct use or testing,
-// but the primary flow is now managed by the UI via Tauri IPC.
-
 /**
- * Save authentication token to cache
+ * Save authentication token via TokenManager.
+ * Writes to unified file + all legacy files.
  */
 export function saveSessionToken(token: string): void {
-  const cacheDir = path.join(process.cwd(), '.cache');
-  if (!fs.existsSync(cacheDir)) {
-    fs.mkdirSync(cacheDir, { recursive: true });
-  }
-
-  const tokenCachePath = path.join(cacheDir, 'api_token.txt');
-  fs.writeFileSync(tokenCachePath, token, 'utf8');
-  logger.auth('info', 'auth.session_saved', 'Session token saved to cache');
+  tokenManager.saveTokens({
+    accessToken: token,
+    refreshToken: '',
+    expiresAt: Date.now() + 86400000, // 24h fallback
+  });
+  logger.auth('info', 'auth.session_saved', 'Session token saved via TokenManager');
 }
 
 /**
- * Clear cached session token
+ * Clear all cached tokens.
  */
 export function clearSessionToken(): void {
-  const tokenCachePath = path.join(process.cwd(), '.cache', 'api_token.txt');
-  if (fs.existsSync(tokenCachePath)) {
-    fs.unlinkSync(tokenCachePath);
-    logger.auth('info', 'auth.session_cleared', 'Session token cleared');
-  }
+  tokenManager.clearTokens();
+  logger.auth('info', 'auth.session_cleared', 'All tokens cleared via TokenManager');
 }

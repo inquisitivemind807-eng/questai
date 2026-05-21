@@ -9,6 +9,7 @@ const API_BASE_URL =
   import.meta.env.VITE_API_BASE ||
   'http://localhost:3000';
 const TOKEN_CACHE_FILE = '.cache/api_token.txt';
+const UNIFIED_TOKEN_FILE = '.cache/tokens.json';
 
 function createAuthStore() {
   const { subscribe, set, update } = writable({
@@ -100,8 +101,33 @@ function createAuthStore() {
         console.log('✅ Access token refreshed successfully.');
         return data.accessToken;
       } else {
+        const err = await response.json().catch(() => ({}));
+        // Token reuse detected? Don't logout — bot may have refreshed.
+        // Just return null and let the caller decide.
+        if (err.error && (err.error.includes('Token reuse') || err.error.includes('revoked'))) {
+          console.warn('⚠️ Token already used by another process — checking for fresh tokens...');
+          // Try reading the unified file (bot may have written new tokens)
+          const unified = await readCache(UNIFIED_TOKEN_FILE);
+          if (unified) {
+            try {
+              const parsed = JSON.parse(unified);
+              if (parsed.accessToken && parsed.refreshToken) {
+                // Sync from unified file back to legacy files
+                await writeCache('.cache/auth_access_token.txt', parsed.accessToken);
+                await writeCache('.cache/auth_refresh_token.txt', parsed.refreshToken);
+                await writeCache('.cache/auth_expires_at.txt', String(parsed.expiresAt));
+                console.log('✅ Recovered fresh tokens from unified file');
+                return parsed.accessToken;
+              }
+            } catch { /* ignore parse errors */ }
+          }
+          // Truly revoked
+          console.error('❌ Tokens revoked — re-login required');
+          await logout();
+          return null;
+        }
         console.error('Failed to refresh access token.');
-        await logout(); // If refresh fails, log the user out.
+        await logout();
         return null;
       }
     } catch (error) {
@@ -114,20 +140,29 @@ function createAuthStore() {
   async function setTokens(data) {
     if (!browser) return;
     const { accessToken, refreshToken, expiresIn, user } = data;
+    const expiresAt = new Date().getTime() + expiresIn * 1000;
+
+    // Write legacy files (backward compatibility)
     await writeCache('.cache/auth_access_token.txt', accessToken);
     await writeCache('.cache/auth_refresh_token.txt', refreshToken);
-    // Store expiry time (current time + expiresIn seconds)
-    const expiresAt = new Date().getTime() + expiresIn * 1000;
     await writeCache('.cache/auth_expires_at.txt', expiresAt);
 
     if (user) {
       await writeCache('.cache/auth_user.json', JSON.stringify(user));
     }
 
-    // Save the token for bot processes via Tauri IPC
+    // Write unified token file (single source of truth for bots)
+    try {
+      const unified = JSON.stringify({ accessToken, refreshToken, expiresAt });
+      await invoke('write_file_async', { filename: UNIFIED_TOKEN_FILE, content: unified });
+      console.log('✅ Tokens saved to unified cache.');
+    } catch (e) {
+      console.error('Failed to save unified tokens:', e);
+    }
+
+    // Save the token for bot processes via Tauri IPC (legacy path)
     try {
       await invoke('write_file_async', { filename: TOKEN_CACHE_FILE, content: accessToken });
-      console.log('✅ Token saved to shared cache for bot processes.');
     } catch (e) {
       console.error('Failed to save token to shared cache:', e);
     }
@@ -223,6 +258,8 @@ function createAuthStore() {
     await deleteCache('.cache/auth_expires_at.txt');
     await deleteCache('.cache/auth_user.json');
     await deleteCache('.cache/auth_remember_me.txt');
+    await deleteCache(UNIFIED_TOKEN_FILE);
+    await deleteCache('.cache/token.lock');
     localStorage.removeItem('auth_access_token');
     localStorage.removeItem('auth_refresh_token');
     localStorage.removeItem('auth_expires_at');
@@ -247,6 +284,21 @@ function createAuthStore() {
 
   async function getAccessToken() {
     if (!browser) return null;
+
+    // Check unified file first (may have been refreshed by bot)
+    const unified = await readCache(UNIFIED_TOKEN_FILE);
+    if (unified) {
+      try {
+        const parsed = JSON.parse(unified);
+        if (parsed.accessToken && parsed.expiresAt > Date.now() + 60000) {
+          // Unified file has a valid token — sync to legacy files
+          await writeCache('.cache/auth_access_token.txt', parsed.accessToken);
+          await writeCache('.cache/auth_refresh_token.txt', parsed.refreshToken);
+          await writeCache('.cache/auth_expires_at.txt', String(parsed.expiresAt));
+          return parsed.accessToken;
+        }
+      } catch { /* ignore parse errors, fall through */ }
+    }
 
     let accessToken = await readCache('.cache/auth_access_token.txt');
     const expiresAt = await readCache('.cache/auth_expires_at.txt');
