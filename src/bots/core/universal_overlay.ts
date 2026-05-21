@@ -235,8 +235,8 @@ export class UniversalOverlay {
           overlay.className = 'universal-dynamic-overlay';
           Object.assign(overlay.style, {
             position: 'fixed',
-            top: '20px',
-            left: '20px',
+            top: '50px',
+            left: '0px',
             background: '#1a1a1add',
             border: '2px solid #00ffff80',
             borderRadius: '16px',
@@ -248,7 +248,7 @@ export class UniversalOverlay {
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
             pointerEvents: 'none',
-            width: '360px',
+            width: '324px',
             maxWidth: 'calc(100vw - 40px)',
             maxHeight: '500px',
             minHeight: '120px',
@@ -265,7 +265,7 @@ export class UniversalOverlay {
           const header = document.createElement('div');
           header.className = 'overlay-header';
           Object.assign(header.style, {
-            padding: '16px 20px',
+            padding: '16px 3px',
             borderBottom: '1px solid #00ffff40',
             display: 'flex',
             justifyContent: 'space-between',
@@ -372,7 +372,7 @@ export class UniversalOverlay {
           const content = document.createElement('div');
           content.className = 'overlay-content';
           Object.assign(content.style, {
-            padding: '20px 24px',
+            padding: '12px 0',
             fontSize: '14px',
             lineHeight: '1.6',
             maxHeight: '60vh',
@@ -391,6 +391,7 @@ export class UniversalOverlay {
 
           const mainContent = document.createElement('div');
           Object.assign(mainContent.style, {
+            padding: '0 12px',
             width: '100%',
             maxWidth: '100%',
             boxSizing: 'border-box'
@@ -471,12 +472,12 @@ export class UniversalOverlay {
           overlay.appendChild(content);
 
           let isDragging = false;
-          let currentX = 20;
-          let currentY = 20;
+          let currentX = 0;
+          let currentY = 50;
           let initialX = 0;
           let initialY = 0;
-          let xOffset = 20;
-          let yOffset = 20;
+          let xOffset = 0;
+          let yOffset = 50;
           header.addEventListener('mousedown', (e) => {
             if (e.target && e.target.tagName === 'BUTTON') return;
             e.preventDefault();
@@ -518,12 +519,12 @@ export class UniversalOverlay {
         function applyShellStyles(refs, state) {
           const collapsed = Boolean(state.collapsed);
           const expanded = Boolean(state.expanded);
-          const position = state.position || { x: 20, y: 20 };
+          const position = state.position || { x: 0, y: 50 };
 
-          let shellWidth = '360px';
+          let shellWidth = '324px';
           let shellMaxHeight = '500px';
           if (expanded) {
-            shellWidth = '680px';
+            shellWidth = '612px';
             shellMaxHeight = '90vh';
           }
           if (collapsed) {

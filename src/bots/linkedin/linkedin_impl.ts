@@ -778,10 +778,15 @@ export async function* openJobsPage(ctx: WorkflowContext): AsyncGenerator<string
       targetUrl = jobsHomeUrl;
     }
 
+    const progress = getLinkedInOverlayProgress(ctx);
+
     const currentUrl = await driver.getCurrentUrl();
     const alreadyOnSearch = currentUrl.includes('/jobs/search') && (keywords ? currentUrl.includes(encodeURIComponent(keywords)) : true);
     if (!currentUrl.includes('/jobs') || !alreadyOnSearch) {
       printLog(`Navigating to: ${targetUrl}`);
+      if (ctx.overlay) {
+        await ctx.overlay.updateJobProgress(progress.done, progress.total, "Opening jobs search page...", 4).catch(() => {});
+      }
       try {
         await withTimeout(driver.get(targetUrl), 15000, 'Jobs page navigation');
       } catch (err) {
@@ -1053,6 +1058,11 @@ export async function* applyFilters(ctx: WorkflowContext): AsyncGenerator<string
     const driver = ctx.driver;
     const selectors = ctx.selectors?.jobs;
 
+    const progress = getLinkedInOverlayProgress(ctx);
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(progress.done, progress.total, "Applying search filters...", 9).catch(() => {});
+    }
+
     await driver.sleep(2000);
 
     // Try to find and click "All filters" button (CSS from live DOM: search-reusables__all-filters-pill-button)
@@ -1152,6 +1162,11 @@ export async function* getPageInfo(ctx: WorkflowContext): AsyncGenerator<string,
 
   try {
     const driver = ctx.driver;
+
+    const progress = getLinkedInOverlayProgress(ctx);
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(progress.done, progress.total, "Scanning pagination...", 8).catch(() => {});
+    }
 
     // Try to detect pagination
     try {
@@ -2167,6 +2182,11 @@ export async function* extractJobDetailsFromPanel(ctx: WorkflowContext): AsyncGe
 
     const jobId = currentJob.job_id;
     const selectors = ctx.selectors?.jobs?.job_details_panel;
+
+    const progress = getLinkedInOverlayProgress(ctx);
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(progress.done, progress.total, `Parsing job details — ${currentJob.title || jobId}`, 12).catch(() => {});
+    }
 
     // Fast-fail when the details view is not actually loaded for this card.
     let detailsReady = false;
@@ -3493,6 +3513,15 @@ export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<stri
     const appliedJobIds = ctx.applied_job_ids || new Set();
 
     if (currentJob && currentJob.job_id) {
+      if (ctx.overlay) {
+        await ctx.overlay.updateJobProgress(
+          ctx.applied_jobs || 0,
+          ctx.total_jobs || 0,
+          `Saving application — ${currentJob.title || currentJob.job_id}`,
+          20
+        ).catch(() => {});
+      }
+
       appliedJobIds.add(currentJob.job_id);
       ctx.applied_job_ids = appliedJobIds;
 
@@ -3518,6 +3547,7 @@ export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<stri
       }
 
       printLog(`Saved job ID: ${jobId} `);
+      if (ctx.overlay) await ctx.overlay.addLogEvent(`Application recorded: ${currentJob.title || jobId}`).catch(() => {});
       yield "job_saved";
     } else {
       yield "save_job_failed";
@@ -3537,6 +3567,15 @@ export async function* externalApply(ctx: WorkflowContext): AsyncGenerator<strin
     if (!currentJob) {
       yield "application_failed";
       return;
+    }
+
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(
+        ctx.applied_jobs || 0,
+        ctx.total_jobs || 0,
+        `External apply — ${currentJob.title || currentJob.job_id}`,
+        14
+      ).catch(() => {});
     }
 
     // Extract full job details from panel
