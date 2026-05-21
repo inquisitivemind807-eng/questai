@@ -2035,7 +2035,18 @@ export async function* fillContactInfo(ctx: WorkflowContext): AsyncGenerator<str
     const email = ctx.config?.formData?.email || '';
     const phone = ctx.config?.formData?.phone || '';
 
+    const jobTitle = ctx.current_job?.title || 'this job';
+
     printLog(`Filling contact info: email=${email}, phone=${phone}`);
+
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(
+        ctx.applied_jobs || 0,
+        ctx.total_jobs || 0,
+        `Filling contact info | ${jobTitle}`,
+        15
+      ).catch(() => {});
+    }
 
     // Try iframe first (current LinkedIn May 2026), fall back to shadow DOM
     const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
@@ -2501,6 +2512,16 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
     const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
     const coverLetterCss = easyApply?.cover_letter_textarea_css;
     const coverLetterXpath = easyApply?.cover_letter_textarea_xpath || "//textarea[contains(@placeholder, 'cover letter') or contains(@aria-label, 'cover letter')]";
+    const jobTitle = ctx.current_job?.title || 'this job';
+
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(
+        ctx.applied_jobs || 0,
+        ctx.total_jobs || 0,
+        `Filling cover letter | ${jobTitle}`,
+        17
+      ).catch(() => {});
+    }
 
     let textarea: Awaited<ReturnType<WebDriver['findElement']>> | null = null;
     try {
@@ -2533,6 +2554,7 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
 
     if (!textarea) {
       printLog("Cover letter textarea not found - skipping");
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Cover letter: not required").catch(() => {});
       yield "cover_letter_not_required";
       return;
     }
@@ -2542,12 +2564,14 @@ export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<s
     await textarea.clear();
     const coverLetterText = await generateAICoverLetterLinkedIn(ctx);
     if (!coverLetterText || coverLetterText.trim().length < 50) {
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Cover letter: generation failed or too short").catch(() => {});
       yield "cover_letter_error";
       return;
     }
     await textarea.sendKeys(coverLetterText);
     await driver.sleep(1000);
     printLog("Cover letter filled");
+    if (ctx.overlay) await ctx.overlay.addLogEvent("Cover letter filled").catch(() => {});
     yield "cover_letter_filled";
   } catch (error) {
     printLog(`Cover letter error: ${error}`);
@@ -2681,6 +2705,16 @@ export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGene
 
     printLog(`Direct Apply URL opened: ${currentUrl}`);
     printLog(`Prepared apply context with jobId: ${jobId}`);
+
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(
+        ctx.applied_jobs || 0,
+        ctx.total_jobs || 1,
+        `Easy Apply — ${pageTitle || 'LinkedIn Job'}`,
+        1
+      ).catch(() => {});
+    }
+
     yield "navigated";
   } catch (error) {
     printLog(`Direct Apply navigation failed: ${error}`);
@@ -2700,6 +2734,16 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
     const selectors = ctx.selectors?.easy_apply;
     const useAiResume = !!ctx.config?.formData?.useAiResume;
     let resumePath = (ctx.config?.formData?.resumePath || '').trim();
+    const jobTitle = ctx.current_job?.title || 'this job';
+
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(
+        ctx.applied_jobs || 0,
+        ctx.total_jobs || 0,
+        `Uploading resume | ${jobTitle}`,
+        16
+      ).catch(() => {});
+    }
 
     if (useAiResume && ctx.currentJobFile) {
       try {
@@ -2752,6 +2796,7 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
 
     if (!fileInput) {
       printLog("No file input in modal (e.g. using profile resume) - skipping upload");
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Resume: using profile resume (no upload needed)").catch(() => {});
       yield "resume_not_required";
       return;
     }
@@ -2760,9 +2805,11 @@ export async function* uploadResume(ctx: WorkflowContext): AsyncGenerator<string
       await fileInput.sendKeys(resumePath);
       printLog("Resume uploaded");
       await driver.sleep(2000);
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Resume uploaded").catch(() => {});
       yield "resume_uploaded_successfully";
     } else {
       printLog("No resume file to upload - continuing");
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Resume: no file configured, continuing without").catch(() => {});
       yield "proceeding_without_resume";
     }
   } catch (error) {
@@ -2791,6 +2838,16 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
     const easyApply = ctx.selectors?.easy_apply || {};
     const iframeSelector = easyApply?.modal_iframe_selector || 'iframe[active]';
     const shadowHostCss = easyApply?.modal_shadow_host || '#interop-outlet';
+    const jobTitle = ctx.current_job?.title || 'this job';
+
+    if (ctx.overlay) {
+      await ctx.overlay.updateJobProgress(
+        ctx.applied_jobs || 0,
+        ctx.total_jobs || 0,
+        `Scanning employer questions | ${jobTitle}`,
+        18
+      ).catch(() => {});
+    }
 
     await driver.sleep(1500);
 
@@ -3022,6 +3079,7 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
 
     if (questionsData && questionsData.questionsFound > 0) {
       printLog(`Found ${questionsData.questionsFound} employer questions`);
+      if (ctx.overlay) await ctx.overlay.addLogEvent(`Found ${questionsData.questionsFound} employer questions`).catch(() => {});
 
       const jobId = (ctx.current_job as any)?.job_id || 'unknown';
       const cleanQuestions = questionsData.questions.map((q: any, idx: number) => ({
@@ -3049,6 +3107,7 @@ export async function* extractEmployerQuestions(ctx: WorkflowContext): AsyncGene
       }
     } else {
       printLog("No employer questions found");
+      if (ctx.overlay) await ctx.overlay.addLogEvent("No employer questions to answer").catch(() => {});
       yield "no_employer_questions";
     }
   } catch (error) {
@@ -3099,6 +3158,16 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
     if (questions.length > 0) {
       printLog(`Using intelligent answers for ${questions.length} questions`);
       const answeredQuestions = await getLinkedInIntelligentAnswers(questions, ctx);
+      const jobTitle = ctx.current_job?.title || 'this job';
+
+      if (ctx.overlay) {
+        await ctx.overlay.updateJobProgress(
+          ctx.applied_jobs || 0,
+          ctx.total_jobs || 0,
+          `Answering ${questions.length} questions | ${jobTitle}`,
+          19
+        ).catch(() => {});
+      }
 
       const jobId = (ctx.current_job as any)?.job_id || 'unknown';
       const jobDirPath = getJobArtifactDir(ctx, 'linkedin', jobId);
@@ -3258,9 +3327,11 @@ export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<str
       }
       printLog("Questions answered (basic flow)");
     }
+    if (ctx.overlay) await ctx.overlay.addLogEvent(`Answered ${questions.length || 'all'} question(s)`).catch(() => {});
     yield "questions_answered";
   } catch (error) {
     printLog(`Error answering questions: ${error} `);
+    if (ctx.overlay) await ctx.overlay.addLogEvent(`Error answering questions: ${error}`).catch(() => {});
     yield "error_answering_questions";
   }
 }
@@ -3324,6 +3395,10 @@ export async function* clickNextButton(ctx: WorkflowContext): AsyncGenerator<str
 
     if (result.event === 'clicked_next') {
       await driver.sleep(2000);
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Advanced to next form step").catch(() => {});
+    }
+    if (result.event === 'ready_to_submit') {
+      if (ctx.overlay) await ctx.overlay.addLogEvent("Form complete — ready to submit").catch(() => {});
     }
     yield result.event;
   } catch {

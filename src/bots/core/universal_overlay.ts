@@ -248,7 +248,7 @@ export class UniversalOverlay {
             backdropFilter: 'blur(10px)',
             userSelect: 'none',
             pointerEvents: 'none',
-            width: '450px',
+            width: '360px',
             maxWidth: 'calc(100vw - 40px)',
             maxHeight: '500px',
             minHeight: '120px',
@@ -520,10 +520,10 @@ export class UniversalOverlay {
           const expanded = Boolean(state.expanded);
           const position = state.position || { x: 20, y: 20 };
 
-          let shellWidth = '450px';
+          let shellWidth = '360px';
           let shellMaxHeight = '500px';
           if (expanded) {
-            shellWidth = '850px';
+            shellWidth = '680px';
             shellMaxHeight = '90vh';
           }
           if (collapsed) {
@@ -585,7 +585,7 @@ export class UniversalOverlay {
                 '</div>' +
                 '<div style="display:flex;align-items:center;gap:8px;padding-top:2px;">' +
                   '<div style="width:8px;height:8px;border-radius:50%;background:#00ffff;animation:pulse 1.5s ease-in-out infinite;flex-shrink:0;"></div>' +
-                  '<span style="font-size:11px;opacity:0.5;">Working...</span>' +
+                  '<span style="font-size:11px;opacity:0.5;">Processing...</span>' +
                 '</div>' +
               '</div>';
             return;
