@@ -636,11 +636,68 @@ export async function* refreshPage(ctx: WorkflowContext): AsyncGenerator<string,
 }
 
 // Step 3: Detect Page State
+// Checks DOM for logged-in indicators first (profile, account, avatar),
+// then falls back to checking for a visible sign-in link.
+// Avoids false positives from "Sign in" text in footer/nav menus.
 export async function* detectPageState(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   await ctx.driver.sleep(2000);
-  const pageSource = await ctx.driver.getPageSource();
-  const hasSignIn = pageSource.includes('data-automation="sign in"') || pageSource.includes('Sign in');
-  yield hasSignIn ? "sign_in_required" : "logged_in";
+
+  const loggedIn = await ctx.driver.executeScript(() => {
+    // ── Indicators that the user IS logged in ──
+    const loggedInSelectors = [
+      '[data-automation="userProfile"]',
+      '[data-automation*="accountMenu"]',
+      '[data-automation*="userMenu"]',
+      '[aria-label*="account" i]',
+      '[aria-label*="profile" i]',
+      'button[class*="account"]',
+      'button[class*="profile"]',
+      'a[href*="/profile"]',
+      'a[href*="/my-activity"]',
+      'img[alt*="profile" i]',
+      'img[alt*="avatar" i]',
+      '[class*="userAvatar"]',
+      '[class*="avatar"]',
+      '[class*="user-menu"]',
+      '[data-testid="user-menu"]',
+    ];
+
+    for (const sel of loggedInSelectors) {
+      try {
+        const el = document.querySelector(sel);
+        if (el && el.offsetParent !== null) {
+          return true; // Found a visible logged-in indicator
+        }
+      } catch { /* invalid selector */ }
+    }
+
+    // ── Indicators that the user is NOT logged in ──
+    // Only check sign-in if NO logged-in indicators were found.
+    // Seek has "Sign in" links in both header nav (visible) and
+    // footer/mobile menus (hidden). Only the header one matters.
+    const signInEls = document.querySelectorAll('[data-automation="sign in"]');
+    for (const el of signInEls) {
+      // Check if this sign-in link is actually visible in the viewport
+      if (el.offsetParent !== null) {
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (text === 'sign in') {
+          return false; // Visible sign-in link found → NOT logged in
+        }
+      }
+    }
+
+    // If no logged-in indicators AND no visible sign-in link,
+    // assume logged in (page might use different markup)
+    return true;
+  });
+
+  if (loggedIn) {
+    printLog('✅ User appears to be signed in to Seek');
+    yield "logged_in";
+  } else {
+    printLog('🔐 Sign-in required — sign-in link visible in header');
+    yield "sign_in_required";
+  }
 }
 
 // Step 3.2: Fill search form fields from user configuration (keywords/location)
