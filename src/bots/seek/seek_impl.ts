@@ -875,15 +875,28 @@ export async function* clickSearchButton(ctx: WorkflowContext): AsyncGenerator<s
 }
 
 // Step 4: Show Sign In Banner and Wait for Login
+// Tracks retries via ctx to break the detectPageState ↔ showSignInBanner loop.
+// After 2 attempts, bails out via signin_banner_retry → done.
 export async function* showSignInBanner(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    // Track sign-in banner retries in context to prevent infinite loop
+    const retryCount = (ctx as any)._signInBannerRetries || 0;
+    (ctx as any)._signInBannerRetries = retryCount + 1;
+    printLog(`🔐 Sign-in banner attempt ${retryCount + 1}/2`);
+
+    if (retryCount >= 2) {
+      printLog('⚠️ Sign-in retries exhausted — bailing out');
+      yield "signin_banner_retry";
+      return;
+    }
+
     await ctx.overlay.showSignInOverlay();
-    
+
     let authenticated = false;
     // Wait up to ~6 minutes (120 iterations * 3s)
     for (let i = 0; i < 120; i++) {
         await ctx.driver.sleep(3000);
-        
+
         // Check if user clicked the "✅ I have logged in - Continue" button on the Overlay
         const isClickConfirmed = await ctx.driver.executeScript(`
             return window.__overlaySignInComplete === true || sessionStorage.getItem('overlay_signin_complete') === 'true';
