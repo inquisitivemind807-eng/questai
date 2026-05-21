@@ -77,7 +77,7 @@ Before touching any bot code, verify the infrastructure:
 | LinkedIn/Seek/Indeed logged in? | Navigate to feed/home, check for login wall | Report, abort test |
 | corpus-rag API reachable? | `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` | Report and fix — NOT optional |
 | corpus-rag authenticated? | Hit a protected endpoint (questions-save, etc.); check for 401 | Report, user must re-login to corpus-rag UI |
-| MongoDB connected? | `mongosh --eval "db.runCommand({ping:1})"` | Report, continue (file fallback) |
+| MongoDB connected? | `mongosh --eval "db.runCommand({ping:1})"` — note: DB is `inquisitive_mind`, collection `linkedin_jobs` | Report, continue (file fallback) |
 | Chrome CDP running? | `curl -s http://localhost:18800/json/version` | Relaunch; keep separate from bot's Selenium browser |
 | Browser window maximized? | CDP: `Browser.getWindowForTarget` check bounds.width ≥ 1280 | Maximize — responsive UI breaks selectors at narrow widths |
 | Git clean + on main? | `git status --short && git branch --show-current` | Report, stash or abort |
@@ -85,6 +85,10 @@ Before touching any bot code, verify the infrastructure:
 ---
 
 ## Phase 2 — Find a Test Job
+
+**CRITICAL**: The apply flow needs a job that was already EXTRACTED to the DB.
+Direct `--url` apply skips extraction → corpus-rag returns 404 "No existing job found".
+Always query MongoDB first for extracted-but-unapplied Easy Apply jobs.
 
 Jobs expire, so we find one fresh each time.
 
@@ -375,10 +379,18 @@ Check these first before diving into deep diagnosis.
 | Pattern | Cause | Fix |
 |---------|-------|-----|
 | Easy Apply button not found | LinkedIn changed `<button>` to `<a>` tag | Add `a[aria-label*='Easy Apply']`, `//a[contains(., 'Easy Apply')]` to candidates |
-| Questions → Next → Questions loop | corpus-rag returns 401 (token expired) → DB save fails → bot doesn't detect it's looping | Pre-flight must check corpus-rag auth. Add loop detection to YAML. |
+| Questions → Next → Questions loop (401) | corpus-rag token expired → DB save fails → bot yields success anyway | Pre-flight must check corpus-rag auth. Bot should NOT yield `employer_questions_saved` on API error. |
+| Questions → Next → Questions loop (404) | API requires job record to exist before attaching questions. Bot doesn't create job first. | Bot must create job record before saving questions. OR API must support upsert. |
+| Questions → Next → Questions loop (flow bug) | `clickNextButton` always returns `clicked_next`, never `ready_to_submit`. YAML has no exit from the questions→next→questions cycle. | Add page-state observation to `clickNextButton`: detect review/submit page. Add max-retry counter to YAML as safety net. |
 | `openclaw browser` hangs | Embedded/local mode doesn't support browser tool | Fall back to raw CDP WebSocket via `bun` |
 | Chrome CDP dies mid-diagnosis | Bot's Selenium closes its browser, which may kill shared Chrome | Use separate Chrome instance for CDP diagnostics (dedicated profile at `/tmp/openclaw-chrome-profile`) |
 | Random selector failure | Browser window not maximized → responsive UI → different DOM | Always verify `window.outerWidth ≥ 1280` before running |
+| Token refresh fails silently | `.cache/jwt_tokens.json` missing → bot uses expired token from `api_token.txt` | Pre-flight: verify token expiry AND that jwt_tokens.json exists. If missing, call `/api/auth/refresh` directly with stored refresh token. |
+| JWT tokens corrupted | `<< 'EOF'` (quoted heredoc) used when writing jwt_tokens.json → literal `$VAR` text stored | Pre-flight: validate JWT file with bun script. Fix with unquoted heredoc. |
+| DB/collection name mismatch | Code assumes `questai.jobs` but actual is `inquisitive_mind.linkedin_jobs` | All MongoDB queries must use correct DB + collection names. |
+| Shadow DOM contact info skips | `fillContactInfo` yields `contact_info_filled` but email/phone "not found" inside shadowRoot | Bot needs `executeScript` with `shadowRoot.querySelector`. Don't yield success on failure. |
+| clickNextButton jumps to submit | Fallback returns `ready_to_submit` when no buttons found → skips resume/questions | Change fallback to `click_next_error`. Only yield `ready_to_submit` when Submit/Review ACTUALLY visible. |
+| Browser bounds check broken | `Browser.getWindowForTarget` with browser target returns undefined | Use a page target ID (from `curl http://localhost:18800/json`), not browser target. |
 
 ---
 
