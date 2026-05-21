@@ -1,0 +1,23 @@
+# Dev Notes
+
+## 1. JWT / API Health
+
+Checking whether the API is up and JWT tokens are valid is a separate concern — it should be a health monitor that runs periodically, independent of the main flow.
+
+## 2. Windows `npx` Fix
+
+On Windows, `.cmd` batch wrappers for npm binaries (like `npx.cmd`) won't execute without their file extension — bare `npx` fails. This is a well-known Windows quirk.
+
+```rust
+// Before (broken on Windows):
+let mut cmd = Command::new("npx");
+
+// After (Windows-compatible):
+let mut cmd = Command::new(if cfg!(target_os = "windows") { "npx.cmd" } else { "npx" });
+```
+
+
+
+
+**Note:** These changes are already in the codebase — the diff between `main` and `origin/alpha` is empty. The `alpha` branch was merged into `main` at `c7bd59b`. 
+The code has since moved from `npx` to `bun`, which doesn't have this problem (`.exe` files on Windows don't need explicit extensions).
