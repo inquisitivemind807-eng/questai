@@ -72,8 +72,9 @@ async function generateAIResume(ctx: WorkflowContext): Promise<string> {
   }
 
   // Fallback to context data when no job file (direct apply mode skips extraction)
-  if (!jobData.title) jobData.title = ctx.currentJobTitle || 'Unknown Position';
-  if (!jobData.company) jobData.company = ctx.currentJobCompany || 'Unknown Company';
+  // Preview fields are set by detectApplyType even in direct mode
+  if (!jobData.title) jobData.title = ctx.currentJobTitle || ctx.currentJobTitlePreview || 'Unknown Position';
+  if (!jobData.company) jobData.company = ctx.currentJobCompany || ctx.currentJobCompanyPreview || 'Unknown Company';
   if (!jobData.jobId) jobData.jobId = ctx.currentJobId || 'unknown';
   if (!jobData.details) jobData.details = `${jobData.title} at ${jobData.company}`;
 
