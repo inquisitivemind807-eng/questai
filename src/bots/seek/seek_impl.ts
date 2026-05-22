@@ -1797,12 +1797,15 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
       rawData: jobData   // keep original for reference; includes applicationType
     };
 
+    let saved = false;
+
     try {
       // Primary path: API client with JWT/session conversion
       const result = await apiRequest('/api/scraped-jobs', 'POST', payload);
       if (result?.success) {
         userLog(`📋 ${payload.title} — ${payload.company} ✅ Saved`);
         printLog(`DB id: ${result.id || 'new'}`);
+        saved = true;
       } else {
         printLog(`⚠️ DB save returned unexpected response: ${JSON.stringify(result)}`);
       }
@@ -1831,6 +1834,7 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
         if (resp.ok) {
           userLog(`📋 ${payload.title} — ${payload.company} ✅ Saved`);
           printLog(`Saved via fallback path`);
+          saved = true;
         } else {
           const txt = await resp.text().catch(() => '');
           printLog(`⚠️ Fallback DB save failed (${resp.status}): ${txt}`);
@@ -1840,7 +1844,10 @@ export async function* saveScrapedJob(ctx: WorkflowContext): AsyncGenerator<stri
       }
     }
 
-    if (ctx.isQuickApply) {
+    if (!saved) {
+      printLog(`❌ DB save failed — job saved to local file only`);
+      yield "save_failed";
+    } else if (ctx.isQuickApply) {
       yield "job_saved_quick_apply";
     } else {
       yield "job_saved";
