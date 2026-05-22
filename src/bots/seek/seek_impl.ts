@@ -44,7 +44,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import { fileURLToPath } from 'url';
 import { loadUserConfig } from '../core/config_loader';
-import { highlightElement } from '../core/highlight';
+import { highlightElement, highlightSelector } from '../core/highlight';
 
 
 const __filename = fileURLToPath(import.meta.url);
@@ -636,11 +636,44 @@ export async function* refreshPage(ctx: WorkflowContext): AsyncGenerator<string,
 }
 
 // Step 3: Detect Page State
+// Checks visible DOM only — avoids false positives from "Sign in" text in
+// page source (scripts, meta, hidden elements, footer links).
 export async function* detectPageState(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   await ctx.driver.sleep(2000);
-  const pageSource = await ctx.driver.getPageSource();
-  const hasSignIn = pageSource.includes('data-automation="sign in"') || pageSource.includes('Sign in');
-  yield hasSignIn ? "sign_in_required" : "logged_in";
+
+  const needsSignIn = await ctx.driver.executeScript(() => {
+    // 1. Check for visible sign-in button in header (definitive: NOT logged in)
+    const signInEls = document.querySelectorAll('[data-automation="sign in"]');
+    for (const el of signInEls) {
+      if (el.offsetParent !== null) {
+        const text = (el.textContent || '').trim().toLowerCase();
+        if (text === 'sign in' || text === 'sign in / register') {
+          return true;
+        }
+      }
+    }
+
+    // 2. Check visible body text for sign-in prompts (NOT logged in)
+    const visibleText = document.body.innerText || '';
+    const signInIdx = visibleText.indexOf('Sign in');
+    if (signInIdx !== -1) {
+      // Only count it if it's in the header area (top 200 chars of visible text)
+      if (signInIdx < 200) {
+        return true;
+      }
+    }
+
+    // 3. If neither definitive sign-in indicator found → logged in
+    return false;
+  }).catch(() => false) as boolean;
+
+  if (needsSignIn) {
+    printLog('🔐 Sign-in link visible in header — sign-in required');
+    yield "sign_in_required";
+  } else {
+    printLog('✅ User appears to be signed in to Seek');
+    yield "logged_in";
+  }
 }
 
 // Step 3.2: Fill search form fields from user configuration (keywords/location)
@@ -1348,6 +1381,15 @@ export async function* detectApplyType(ctx: WorkflowContext): AsyncGenerator<str
 // Parse Job Details
 export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    // Highlight elements being extracted for visual feedback
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-title"]', '#ff00ff', false).catch(() => {});
+    await highlightSelector(ctx.driver, 'h1[data-automation="jobTitle"]', '#ff00ff', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="advertiser-name"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-location"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-salary"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-work-type"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="jobAdDetails"]', '#ffff00', false).catch(() => {});
+
     const jobData = await ctx.driver.executeScript(`
       // Extract job content with improved Seek structure handling
       function extractJobContent() {
@@ -1631,6 +1673,15 @@ export async function* parseJobDetails(ctx: WorkflowContext): AsyncGenerator<str
 // Parse External Job Details (regular/external apply jobs)
 export async function* parseExternalJobDetails(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   try {
+    // Highlight elements being extracted for visual feedback
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-title"]', '#ff00ff', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="advertiser-name"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-location"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-salary"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-work-type"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="job-detail-classifications"]', '#ffff00', false).catch(() => {});
+    await highlightSelector(ctx.driver, '[data-automation="jobAdDetails"]', '#ffff00', false).catch(() => {});
+
     // Extract job info directly from the currently-visible job card panel on the seek results page
     const jobData = await ctx.driver.executeScript(`
       try {
