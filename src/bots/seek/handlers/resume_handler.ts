@@ -67,9 +67,15 @@ async function resolveResumeText(ctx: WorkflowContext): Promise<string> {
 
 async function generateAIResume(ctx: WorkflowContext): Promise<string> {
   let jobData: any = {};
-  if (ctx.currentJobFile) {
+  if (ctx.currentJobFile && fs.existsSync(ctx.currentJobFile)) {
     jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
   }
+
+  // Fallback to context data when no job file (direct apply mode skips extraction)
+  if (!jobData.title) jobData.title = ctx.currentJobTitle || 'Unknown Position';
+  if (!jobData.company) jobData.company = ctx.currentJobCompany || 'Unknown Company';
+  if (!jobData.jobId) jobData.jobId = ctx.currentJobId || 'unknown';
+  if (!jobData.details) jobData.details = `${jobData.title} at ${jobData.company}`;
 
   if (!jobData.title || !jobData.company) {
     throw new Error("No job data available - cannot generate resume");
@@ -174,10 +180,11 @@ export async function* handleResumeSelection(ctx: WorkflowContext): AsyncGenerat
     const resumeText = await generateAIResume(ctx);
 
     let jobData: any = {};
-    if (ctx.currentJobFile) {
+    if (ctx.currentJobFile && fs.existsSync(ctx.currentJobFile)) {
       jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
     }
-    const resumeFilePath = await createResumeFile(ctx, resumeText, jobData.jobId || 'unknown');
+    const fallbackJobId = jobData.jobId || ctx.currentJobId || 'unknown';
+    const resumeFilePath = await createResumeFile(ctx, resumeText, fallbackJobId);
     const uploadedFileName = path.basename(resumeFilePath);
 
     if (resumeUi.hasUploadRadio) {
