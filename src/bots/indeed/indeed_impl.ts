@@ -1034,7 +1034,8 @@ export async function* attemptEasyApply(ctx: any) {
             await ctx.page.waitForTimeout(4000);
         }
 
-        const applyBtnSelector = ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
+        // Use jobDetails.internalApplyButton first (more comprehensive), fall back to jobCards.applyButton
+        const applyBtnSelector = ctx.selectors.jobDetails?.internalApplyButton || ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
         const applyBtn = ctx.page.locator(applyBtnSelector).first();
 
         if (await applyBtn.count() > 0) {
