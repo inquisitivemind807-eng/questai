@@ -173,29 +173,21 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         let jobUrl = ctx.config?.directApplyUrl;
         if (!jobUrl) throw new Error("No Direct Apply URL provided");
 
-        // Extract the job key (jk) to find the matching card later.
-        // Cannot use vjk parameter — it triggers Cloudflare.
-        const jkMatch = jobUrl.match(/jk=([a-f0-9]+)/i);
-        ctx._targetJk = jkMatch ? jkMatch[1] : null;
+        // Extract jk from any URL format, or treat the input as a raw jk
+        const jkMatch = jobUrl.match(/jk=([a-f0-9]+)/i) || jobUrl.match(/^([a-f0-9]{16,})$/);
+        const jk = jkMatch ? jkMatch[1] : null;
 
-        // Two strategies:
-        // 1. If URL is a direct viewjob/pagead page → go there directly
-        // 2. If URL is a search result /rc/clk redirect → use search + card click
-        const isDirectUrl = /\/(viewjob|pagead|job)\?/.test(jobUrl);
-
-        if (isDirectUrl || !jkMatch) {
-            // Direct navigation to the job page
-            if (jobUrl.startsWith('/')) {
-                jobUrl = `https://www.indeed.com${jobUrl}`;
-            }
-            await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
-            console.log('indeed.navigate', `Direct URL: ${jobUrl}`);
-        } else {
-            // Navigate to search results and click the matching card
-            const searchUrl = buildSearchUrl(ctx);
-            await ctx.page.goto(searchUrl, { waitUntil: 'load', timeout: 30000 });
-            console.log('indeed.navigate', `Search URL: ${searchUrl}`);
+        if (jk) {
+            // Construct the proper Indeed job page URL using the jk
+            jobUrl = `https://www.indeed.com/job?jk=${jk}`;
+            ctx._targetJk = jk;
+        } else if (jobUrl.startsWith('/')) {
+            jobUrl = `https://www.indeed.com${jobUrl}`;
+            ctx._targetJk = null;
         }
+
+        console.log('indeed.navigate', `Navigating to: ${jobUrl}`);
+        await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
         await ctx.page.waitForTimeout(3000);
 
         // Ensure overlay is ready on the job page
@@ -430,6 +422,22 @@ export async function* showManualLoginPrompt(ctx: any) {
             if (ctx.overlay) {
                 await ctx.overlay.updateJobProgress(0, 0, 'Login confirmed, proceeding...', 1).catch(() => { });
             }
+
+            // After Sign In click, Indeed redirects to the home page.
+            // Navigate back to the job URL so the apply button is visible.
+            if (ctx.config?.directApplyUrl) {
+                let jobUrl = ctx.config.directApplyUrl;
+                const jkMatch = jobUrl.match(/jk=([a-f0-9]+)/i) || jobUrl.match(/^([a-f0-9]{16,})$/);
+                if (jkMatch) {
+                    jobUrl = `https://www.indeed.com/job?jk=${jkMatch[1]}`;
+                } else if (jobUrl.startsWith('/')) {
+                    jobUrl = `https://www.indeed.com${jobUrl}`;
+                }
+                console.log('indeed.login', `Navigating back to job URL: ${jobUrl}`);
+                await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
+                await ctx.page.waitForTimeout(3000);
+            }
+
             yield 'login_successful';
         } else {
             console.warn('indeed.login', 'Login timed out.');
@@ -1046,25 +1054,8 @@ export async function* processJobs(ctx: any) {
 export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
-        // If we navigated via search results (has _targetJk but not on direct page),
-        // click the matching card to open the details panel.
-        const currentUrl = ctx.page.url();
-        const isDirectPage = /\/(viewjob|pagead)\?/.test(currentUrl);
-        
-        if (ctx._targetJk && !isDirectPage) {
-            const cardSelector = `[data-jk="${ctx._targetJk}"], a[href*="jk=${ctx._targetJk}"]`;
-            const card = ctx.page.locator(cardSelector).first();
-            if (await card.count() > 0) {
-                await highlight(card, '#ff00ff');
-                await card.scrollIntoViewIfNeeded?.().catch(() => {});
-                await card.click({ force: true }).catch(() => {});
-                await ctx.page.waitForTimeout(3000);
-                console.log('indeed.apply', `Clicked job card for jk=${ctx._targetJk}`);
-            } else {
-                console.warn('indeed.apply', `Job card not found for jk=${ctx._targetJk}`);
-            }
-        }
-        await ctx.page.waitForTimeout(2000);
+        // Wait for the job page to fully load
+        await ctx.page.waitForTimeout(4000);
 
         // Use jobDetails.internalApplyButton first (more comprehensive), fall back to jobCards.applyButton
         const applyBtnSelector = ctx.selectors.jobDetails?.internalApplyButton || ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
