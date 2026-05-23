@@ -178,10 +178,24 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         const jkMatch = jobUrl.match(/jk=([a-f0-9]+)/i);
         ctx._targetJk = jkMatch ? jkMatch[1] : null;
 
-        // Navigate to the search results page (same as extract flow).
-        // This avoids Cloudflare which blocks vjk/direct job URLs.
-        const searchUrl = buildSearchUrl(ctx);
-        await ctx.page.goto(searchUrl, { waitUntil: 'load', timeout: 30000 });
+        // Two strategies:
+        // 1. If URL is a direct viewjob/pagead page → go there directly
+        // 2. If URL is a search result /rc/clk redirect → use search + card click
+        const isDirectUrl = /\/(viewjob|pagead|job)\?/.test(jobUrl);
+
+        if (isDirectUrl || !jkMatch) {
+            // Direct navigation to the job page
+            if (jobUrl.startsWith('/')) {
+                jobUrl = `https://www.indeed.com${jobUrl}`;
+            }
+            await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
+            console.log('indeed.navigate', `Direct URL: ${jobUrl}`);
+        } else {
+            // Navigate to search results and click the matching card
+            const searchUrl = buildSearchUrl(ctx);
+            await ctx.page.goto(searchUrl, { waitUntil: 'load', timeout: 30000 });
+            console.log('indeed.navigate', `Search URL: ${searchUrl}`);
+        }
         await ctx.page.waitForTimeout(3000);
 
         // Ensure overlay is ready on the job page
@@ -1032,9 +1046,12 @@ export async function* processJobs(ctx: any) {
 export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
-        // Find and click the job card matching our target jk.
-        // This opens the details panel where the Easy Apply button lives.
-        if (ctx._targetJk) {
+        // If we navigated via search results (has _targetJk but not on direct page),
+        // click the matching card to open the details panel.
+        const currentUrl = ctx.page.url();
+        const isDirectPage = /\/(viewjob|pagead)\?/.test(currentUrl);
+        
+        if (ctx._targetJk && !isDirectPage) {
             const cardSelector = `[data-jk="${ctx._targetJk}"], a[href*="jk=${ctx._targetJk}"]`;
             const card = ctx.page.locator(cardSelector).first();
             if (await card.count() > 0) {
@@ -1044,13 +1061,7 @@ export async function* attemptEasyApply(ctx: any) {
                 await ctx.page.waitForTimeout(3000);
                 console.log('indeed.apply', `Clicked job card for jk=${ctx._targetJk}`);
             } else {
-                console.warn('indeed.apply', `Job card not found for jk=${ctx._targetJk}, trying any card...`);
-                // Fallback: click the first job card
-                const anyCard = ctx.page.locator('[data-jk], h2 a').first();
-                if (await anyCard.count() > 0) {
-                    await anyCard.click({ force: true }).catch(() => {});
-                    await ctx.page.waitForTimeout(3000);
-                }
+                console.warn('indeed.apply', `Job card not found for jk=${ctx._targetJk}`);
             }
         }
         await ctx.page.waitForTimeout(2000);
