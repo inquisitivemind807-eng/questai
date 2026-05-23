@@ -274,16 +274,40 @@ export async function* openCheckLogin(ctx: any) {
         if (signInBtnCount > 0) await highlight(loginBtn, '#ffa500');
 
         // Also check for Indeed specific auth cookies
+        // Supports multiple regions: US uses SHOE/PassportAuthProxy, AU/global uses SURF/CTK/RQ
         const cookies = await ctx.page.context().cookies();
-        const hasAuthCookies = cookies.some((c: any) => c.name === 'SHOE' || c.name.includes('PassportAuthProxy'));
+        const authCookieNames = ['SHOE', 'SURF', 'CTK', 'RQ'];
+        const hasAuthCookies = cookies.some((c: any) =>
+          authCookieNames.includes(c.name) || c.name.includes('PassportAuthProxy')
+        );
 
-        const isLoggedIn = (signInBtnCount === 0) && hasAuthCookies;
+        // Check visible sign-in elements only — page source may have sign-in links
+        // in scripts, meta, or nav elements even when logged in.
+        let visibleSignInCount = 0;
+        try {
+          visibleSignInCount = await ctx.page.evaluate(() => {
+            const els = document.querySelectorAll("a[href*='/auth'], a[href*='/account/login'], a");
+            let count = 0;
+            els.forEach(el => {
+              const text = (el.textContent || '').trim().toLowerCase();
+              if ((text === 'sign in' || text === 'sign in') && el.offsetParent !== null) {
+                count++;
+              }
+            });
+            return count;
+          });
+        } catch (e) {
+          // Fall back to locator count if evaluate fails (e.g., Camoufox restrictions)
+          visibleSignInCount = signInBtnCount;
+        }
+
+        const isLoggedIn = (visibleSignInCount === 0) && hasAuthCookies;
 
         if (isLoggedIn) {
-            console.log('indeed.checkLogin', 'Session is authenticated.');
+            console.log('indeed.checkLogin', `Session is authenticated (visible sign-in: ${visibleSignInCount}, auth cookies: ${hasAuthCookies}).`);
             yield 'login_not_needed';
         } else {
-            console.log('indeed.checkLogin', `User is not logged in. (Sign-in buttons found: ${signInBtnCount}, Auth Cookies: ${hasAuthCookies})`);
+            console.log('indeed.checkLogin', `User is not logged in. (Visible sign-in elements: ${visibleSignInCount}, Auth Cookies: ${hasAuthCookies})`);
             yield 'user_needs_to_login';
         }
     } catch (error) {
@@ -354,7 +378,10 @@ export async function* showManualLoginPrompt(ctx: any) {
 
             // Also passively check for secure auth cookies if they fully log in but forget to click the button
             const cookies = await ctx.page.context().cookies();
-            const hasAuthCookies = cookies.some((c: any) => c.name.includes('PassportAuthProxy') || c.name.includes('SHOE'));
+            const authCookieNames = ['SHOE', 'SURF', 'CTK', 'RQ'];
+            const hasAuthCookies = cookies.some((c: any) =>
+              authCookieNames.includes(c.name) || c.name.includes('PassportAuthProxy')
+            );
 
             if (isClickConfirmed || hasAuthCookies) {
                 authenticated = true;
