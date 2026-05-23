@@ -1030,21 +1030,21 @@ export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
         if (ctx.config?.directApplyUrl) {
-            await ctx.page.goto(ctx.config.directApplyUrl, { waitUntil: 'networkidle', timeout: 30000 });
+            // Indeed's Easy Apply button only appears in the search-results panel view,
+            // not on standalone job pages. Extract the jk from the URL and navigate
+            // to the panel view using the vjk parameter.
+            const jkMatch = ctx.config.directApplyUrl.match(/jk=([a-f0-9]+)/i);
+            const jk = jkMatch ? jkMatch[1] : null;
+            
+            if (jk) {
+                // Navigate to search results with job panel open (mimics extract flow)
+                const panelUrl = `https://www.indeed.com/jobs?q=&vjk=${jk}`;
+                await ctx.page.goto(panelUrl, { waitUntil: 'networkidle', timeout: 30000 });
+            } else {
+                await ctx.page.goto(ctx.config.directApplyUrl, { waitUntil: 'networkidle', timeout: 30000 });
+            }
             await ctx.page.waitForTimeout(6000);
-
-            // Indeed sometimes lazy-loads the apply button. Try clicking the job
-            // card/title first (mimics extract flow) to trigger the details panel.
-            try {
-                const jobTitle = ctx.page.locator('h1, h2, [data-testid="jobsearch-JobInfoHeader-title"]').first();
-                if (await jobTitle.count() > 0) {
-                    await jobTitle.click({ force: true }).catch(() => {});
-                    await ctx.page.waitForTimeout(2000);
-                    // Scroll down — apply button may be below the fold
-                    await ctx.page.evaluate(() => window.scrollBy(0, 400)).catch(() => {});
-                    await ctx.page.waitForTimeout(1000);
-                }
-            } catch (_) {}
+        }
 
         // Use jobDetails.internalApplyButton first (more comprehensive), fall back to jobCards.applyButton
         const applyBtnSelector = ctx.selectors.jobDetails?.internalApplyButton || ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
