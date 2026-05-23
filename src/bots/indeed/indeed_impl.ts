@@ -173,8 +173,18 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         let jobUrl = ctx.config?.directApplyUrl;
         if (!jobUrl) throw new Error("No Direct Apply URL provided");
 
-        // Normalize relative URLs
-        if (jobUrl.startsWith('/')) {
+        // Extract the job key (jk) for panel-based navigation.
+        // Indeed's Easy Apply button only appears in the search-results panel
+        // view, not on standalone /viewjob or /rc/clk pages.
+        const jkMatch = jobUrl.match(/jk=([a-f0-9]+)/i);
+        const jk = jkMatch ? jkMatch[1] : null;
+
+        if (jk) {
+            // Use search URL with vjk to open the job in the details panel
+            const searchUrl = buildSearchUrl(ctx);
+            const separator = searchUrl.includes('?') ? '&' : '?';
+            jobUrl = `${searchUrl}${separator}vjk=${jk}`;
+        } else if (jobUrl.startsWith('/')) {
             jobUrl = `https://www.indeed.com${jobUrl}`;
         }
 
@@ -1029,22 +1039,18 @@ export async function* processJobs(ctx: any) {
 export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
-        if (ctx.config?.directApplyUrl) {
-            // Indeed's Easy Apply button only appears in the search-results panel view,
-            // not on standalone job pages. Extract the jk from the URL and navigate
-            // to the panel view using the vjk parameter.
-            const jkMatch = ctx.config.directApplyUrl.match(/jk=([a-f0-9]+)/i);
-            const jk = jkMatch ? jkMatch[1] : null;
-            
-            if (jk) {
-                // Navigate to search results with job panel open (mimics extract flow)
-                const panelUrl = `https://www.indeed.com/jobs?q=&vjk=${jk}`;
-                await ctx.page.goto(panelUrl, { waitUntil: 'networkidle', timeout: 30000 });
-            } else {
-                await ctx.page.goto(ctx.config.directApplyUrl, { waitUntil: 'networkidle', timeout: 30000 });
+        // The navigateToDirectApplyUrl step already navigated to the search+panel URL.
+        // Just ensure the page is fully loaded.
+        await ctx.page.waitForTimeout(4000);
+
+        // Try scrolling the job card into view to trigger lazy-loaded elements
+        try {
+            const jobCard = ctx.page.locator('[data-jk], div.job_seen_beacon').first();
+            if (await jobCard.count() > 0) {
+                await jobCard.scrollIntoViewIfNeeded?.().catch(() => {});
+                await ctx.page.waitForTimeout(1000);
             }
-            await ctx.page.waitForTimeout(6000);
-        }
+        } catch (_) {}
 
         // Use jobDetails.internalApplyButton first (more comprehensive), fall back to jobCards.applyButton
         const applyBtnSelector = ctx.selectors.jobDetails?.internalApplyButton || ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
