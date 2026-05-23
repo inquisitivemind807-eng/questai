@@ -165,6 +165,60 @@ export async function* step0(ctx: any) {
 }
 
 /**
+ * Handle Cloudflare "Verify you are human" challenge.
+ * Looks for the challenge iframe/checkbox and clicks it.
+ */
+async function handleCloudflareChallenge(page: any): Promise<void> {
+    try {
+        // Check for Cloudflare challenge iframe
+        const cfFrame = page.locator('iframe[src*="cloudflare"], iframe[src*="challenge"]').first();
+        if (await cfFrame.count() > 0) {
+            console.log('indeed.cf', 'Cloudflare challenge iframe detected, clicking checkbox...');
+            const frame = await cfFrame.contentFrame();
+            if (frame) {
+                const checkbox = frame.locator('input[type="checkbox"], label, .cb-lb, #challenge-stage label').first();
+                if (await checkbox.count() > 0) {
+                    await checkbox.click({ force: true }).catch(() => {});
+                    console.log('indeed.cf', 'Clicked Cloudflare checkbox, waiting...');
+                    await page.waitForTimeout(8000);
+                }
+            }
+            return;
+        }
+
+        // Check for inline Cloudflare challenge (no iframe)
+        const cfStage = page.locator('#challenge-stage, [id*="challenge"], .cf-turnstile, [data-sitekey]').first();
+        if (await cfStage.count() > 0) {
+            console.log('indeed.cf', 'Inline Cloudflare challenge detected, clicking...');
+            const checkbox = page.locator('#challenge-stage input[type="checkbox"], #challenge-stage label, .cf-turnstile iframe').first();
+            if (await checkbox.count() > 0) {
+                await checkbox.click({ force: true }).catch(() => {});
+                await page.waitForTimeout(8000);
+            } else {
+                // Try clicking the stage itself
+                await cfStage.click({ force: true }).catch(() => {});
+                await page.waitForTimeout(8000);
+            }
+            return;
+        }
+
+        // Check for "Verify you are human" text anywhere
+        const bodyText = await page.locator('body').innerText().catch(() => '');
+        if (bodyText.toLowerCase().includes('verify you are human') || bodyText.toLowerCase().includes('are you a human')) {
+            console.log('indeed.cf', 'Cloudflare "verify human" text detected, attempting click...');
+            // Try clicking any checkbox or the center of the page
+            const anyCheckbox = page.locator('input[type="checkbox"]').first();
+            if (await anyCheckbox.count() > 0) {
+                await anyCheckbox.click({ force: true }).catch(() => {});
+                await page.waitForTimeout(8000);
+            }
+        }
+    } catch (e) {
+        console.log('indeed.cf', 'Cloudflare handling error (non-critical):', e);
+    }
+}
+
+/**
  * Navigate to a specific Indeed job URL for the Direct Apply workflow.
  * Normalizes relative URLs (adding https://www.indeed.com prefix).
  */
@@ -189,6 +243,9 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         console.log('indeed.navigate', `Navigating to: ${jobUrl}`);
         await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
         await ctx.page.waitForTimeout(3000);
+
+        // Handle Cloudflare "Verify you are human" challenge
+        await handleCloudflareChallenge(ctx.page);
 
         // Ensure overlay is ready on the job page
         if (ctx.overlay) {
