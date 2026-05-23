@@ -301,7 +301,10 @@ export async function* openCheckLogin(ctx: any) {
           visibleSignInCount = signInBtnCount;
         }
 
-        const isLoggedIn = (visibleSignInCount === 0) && hasAuthCookies;
+        const isLoggedIn = hasAuthCookies;
+        // Note: visible sign-in elements are informative only — Indeed may show
+        // "Sign in" links in the nav even when authenticated (e.g., account switching).
+        // Auth cookies are the definitive check.
 
         if (isLoggedIn) {
             console.log('indeed.checkLogin', `Session is authenticated (visible sign-in: ${visibleSignInCount}, auth cookies: ${hasAuthCookies}).`);
