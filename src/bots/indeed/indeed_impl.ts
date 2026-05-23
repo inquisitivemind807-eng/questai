@@ -202,7 +202,7 @@ export function buildSearchUrl(ctx: any): string {
     const isRemote = (fd.remotePreference || '').toLowerCase() === 'remote';
     const radius = fd.radius || '';
     const explvl = normalizeExperienceLevel(fd.experienceLevel || '');
-    const minSalary = fd.minSalary || '';
+    const minSalary = String(fd.minSalary || '');
     // User can drop a raw Indeed sc= string in config for advanced taxo* filters
     const sc = fd.indeedSc || '';
 
