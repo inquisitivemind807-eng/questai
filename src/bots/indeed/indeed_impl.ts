@@ -114,10 +114,17 @@ export async function* step0(ctx: any) {
         ctx.sessionExists = fs.readdirSync(sessionsDir).filter(file => !['screenshots', 'logs', 'resume', 'temp'].includes(file)).length > 0;
 
         try {
+            // Set window to 1280x900 — fits most laptop screens without overflow
+            // while keeping enough width for Indeed's responsive desktop layout.
+            // Headless mode uses 1920x1080 since there's no visible window.
+            const isHeadless = ctx.config?.headless === true;
+            const winWidth = isHeadless ? 1920 : 1280;
+            const winHeight = isHeadless ? 1080 : 900;
+
             const browser = await Camoufox({
-                headless: ctx.config?.headless === true,
+                headless: isHeadless,
                 user_data_dir: sessionsDir,
-                window: [1920, 1080]
+                window: [winWidth, winHeight]
             });
             ctx.browser = browser;
 
@@ -131,9 +138,9 @@ export async function* step0(ctx: any) {
             const pages = await browser.pages();
             ctx.page = pages.length > 0 ? pages[0] : await browser.newPage();
 
-            // Try to maximize window via JS and set viewport
+            // Match viewport to window dimensions
             try {
-                await ctx.page.setViewportSize({ width: 1920, height: 1080 });
+                await ctx.page.setViewportSize({ width: winWidth, height: winHeight });
             } catch (e) { }
 
             ctx.overlay = new UniversalOverlay(new PlaywrightDriverAdapter(ctx.page) as any, 'Indeed');
