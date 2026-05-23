@@ -173,22 +173,15 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         let jobUrl = ctx.config?.directApplyUrl;
         if (!jobUrl) throw new Error("No Direct Apply URL provided");
 
-        // Extract the job key (jk) for panel-based navigation.
-        // Indeed's Easy Apply button only appears in the search-results panel
-        // view, not on standalone /viewjob or /rc/clk pages.
+        // Extract the job key (jk) to find the matching card later.
+        // Cannot use vjk parameter — it triggers Cloudflare.
         const jkMatch = jobUrl.match(/jk=([a-f0-9]+)/i);
-        const jk = jkMatch ? jkMatch[1] : null;
+        ctx._targetJk = jkMatch ? jkMatch[1] : null;
 
-        if (jk) {
-            // Use search URL with vjk to open the job in the details panel
-            const searchUrl = buildSearchUrl(ctx);
-            const separator = searchUrl.includes('?') ? '&' : '?';
-            jobUrl = `${searchUrl}${separator}vjk=${jk}`;
-        } else if (jobUrl.startsWith('/')) {
-            jobUrl = `https://www.indeed.com${jobUrl}`;
-        }
-
-        await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
+        // Navigate to the search results page (same as extract flow).
+        // This avoids Cloudflare which blocks vjk/direct job URLs.
+        const searchUrl = buildSearchUrl(ctx);
+        await ctx.page.goto(searchUrl, { waitUntil: 'load', timeout: 30000 });
         await ctx.page.waitForTimeout(3000);
 
         // Ensure overlay is ready on the job page
@@ -1039,21 +1032,32 @@ export async function* processJobs(ctx: any) {
 export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
-        // The navigateToDirectApplyUrl step already navigated to the search+panel URL.
-        // Just ensure the page is fully loaded.
-        await ctx.page.waitForTimeout(4000);
-
-        // Try scrolling the job card into view to trigger lazy-loaded elements
-        try {
-            const jobCard = ctx.page.locator('[data-jk], div.job_seen_beacon').first();
-            if (await jobCard.count() > 0) {
-                await jobCard.scrollIntoViewIfNeeded?.().catch(() => {});
-                await ctx.page.waitForTimeout(1000);
+        // Find and click the job card matching our target jk.
+        // This opens the details panel where the Easy Apply button lives.
+        if (ctx._targetJk) {
+            const cardSelector = `[data-jk="${ctx._targetJk}"], a[href*="jk=${ctx._targetJk}"]`;
+            const card = ctx.page.locator(cardSelector).first();
+            if (await card.count() > 0) {
+                await highlight(card, '#ff00ff');
+                await card.scrollIntoViewIfNeeded?.().catch(() => {});
+                await card.click({ force: true }).catch(() => {});
+                await ctx.page.waitForTimeout(3000);
+                console.log('indeed.apply', `Clicked job card for jk=${ctx._targetJk}`);
+            } else {
+                console.warn('indeed.apply', `Job card not found for jk=${ctx._targetJk}, trying any card...`);
+                // Fallback: click the first job card
+                const anyCard = ctx.page.locator('[data-jk], h2 a').first();
+                if (await anyCard.count() > 0) {
+                    await anyCard.click({ force: true }).catch(() => {});
+                    await ctx.page.waitForTimeout(3000);
+                }
             }
-        } catch (_) {}
+        }
+        await ctx.page.waitForTimeout(2000);
 
         // Use jobDetails.internalApplyButton first (more comprehensive), fall back to jobCards.applyButton
         const applyBtnSelector = ctx.selectors.jobDetails?.internalApplyButton || ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
+
         const applyBtn = ctx.page.locator(applyBtnSelector).first();
 
         if (await applyBtn.count() > 0) {
