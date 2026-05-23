@@ -28,6 +28,7 @@
         "salaryInfoAndJobType": "#salaryInfoAndJobType",
         "jobType": "[data-testid='jobsearch-JobInfoHeader-jobType'], span.css-1u1g3ig",
         "internalApplyButton": "button[data-testid='indeedApply'], #indeedApplyButton, button.sp-IndeedApplyButton, button:has-text('Apply with Indeed'), button[data-testid='indeedApplyButton-test'], button:has-text('Apply now')",
+        "standaloneApplyButton": "button[data-testid='indeedApply'], #indeedApplyButton, button.sp-IndeedApplyButton, button[data-testid='indeedApplyButton-test'], button:has-text('Apply with Indeed'), button:has-text('Apply now'), [class*='ia-IndeedApplyButton'], button[aria-label*='Apply'], .jobsearch-IndeedApplyButton",
         "externalApplyButton": "button[contenthtml*='Apply on company site'], button:has-text('Apply on company site'), a:has-text('Apply on company site')",
         "description": "#jobDescriptionText",
         "benefits": "[data-testid='benefits-test'] ul li, #benefits ul li",

@@ -179,7 +179,24 @@ async function handleCloudflareChallenge(page: any): Promise<void> {
 
         console.log('indeed.cf', 'Cloudflare challenge detected, attempting bypass...');
 
-        // Try iframe approach first
+        // Try Turnstile iframe first (modern Cloudflare challenge platform)
+        const turnstileFrame = page.locator(
+            'iframe[src*="challenges.cloudflare.com"], iframe[title*="Widget containing checkbox"], iframe[src*="turnstile"]'
+        ).first();
+        if (await turnstileFrame.count() > 0) {
+            const frame = await turnstileFrame.contentFrame();
+            if (frame) {
+                const cb = frame.locator('input[type="checkbox"], label, .cb-lb, .cb-i, #challenge-stage *, [class*="cf-"]').first();
+                if (await cb.count() > 0) {
+                    await cb.click({ force: true }).catch(() => {});
+                    console.log('indeed.cf', 'Clicked Turnstile challenge checkbox');
+                    await page.waitForTimeout(5000);
+                    return;
+                }
+            }
+        }
+
+        // Try legacy Challenge Platform iframe
         const cfFrame = page.locator('iframe[src*="cloudflare"], iframe[src*="challenge"]').first();
         if (await cfFrame.count() > 0) {
             const frame = await cfFrame.contentFrame();
@@ -188,26 +205,38 @@ async function handleCloudflareChallenge(page: any): Promise<void> {
                 if (await cb.count() > 0) {
                     await cb.click({ force: true }).catch(() => {});
                     console.log('indeed.cf', 'Clicked Cloudflare iframe checkbox');
-                    await page.waitForTimeout(10000);
+                    await page.waitForTimeout(5000);
                     return;
                 }
             }
         }
 
-        // Try direct checkbox/label click
+        // Try inline challenge widget on the page body
+        const inlineWidget = page.locator('#challenge-stage, div[class*="cf-"], .cf-turnstile, .cf-challenge').first();
+        if (await inlineWidget.count() > 0) {
+            const interactive = inlineWidget.locator('input[type="checkbox"], label, button').first();
+            if (await interactive.count() > 0) {
+                await interactive.click({ force: true }).catch(() => {});
+                console.log('indeed.cf', 'Clicked inline challenge widget');
+                await page.waitForTimeout(5000);
+                return;
+            }
+        }
+
+        // Try direct checkbox/label click on the page
         const checkboxes = page.locator('input[type="checkbox"]');
         const cbCount = await checkboxes.count();
         if (cbCount > 0) {
             await checkboxes.first().click({ force: true }).catch(() => {});
             console.log('indeed.cf', `Clicked ${cbCount} checkbox(es)`);
-            await page.waitForTimeout(10000);
+            await page.waitForTimeout(5000);
             return;
         }
 
         // Last resort: click anywhere on the page to trigger the challenge
         await page.locator('body').click({ position: { x: 400, y: 300 } }).catch(() => {});
         console.log('indeed.cf', 'Clicked body center as fallback');
-        await page.waitForTimeout(8000);
+        await page.waitForTimeout(5000);
     } catch (e) {
         console.log('indeed.cf', 'Cloudflare handling error (non-critical):', e);
     }
@@ -238,6 +267,10 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
         console.log('indeed.navigate', `Navigating to: ${jobUrl}`);
         await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
         await ctx.page.waitForTimeout(3000);
+
+        // Handle Cloudflare challenge before anything else on the job page
+        await handleCloudflareChallenge(ctx.page);
+        await ctx.page.waitForTimeout(2000);
 
         // Ensure overlay is ready on the job page
         if (ctx.overlay) {
@@ -315,13 +348,16 @@ export async function* openCheckLogin(ctx: any) {
         // Handle Cloudflare first — must pass before anything else
         await handleCloudflareChallenge(ctx.page);
 
-        const searchUrl = buildSearchUrl(ctx);
-        if (!currentUrl.includes('indeed.com') || currentUrl === 'about:blank') {
-            console.log('indeed.checkLogin', `Navigating to search URL for initial check: ${searchUrl}`);
-            await ctx.page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
-            await ctx.page.waitForTimeout(3000);
-            // Check Cloudflare again after navigation
-            await handleCloudflareChallenge(ctx.page);
+        // In apply (directApplyUrl) mode, stay on the job page — don't navigate to search
+        if (!ctx.config?.directApplyUrl) {
+            const searchUrl = buildSearchUrl(ctx);
+            if (!currentUrl.includes('indeed.com') || currentUrl === 'about:blank') {
+                console.log('indeed.checkLogin', `Navigating to search URL for initial check: ${searchUrl}`);
+                await ctx.page.goto(searchUrl, { waitUntil: 'domcontentloaded' });
+                await ctx.page.waitForTimeout(3000);
+                // Check Cloudflare again after navigation
+                await handleCloudflareChallenge(ctx.page);
+            }
         }
 
         // Initialize/Refresher Overlay on the real page
@@ -490,6 +526,10 @@ export async function* showManualLoginPrompt(ctx: any) {
                 console.log('indeed.login', `Navigating back to job URL: ${jobUrl}`);
                 await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
                 await ctx.page.waitForTimeout(3000);
+
+                // Handle Cloudflare challenge that may appear on the fresh job page load
+                await handleCloudflareChallenge(ctx.page);
+                await ctx.page.waitForTimeout(2000);
             }
 
             yield 'login_successful';
@@ -1108,24 +1148,58 @@ export async function* processJobs(ctx: any) {
 export async function* attemptEasyApply(ctx: any) {
     console.log('indeed.apply', 'Attempting direct apply...');
     try {
-        // Wait for the job page to fully load
-        await ctx.page.waitForTimeout(4000);
+        // Handle any Cloudflare challenge that may be blocking the page
+        await handleCloudflareChallenge(ctx.page);
+        await ctx.page.waitForTimeout(2000);
 
-        // Use jobDetails.internalApplyButton first (more comprehensive), fall back to jobCards.applyButton
-        const applyBtnSelector = ctx.selectors.jobDetails?.internalApplyButton || ctx.selectors.jobCards?.applyButton || 'button[data-testid="indeedApply"], button:has-text("Apply")';
+        // Broad selector set covering both the extract-flow detail pane and
+        // the standalone job page at https://www.indeed.com/job?jk=...
+        const easyApplySelectors = [
+            'button[data-testid="indeedApply"]',
+            'button#indeedApplyButton',
+            'button.sp-IndeedApplyButton',
+            'button[data-testid="indeedApplyButton-test"]',
+            'button:has-text("Apply with Indeed")',
+            'button:has-text("Apply now")',
+            '[class*="ia-IndeedApplyButton"]',
+            'button[aria-label*="Apply"]',
+            '.jobsearch-IndeedApplyButton',
+        ].join(', ');
 
-        const applyBtn = ctx.page.locator(applyBtnSelector).first();
+        // Wait for the button to render with a generous timeout
+        let applyBtn = ctx.page.locator(easyApplySelectors).first();
+        const appeared = await ctx.page.waitForSelector(easyApplySelectors, { timeout: 15000 }).catch(() => null);
 
-        if (await applyBtn.count() > 0) {
+        if (!appeared) {
+            // Button not in viewport — scroll the page to trigger lazy content
+            console.log('indeed.apply', 'Apply button not visible, scrolling to find it...');
+            await ctx.page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+            await ctx.page.waitForTimeout(2000);
+            await ctx.page.evaluate(() => window.scrollTo(0, 0));
+            await ctx.page.waitForTimeout(1000);
+
+            // Try waiting again after scrolling
+            await ctx.page.waitForSelector(easyApplySelectors, { timeout: 8000 }).catch(() => {});
+        }
+
+        // Refresh locator after scroll/wait
+        applyBtn = ctx.page.locator(easyApplySelectors).first();
+        const btnCount = await applyBtn.count();
+
+        if (btnCount > 0) {
+            await applyBtn.scrollIntoViewIfNeeded().catch(() => {});
+            await ctx.page.waitForTimeout(500);
+
             await highlight(applyBtn, '#00ff00');
             await applyBtn.click({ force: true });
             await ctx.page.waitForTimeout(5000);
             yield 'modal_opened_successfully';
         } else {
-            console.warn('indeed.apply', 'Apply button not found.');
+            console.warn('indeed.apply', 'Easy Apply button not found on standalone job page.');
             yield 'no_easy_apply_button_found';
         }
     } catch (error) {
+        console.error('indeed.apply', 'Failed to click Easy Apply:', error);
         yield 'failed_to_click_easy_apply';
     }
 }
