@@ -288,12 +288,27 @@ export class BotStarter {
       }
       print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot started: ${bot_info.display_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, extractLimit: extractLimit || null } })}`);
 
+      const runStartMs = Date.now();
       await workflow_engine.run();
 
       // 8. Handle post-execution
       const final_context = workflow_engine.getContext();
       context = final_context;  // Store for cleanup handler
       await this.handle_post_execution(final_context, keep_open);
+
+      const steps_failed = final_context?._steps_failed?.length ?? 0;
+      const steps_passed = (final_context?._steps_executed?.length ?? 0) - steps_failed;
+
+      let result: 'all_pass' | 'partial_pass' | 'all_fail';
+      if (steps_failed === 0) result = 'all_pass';
+      else if (steps_passed > 0) result = 'partial_pass';
+      else result = 'all_fail';
+
+      let mode: string;
+      if (bot_name.includes('_apply')) mode = 'apply';
+      else mode = 'extract';
+
+      await this.writeRunLog(final_context, bot_name, mode, result, undefined, runStartMs);
 
       const jobsExtracted = Number(final_context.jobs_extracted || final_context.applied_jobs || 0);
       print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot completed: ${bot_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, jobsProcessed: jobsExtracted, totalJobs: final_context.total_jobs || extractLimit || 0 } })}`);
@@ -307,6 +322,11 @@ export class BotStarter {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
+      try {
+        await this.writeRunLog(context, bot_name, 'unknown', 'crashed', error instanceof Error ? error.message : String(error), runStartMs);
+      } catch (_) {
+        // logging failure should never mask the original error
+      }
       throw error;
     }
   }
@@ -365,6 +385,78 @@ export class BotStarter {
       },
       selectors: bot_selectors
     };
+  }
+
+  private async writeRunLog(
+    context: any,
+    bot_name: string,
+    mode: string,
+    result: string,
+    errorMsg?: string,
+    runStartMs?: number
+  ): Promise<void> {
+    try {
+      const duration = Date.now() - (runStartMs || Date.now());
+
+      let git_commit = 'unknown';
+      try {
+        const { execSync } = await import('child_process');
+        git_commit = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+      } catch (_) {}
+
+      let git_branch = 'unknown';
+      try {
+        const { execSync } = await import('child_process');
+        git_branch = execSync('git branch --show-current', { encoding: 'utf8' }).trim();
+      } catch (_) {}
+
+      const jobs_extracted = context?.jobs_extracted ?? 0;
+      const jobs_applied = context?.applied_jobs ?? 0;
+      const steps_total = context?._steps_executed?.length ?? 0;
+      const steps_failed = context?._steps_failed?.length ?? 0;
+      const steps_passed = steps_total - steps_failed;
+
+      const failure_types: Record<string, number> = {};
+      if (context?._steps_failed) {
+        for (const sf of context._steps_failed) {
+          const ft = sf?.failure_type ?? 'unknown';
+          failure_types[ft] = (failure_types[ft] || 0) + 1;
+        }
+      }
+
+      const failed_at_step = context?._steps_failed?.[0]?.step ?? null;
+      const failure_short = errorMsg ?? context?._steps_failed?.[0]?.error ?? null;
+      const url = context?.config?.directApplyUrl ?? null;
+      const test_job_id = context?.config?.targetJobId ?? null;
+      const preflight = context?._preflight ?? null;
+
+      const logObject = {
+        ts: new Date().toISOString(),
+        bot: bot_name,
+        mode,
+        result,
+        duration_ms: duration,
+        git_commit,
+        git_branch,
+        jobs_extracted,
+        jobs_applied,
+        steps_total,
+        steps_passed,
+        steps_failed,
+        failure_types,
+        failed_at_step,
+        failure_short,
+        url,
+        test_job_id,
+        preflight,
+      };
+
+      const dir = path.dirname(fileURLToPath(import.meta.url));
+      fs.mkdirSync(path.join(dir, 'agent'), { recursive: true });
+      fs.appendFileSync(path.join(dir, 'agent', 'run_history.jsonl'), JSON.stringify(logObject) + '\n');
+    } catch (_) {
+      // logging failure should never crash the bot
+    }
   }
 
   /**
