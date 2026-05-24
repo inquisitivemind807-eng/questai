@@ -237,6 +237,29 @@ async function handleCloudflareChallenge(page: any): Promise<void> {
         await page.locator('body').click({ position: { x: 400, y: 300 } }).catch(() => {});
         console.log('indeed.cf', 'Clicked body center as fallback');
         await page.waitForTimeout(5000);
+
+        // Check if challenge was resolved after body click
+        const stillBlocked = await page.locator('body').innerText().catch(() => '');
+        if (stillBlocked.toLowerCase().includes('verify you are human') ||
+            stillBlocked.toLowerCase().includes('cloudflare')) {
+            console.log('indeed.cf', 'Challenge still present after body click, reloading page...');
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            await page.waitForTimeout(5000);
+
+            // Check again after reload
+            const afterReload = await page.locator('body').innerText().catch(() => '');
+            if (afterReload.toLowerCase().includes('verify you are human') ||
+                afterReload.toLowerCase().includes('cloudflare')) {
+                console.log('indeed.cf', 'Challenge still present after reload — Camoufox detected. Accepting and continuing...');
+                // Try one more body click + longer wait
+                await page.locator('body').click({ position: { x: 400, y: 300 } }).catch(() => {});
+                await page.waitForTimeout(8000);
+            } else {
+                console.log('indeed.cf', 'Challenge resolved after page reload');
+            }
+        } else {
+            console.log('indeed.cf', 'Challenge appears resolved after body click');
+        }
     } catch (e) {
         console.log('indeed.cf', 'Cloudflare handling error (non-critical):', e);
     }
