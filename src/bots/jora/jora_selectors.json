@@ -1,0 +1,158 @@
+{
+  "search": {
+    "homepageForm": "form.search-form[action=\"/j\"]",
+    "serpForm": "form.search-form.desktop-top-search-form[action=\"/j\"]",
+    "keywordInput": [
+      "input#desktop-top-q",
+      "input#q"
+    ],
+    "locationInput": [
+      "input#desktop-top-l",
+      "input#l"
+    ],
+    "submitButton": [
+      "button.search-jobs-button",
+      "button.rounded-button.-primary.-size-lg.-w-full"
+    ]
+  },
+  "jobCards": {
+    "container": [
+      "div.jobresults"
+    ],
+    "card": [
+      "div.job-card.result.organic-job",
+      "div.job-card.result.sponsored-job",
+      "div[data-job-card=\"true\"]"
+    ],
+    "title": [
+      "h2.job-title a.job-link.-no-underline.-desktop-only",
+      "h2.job-title a.job-link"
+    ],
+    "company": [
+      "span.job-company"
+    ],
+    "location": [
+      "a.job-location.clickable-link",
+      "span.job-location"
+    ],
+    "salary": [
+      "div.badge.-default-badge div.content"
+    ],
+    "listingDate": [
+      "span.job-listed-date"
+    ],
+    "summary": [
+      "div.job-abstract ul li"
+    ],
+    "quickApplyBadge": [
+      "div.badge.-quick-apply-badge"
+    ],
+    "jobType": [
+      "a.job-type.clickable-link"
+    ]
+  },
+  "jobDetails": {
+    "sidePanel": [
+      "div.job-detail-panel",
+      "div[data-js-job-detail-panel]",
+      "div.job-panel",
+      "div[class*=\"detail\"]",
+      "div[class*=\"panel\"]",
+      "aside[class*=\"job\"]"
+    ],
+    "title": [
+      "div.job-detail-panel h2.job-title",
+      "div[class*=\"detail\"] h2",
+      "div[class*=\"panel\"] h2"
+    ],
+    "company": [
+      "div.job-detail-panel span.job-company",
+      "div[class*=\"detail\"] span[class*=\"company\"]"
+    ],
+    "location": [
+      "div.job-detail-panel a.job-location",
+      "div[class*=\"detail\"] a[class*=\"location\"]"
+    ],
+    "salary": [
+      "div.job-detail-panel div.badge.-default-badge"
+    ],
+    "description": [
+      "div[class*=\"detail\"] div[class*=\"description\"]",
+      "div[class*=\"detail\"] div[class*=\"content\"]",
+      "div[class*=\"detail\"] section",
+      "div[class*=\"panel\"] div[class*=\"description\"]",
+      "div[class*=\"panel\"] div[class*=\"content\"]",
+      "div[class*=\"panel\"] section",
+      "div.job-detail-panel div:not([class*=\"header\"])",
+      "div.job-abstract"
+    ],
+    "externalApplyButton": [
+      "a.rounded-button.-primary[data-utm]",
+      "a.rounded-button.-primary[href*=\"redirect\"]",
+      "a[href*=\"utm_source=jora\"]",
+      "a.rounded-button.-primary",
+      "a[data-js-apply-button]",
+      "a.apply-button",
+      "a:has-text(\"Apply\")",
+      "button:has-text(\"Apply\")"
+    ]
+  },
+  "pagination": {
+    "resultsCount": [
+      "h1.search-results-title strong",
+      "div.search-results-page-number strong"
+    ],
+    "pageIndicator": [
+      "div.search-results-page-number[data-position=\"bottom\"]"
+    ],
+    "nextPageUrl": "/j?{query}&p={page}",
+    "sortByDateUrl": "/j?{query}&st=date"
+  },
+  "auth": {
+    "loggedInIndicator": [
+      "span.profile-dropdown[data-js-profile-dropdown]"
+    ],
+    "loginButton": [
+      "a.sign-in-button",
+      "a.rounded-button.-secondary.-size-md.-iconed"
+    ],
+    "loginForm": [
+      "form[action*=\"/users/sign_in\"]"
+    ],
+    "emailInput": [
+      "input#login_widget_user_email",
+      "input[name=\"user[email]\"]"
+    ],
+    "passwordInput": [
+      "input#login_widget_user_password",
+      "input[name=\"user[password]\"]"
+    ],
+    "loginSubmitButton": [
+      "button.rounded-button.-primary[type=\"submit\"]"
+    ]
+  },
+  "filters": {
+    "pillContainer": [
+      "div.pill-desktop-filters"
+    ],
+    "quickApplyFilter": [
+      "input#quick-apply-filter",
+      "input[name=\"qa\"]"
+    ],
+    "sortContainer": [
+      "div.sort-container"
+    ],
+    "sortByDateLink": [
+      "a.sort-link[data-href*=\"st=date\"]"
+    ],
+    "jobTypeDropdown": [
+      "div.facet-pill-dropdown-job-type"
+    ],
+    "listedDateDropdown": [
+      "div.facet-pill-dropdown-listed-date"
+    ],
+    "salaryDropdown": [
+      "div.facet-pill-dropdown-salary-min"
+    ]
+  }
+}
