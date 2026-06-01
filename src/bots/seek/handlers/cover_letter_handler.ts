@@ -1,0 +1,297 @@
+import type { WorkflowContext } from '../../core/workflow_engine';
+import { getClientEmailFromContext, getJobArtifactDir } from '../../core/client_paths';
+import { readCanonicalResumeText } from '../../../lib/canonical-resume';
+import { callApiWithFallback } from './api_fallback';
+import { resolveUseAi } from './ai_provider';
+
+const printLog = (message: string) => {
+  console.log(message);
+};
+
+function buildFallbackCoverLetter(ctx: WorkflowContext, jobData: any): string {
+  const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
+  const fullName = String(formData.fullName || 'Candidate').trim();
+  const role = String(jobData?.title || 'the advertised role').trim();
+  const company = String(jobData?.company || 'your company').trim();
+  const location = String(jobData?.location || '').trim();
+  const introLocation = location ? ` in ${location}` : '';
+  return `Dear Hiring Manager,
+
+I am writing to apply for the ${role} position at ${company}${introLocation}. My background aligns with the responsibilities of this role, and I am confident I can contribute effectively from day one.
+
+I bring hands-on experience delivering software solutions, collaborating with cross-functional teams, and maintaining high standards for quality and reliability. I am particularly interested in this opportunity because of the impact and growth potential at ${company}.
+
+I would welcome the opportunity to discuss how my experience can support your team goals.
+
+Kind regards,
+${fullName}`;
+}
+
+async function resolveResumeText(ctx: WorkflowContext): Promise<string> {
+  const clientEmail =
+    getClientEmailFromContext(ctx) ||
+    (ctx as any)?.config?.formData?.email ||
+    '';
+
+  if (!clientEmail) {
+    throw new Error('Missing client email. Canonical resume lookup requires user email in config.');
+  }
+  const preferredResumeFileName = String(((ctx as any)?.config?.formData?.resumeFileName || '')).trim();
+  const resume = readCanonicalResumeText(clientEmail, preferredResumeFileName);
+  printLog(`📄 Using canonical resume: ${resume.filename}`);
+  return resume.content;
+}
+
+async function generateAICoverLetter(ctx: WorkflowContext): Promise<string> {
+  const fs = await import('fs');
+  const path = await import('path');
+
+  let jobData: any = {};
+  if (ctx.currentJobFile) {
+    jobData = JSON.parse(fs.readFileSync(ctx.currentJobFile, 'utf8'));
+  }
+
+  // Fallback to context data when no job file (direct apply mode skips extraction)
+  if (!jobData.title) jobData.title = ctx.currentJobTitle || ctx.currentJobTitlePreview || 'Unknown Position';
+  if (!jobData.company) jobData.company = ctx.currentJobCompany || ctx.currentJobCompanyPreview || 'Unknown Company';
+  if (!jobData.jobId) jobData.jobId = ctx.currentJobId || 'unknown';
+  if (!jobData.details) jobData.details = `${jobData.title} at ${jobData.company}`;
+
+  if (!jobData.title || !jobData.company) {
+    throw new Error("No job data available - cannot generate cover letter");
+  }
+
+  const jobId = jobData.jobId || 'unknown';
+  printLog("Generating AI cover letter...");
+  printLog(`📝 Job: ${jobData.title} at ${jobData.company}`);
+
+  const resumeText = await resolveResumeText(ctx);
+  const useAi = resolveUseAi(ctx);
+  const formData = ((ctx as any)?.config?.formData || {}) as Record<string, string>;
+  const contactProfile = {
+    full_name: String(formData.fullName || '').trim(),
+    email: String(formData.email || getClientEmailFromContext(ctx) || '').trim(),
+    phone: String(formData.phone || '').trim(),
+    linkedin_url: String(formData.linkedinUrl || '').trim()
+  };
+
+  const requestBody: Record<string, any> = {
+    job_id: `seek_${jobId}`,
+    job_details: jobData.details || `${jobData.title} at ${jobData.company}`,
+    resume_text: resumeText,
+    strictQuality: true,
+    qualityThreshold: 92,
+    strictQualityRetries: 1,
+    contact_profile: contactProfile,
+
+    // Required tracking fields per API docs
+    platform: "seek",
+    platform_job_id: jobId,
+    job_title: jobData.title || '',
+    company: jobData.company || '',
+
+    // Custom prompt for better AI results
+    prompt: `Write a compelling, professional cover letter for this Seek job posting.
+Highlight relevant experience and skills that match the job requirements.
+Keep it concise (300-400 words) and personalized to ${jobData.company || 'the company'}.
+Focus on demonstrating value and enthusiasm for the role.`
+  };
+  requestBody.useAi = useAi;
+
+  const jobDir = getJobArtifactDir(ctx, 'seek', jobId);
+
+  fs.writeFileSync(
+    path.join(jobDir, 'cover_letter_request.json'),
+    JSON.stringify(requestBody, null, 2)
+  );
+
+  // Fetch cover letter prompt from corpus-rag
+  const { apiRequest } = await import('../../core/api_client');
+  try {
+    const promptRes = await apiRequest('/api/prompts/cover-letter', 'GET');
+    if (promptRes?.content) {
+      requestBody.prompt = promptRes.content;
+    }
+  } catch (e) {
+    printLog(`⚠️ Could not fetch cover-letter prompt, using embedded fallback`);
+  }
+
+  let data;
+  try {
+    data = await callApiWithFallback('/api/cover_letter', 'POST', requestBody);
+  } catch (apiError: any) {
+    printLog(`⚠️ Cover letter API unavailable, using fallback template. Error: ${apiError.message}`);
+    return buildFallbackCoverLetter(ctx, jobData);
+  }
+
+  fs.writeFileSync(
+    path.join(jobDir, 'cover_letter_response.json'),
+    JSON.stringify(data, null, 2)
+  );
+
+  // Check for error response
+  if (data.success === false) {
+    throw new Error(`API returned error: ${data.error || 'Unknown error'}`);
+  }
+
+  if (data.cover_letter) {
+    printLog("✅ AI cover letter generated");
+    printLog(`📄 Length: ${data.cover_letter.length} chars`);
+    return data.cover_letter;
+  } else {
+    printLog(`❌ API response missing cover_letter field. Response: ${JSON.stringify(data)}`);
+    throw new Error('No cover_letter field returned from API');
+  }
+}
+
+// Handle Cover Letter (part of Choose Documents step) - Improved from Python version
+export async function* handleCoverLetter(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    printLog("Handling cover letter...");
+
+    // Step 1: Click cover letter radio button (improved from Python version)
+    const radioState: string = await ctx.driver.executeScript(`
+      const coverLetterRadio = document.querySelector('input[data-testid="coverLetter-method-change"]');
+      if (!coverLetterRadio) {
+        return 'not_found';
+      }
+      if (coverLetterRadio.checked) {
+        return 'already_checked';
+      }
+      // Click it
+      coverLetterRadio.click();
+      coverLetterRadio.checked = true;
+      const changeEvent = new Event('change', { bubbles: true });
+      coverLetterRadio.dispatchEvent(changeEvent);
+      const clickEvent = new Event('click', { bubbles: true });
+      coverLetterRadio.dispatchEvent(clickEvent);
+      console.log('Cover letter radio clicked successfully');
+      return 'clicked';
+    `);
+
+    if (radioState === 'not_found') {
+      printLog("Cover letter radio not found — cover letter may not be required");
+      yield "cover_letter_not_required";
+      return;
+    }
+
+    if (radioState === 'already_checked') {
+      printLog("Cover letter radio already selected — proceeding to fill");
+    } else {
+      printLog("Cover letter radio clicked successfully");
+    }
+
+    // Step 2: Wait for textarea to appear (outside executeScript like Python)
+    await ctx.driver.sleep(1000);
+
+    // Step 3: Use Selenium's sendKeys for human-like typing instead of executeScript
+    await ctx.driver.sleep(500); // Let radio button change settle
+
+    let textareaResult;
+
+    try {
+      printLog("🔍 Step 1: Finding textarea element...");
+      const textarea = await ctx.driver.findElement({ css: 'textarea[data-testid="coverLetterTextInput"]' });
+      printLog("✅ Step 1: Textarea found successfully");
+
+      // Clear any existing content
+      printLog("🔍 Step 2: Clearing existing content...");
+      await textarea.clear();
+      printLog("✅ Step 2: Content cleared successfully");
+
+      // Generate AI-powered cover letter based on job description
+      printLog("🔍 Step 3: Generating AI cover letter - this MUST succeed, no fallbacks!");
+      const coverLetterText = await generateAICoverLetter(ctx);
+      printLog("✅ Step 3: AI cover letter generated successfully");
+
+      if (!coverLetterText || coverLetterText.trim().length < 50) {
+        throw new Error(`Generated cover letter is too short: ${coverLetterText?.length || 0} chars`);
+      }
+
+      // Use sendKeys to simulate human typing - this triggers proper events
+      printLog("🔍 Step 4: Typing AI-generated cover letter text using sendKeys...");
+      await textarea.sendKeys(coverLetterText);
+      printLog("✅ Step 4: Text typed successfully");
+
+      // Give it a moment to process
+      printLog("🔍 Step 5: Waiting for form processing...");
+      await ctx.driver.sleep(1000);
+      printLog("✅ Step 5: Processing wait complete");
+
+      // Verify the content was set
+      printLog("🔍 Step 6: Verifying content was set and checking validation...");
+      textareaResult = await ctx.driver.executeScript(`
+        const textarea = document.querySelector('textarea[data-testid="coverLetterTextInput"]');
+        if (textarea) {
+          const finalValue = textarea.value;
+          const valueLength = finalValue.length;
+
+          // Check for validation errors
+          const errorElements = document.querySelectorAll('[role="alert"], .error, .invalid, [aria-invalid="true"]');
+          const hasErrors = errorElements.length > 0;
+          const errorMessages = Array.from(errorElements).map(el => el.textContent.trim()).filter(txt => txt);
+
+          // Check textarea validation state
+          const textareaInvalid = textarea.getAttribute('aria-invalid') === 'true';
+          const textareaRequired = textarea.hasAttribute('required') && finalValue.length === 0;
+
+          // Debug validation logic
+          const successCondition = valueLength > 0 && !textareaInvalid && !textareaRequired;
+          console.log('SendKeys result - Length:', valueLength, 'Errors:', hasErrors, 'TextareaInvalid:', textareaInvalid, 'Required:', textareaRequired);
+          console.log('Success calculation: valueLength > 0:', valueLength > 0, '!textareaInvalid:', !textareaInvalid, '!textareaRequired:', !textareaRequired);
+          console.log('Final success result:', successCondition);
+
+          return {
+            success: successCondition,
+            length: valueLength,
+            hasErrors: hasErrors || textareaInvalid || textareaRequired,
+            errorMessages: errorMessages,
+            actualValue: finalValue.substring(0, 50) + '...',
+            textareaInvalid: textareaInvalid,
+            textareaRequired: textareaRequired
+          };
+        }
+        return { success: false, error: 'textarea_not_found' };
+      `);
+
+    } catch (seleniumError) {
+      printLog(`❌ Selenium sendKeys failed: ${seleniumError}`);
+      throw new Error(`Both AI generation and form filling failed: ${seleniumError}`);
+    }
+
+    printLog("🔍 Step 7: Evaluating final result...");
+    printLog(`🔍 Step 7 DEBUG: textareaResult.success = ${textareaResult.success}`);
+    printLog(`🔍 Step 7 DEBUG: Full textareaResult = ${JSON.stringify(textareaResult, null, 2)}`);
+
+    if (textareaResult.success) {
+      printLog(`✅ Step 7: SUCCESS! Cover letter filled - Length: ${textareaResult.length}, Value: ${textareaResult.actualValue}`);
+      if (textareaResult.hasErrors) {
+        printLog(`⚠️ VALIDATION WARNINGS: ${textareaResult.errorMessages.join(', ')}`);
+      }
+      printLog("🎉 YIELDING: cover_letter_filled");
+      yield "cover_letter_filled";
+    } else {
+      printLog(`❌ Step 7: FAILURE! Cover letter filling failed: ${textareaResult.error || 'Unknown error'}`);
+      if (textareaResult.errorMessages && textareaResult.errorMessages.length > 0) {
+        printLog(`🔥 Error messages: ${textareaResult.errorMessages.join(', ')}`);
+      }
+      if (textareaResult.textareaInvalid) {
+        printLog(`🔥 Textarea marked as invalid (aria-invalid="true")`);
+      }
+      if (textareaResult.textareaRequired) {
+        printLog(`🔥 Textarea is required but empty`);
+      }
+      printLog(`📋 Length: ${textareaResult.length}, Invalid: ${textareaResult.textareaInvalid}, Required: ${textareaResult.textareaRequired}`);
+      printLog("💥 YIELDING: cover_letter_error");
+      yield "cover_letter_error";
+    }
+
+  } catch (error) {
+    printLog(`💥 COVER LETTER HANDLER CRASH: ${error}`);
+    if (error instanceof Error) {
+      printLog(`💥 Error stack: ${error.stack}`);
+    }
+    printLog(`🛑 STAYING PUT FOR MANUAL INSPECTION - Cover letter handler failed`);
+    yield "cover_letter_error";
+  }
+}
