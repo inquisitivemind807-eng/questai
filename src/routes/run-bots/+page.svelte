@@ -9,6 +9,7 @@
     { id: "linkedin_extract_bot", name: "LinkedIn Bot", image: "/finallinkedin.png" },
     { id: "seek_extract_bot", name: "Seek Bot", image: "/finalseek.png" },
     { id: "indeed", name: "Indeed Bot", image: "/finalindeed.png" },
+    { id: "jora_extract_bot", name: "Jora Bot", image: "/finaljora.png" },
   ];
 
   let showConfigError = false;
@@ -41,6 +42,7 @@
       if (cleanBotName === "linkedin") finalBotName = "linkedin_extract";
       if (cleanBotName === "seek") finalBotName = "seek_extract";
       if (cleanBotName === "indeed") finalBotName = "indeed_extract";
+      if (cleanBotName === "jora") finalBotName = "jora_extract";
 
       if (isPauseConfirmMode && finalBotName.includes("extract")) {
         finalBotName += "_pauseconfirm";
@@ -82,7 +84,7 @@
 
 <div class="container mx-auto p-8 min-h-[calc(100vh-80px)] flex flex-col">
   <div class="flex-grow">
-    <div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
+    <div class="max-w-5xl mx-auto grid grid-cols-1 md:grid-cols-4 gap-8">
       {#each bots as bot}
         <button
           type="button"
