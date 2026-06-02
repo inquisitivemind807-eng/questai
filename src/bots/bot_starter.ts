@@ -15,7 +15,7 @@
  *   - Set up emergency cleanup (SIGINT/SIGTERM/exception handlers)
  *   - Handle CLI flags: --url, --jobs, --mode, --limit, --headless, etc.
  *   - Support bulk orchestration (--jobs=id1,id2,id3)
- *   - URL normalization per platform (Seek, LinkedIn, Indeed)
+ *   - URL normalization per platform (Seek, LinkedIn, Indeed, Jora)
  *
  * Event streaming:
  *   All bot progress is emitted as [BOT_EVENT] JSON lines on stdout.
@@ -474,7 +474,11 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
             ? 'seek_apply'
             : platform === 'linkedin'
               ? 'linkedin_apply'
-              : platform;
+              : platform === 'indeed'
+                ? 'indeed_apply'
+                : platform === 'jora'
+                  ? 'jora_apply'
+                  : platform;
 
         let botModeConfig = mode;
         if (mode.includes('pauseconfirm')) {
@@ -490,7 +494,9 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
               ? normalizeIndeedJobUrl(job.url)
               : platform === 'linkedin' && typeof job.url === 'string'
                 ? normalizeLinkedInJobUrl(job.url)
-                : job.url;
+                : platform === 'jora' && typeof job.url === 'string'
+                  ? job.url // Jora uses raw URLs; add normalizer when available
+                  : job.url;
 
         const bot_config = {
           directApplyUrl: normalizedDirectApplyUrl,
@@ -534,40 +540,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const args = process.argv.slice(2);
   const bot_starter = new BotStarter();
   const available_bots = bot_starter.get_available_bots();
-  let teedLogPath: string | null = null;
-
-  // ── --teeit: tee all stdout+stderr to a timestamped log file ──
-  if (args.includes('--teeit')) {
-    const logdirArg = args.find(a => a.startsWith('--logdir='));
-    const logdir = logdirArg ? logdirArg.split('=')[1] : path.join(__dirname, 'logs');
-    fs.mkdirSync(logdir, { recursive: true });
-
-    const now = new Date();
-    const ts = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}_${String(now.getHours()).padStart(2,'0')}-${String(now.getMinutes()).padStart(2,'0')}`;
-    const botName = args[0] || 'unknown';
-    const logfile = path.join(logdir, `${botName}_${ts}.log`);
-
-    const teeStream = fs.createWriteStream(logfile, { flags: 'a' });
-    const stdoutWrite = process.stdout.write.bind(process.stdout);
-    const stderrWrite = process.stderr.write.bind(process.stderr);
-
-    process.stdout.write = (chunk: any, encoding?: any, cb?: any) => {
-      teeStream.write(chunk, encoding);
-      return stdoutWrite(chunk, encoding, cb);
-    };
-    process.stderr.write = (chunk: any, encoding?: any, cb?: any) => {
-      teeStream.write(chunk, encoding);
-      return stderrWrite(chunk, encoding, cb);
-    };
-
-    teedLogPath = logfile;
-    process.on('exit', () => {
-      teeStream.end();
-      stdoutWrite(`\n📄 Log saved to: ${teedLogPath}\n`);
-    });
-    console.log(`📝 Teeing output to: ${logfile}`);
-  }
-
   const showHelpMenu = async () => {
     try {
       // @ts-ignore - dynamic import for prompts
@@ -588,7 +560,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 
       if (response.bot) {
         let jobUrl: string | undefined;
-        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'indeed' || response.bot === 'seek') {
+        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'indeed' || response.bot === 'seek' || response.bot === 'jora') {
           const urlResponse = await prompts({
             type: 'text',
             name: 'url',
@@ -657,6 +629,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       } catch (error) {
         const isIndeed = bot_name.startsWith('indeed');
         console.error(`${isIndeed ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
+        process.exit(1);
+      }
+    } else if (job_url && bot_name.startsWith('jora')) {
+      try {
+        print_log(`🚀 Starting DIRECT APPLY bot runner for Jora Job: ${job_url}`);
+        const applyBotName = bot_name === 'jora' ? 'jora_apply' : bot_name;
+        await run_bot(applyBotName, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
+      } catch (error) {
+        console.error('Jora Direct Apply execution failed:', error);
         process.exit(1);
       }
     } else if (is_test_mode && bot_name === 'seek') {
