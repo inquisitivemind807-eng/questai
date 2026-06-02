@@ -21,9 +21,8 @@ steps_config:
     func: "navigateToDirectApplyUrl"
     transitions:
       navigated: "open_check_login"
-      job_not_found: "finish"
       navigation_failed: "finish"
-    timeout: 120
+    timeout: 30
     on_timeout_event: "navigation_failed"
 
   open_check_login:

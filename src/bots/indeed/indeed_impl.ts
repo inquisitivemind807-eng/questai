@@ -1,16 +1,20 @@
 /**
  * Indeed Bot Implementation
  * ------------------------------------------------------------------
- * Playwright Chromium implementation for Indeed.com.
+ * Playwright + Camoufox implementation for Indeed.com.
  *
- * Why Chromium (not Camoufox/Firefox):
- *   Cloudflare challenges Camoufox but NOT Chromium. Chrome navigates
- *   to Indeed job pages with zero Cloudflare issues.
+ * Why Camoufox (Firefox) instead of Chrome?
+ *   Indeed uses highly aggressive anti-bot detection that detects
+ *   Chromedriver/Selenium signals even with stealth patches. Camoufox
+ *   is a hardened Firefox fork with realistic fingerprint spoofing —
+ *   it passes Indeed's checks where Chrome fails.
  *
- * Architecture:
- *   - Uses Playwright API (ctx.page) with launchPersistentContext
- *   - Session persists in sessions/indeed/chromium_profile/
+ * Architecture notes:
+ *   - Uses Playwright API (ctx.page) instead of Selenium (ctx.driver)
  *   - PlaywrightDriverAdapter bridges the UniversalOverlay (Selenium API)
+ *   - Session persists in sessions/indeed/camoufox_profile/
+ *   - Fallback to software rendering for headless Wayland/X11
+ *   - camoxfox-js patched to use bun:sqlite (not better-sqlite3)
  *
  * Workflow YAMLs that use this file:
  *   indeed_extract_steps.yaml, indeed_extract_pauseconfirm_steps.yaml,
@@ -20,7 +24,6 @@
 
 import * as path from 'path';
 import * as fs from 'fs';
-import { chromium } from 'playwright';
 import { UniversalOverlay } from '../core/universal_overlay';
 import { apiRequest } from '../core/api_client';
 import { waitForNextConfirmAsync } from '../core/pause_confirm';
@@ -83,10 +86,11 @@ class PlaywrightDriverAdapter {
 }
 
 /**
- * STEP 0: Boot Playwright Chromium and set up initial state.
+ * STEP 0: Boot the Camoufox stealth browser and set up initial state.
  *
- * Launches a persistent Chromium context with a userDataDir so
- * login sessions survive across runs.
+ * Creates a Camoufox instance with a persistent user_data_dir so
+ * login sessions survive across runs. Sets up environment overrides
+ * for software rendering on systems without GPU drivers.
  *
  * If `ctx.config.directApplyUrl` is set, transitions to the direct
  * apply pipeline instead of the search-and-extract pipeline.
@@ -94,12 +98,18 @@ class PlaywrightDriverAdapter {
 export async function* step0(ctx: any) {
     if (!ctx.state) ctx.state = {};
     if (!ctx.page) {
-        console.log('indeed.step0', 'Launching Playwright Chromium...');
+        console.log('indeed.step0', 'Booting Camoufox (Playwright) stealth engine...');
+        const { Camoufox } = await import('camoufox-js');
 
-        const sessionsDir = path.join(process.cwd(), 'sessions', 'indeed', 'chromium_profile');
+        const sessionsDir = path.join(process.cwd(), 'sessions', 'indeed', 'camoufox_profile');
         if (!fs.existsSync(sessionsDir)) {
             fs.mkdirSync(sessionsDir, { recursive: true });
         }
+
+        // Fallback to software rendering for systems without proper graphics drivers (e.g. Pop!_OS Mac)
+        process.env.MOZ_DISABLE_CONTENT_SANDBOX = '1';
+        process.env.LIBGL_ALWAYS_SOFTWARE = '1';
+        process.env.MOZ_ACCELERATED = '0';
 
         ctx.sessionExists = fs.readdirSync(sessionsDir).filter(file => !['screenshots', 'logs', 'resume', 'temp'].includes(file)).length > 0;
 
@@ -111,19 +121,20 @@ export async function* step0(ctx: any) {
             const winWidth = isHeadless ? 1920 : 1280;
             const winHeight = isHeadless ? 1080 : 900;
 
-            const browser = await chromium.launchPersistentContext(sessionsDir, {
+            const browser = await Camoufox({
                 headless: isHeadless,
-                viewport: { width: winWidth, height: winHeight },
-                args: ['--no-first-run', '--no-default-browser-check']
+                user_data_dir: sessionsDir,
+                window: [winWidth, winHeight]
             });
             ctx.browser = browser;
 
-            // Handle browser closure
+            // Handle browser closure immediately (BrowserContext uses 'close')
             browser.on('close', () => {
                 console.error('[DEV] 🛑 Indeed Browser was closed. Exiting...');
                 process.exit(1);
             });
 
+            // Camoufox with user_data_dir persists context, so it returns a BrowserContext.
             const pages = await browser.pages();
             ctx.page = pages.length > 0 ? pages[0] : await browser.newPage();
 
@@ -134,9 +145,12 @@ export async function* step0(ctx: any) {
 
             ctx.overlay = new UniversalOverlay(new PlaywrightDriverAdapter(ctx.page) as any, 'Indeed');
 
-            console.log('indeed.step0', `Playwright Chromium ready. Profile: ${sessionsDir}`);
+            // NOTE: We don't initialize overlay yet because we might be on about:blank
+            // We'll initialize it in openCheckLogin or showManualLoginPrompt
+
+            console.log('indeed.step0', `Camoufox stealth engine ready. Profile: ${sessionsDir}`);
         } catch (error) {
-            console.error('indeed.step0', 'Critical fatal error launching Chromium', error);
+            console.error('indeed.step0', 'Critical fatal error launching Camoufox', error);
             throw error;
         }
     }
@@ -156,125 +170,95 @@ export async function* step0(ctx: any) {
  */
 async function handleCloudflareChallenge(page: any): Promise<void> {
     try {
-        const challengeInfo = await page.evaluate(() => {
-            const results: any = { bodyText: '', turnstileFound: false, challengeElements: [] };
+        const bodyText = await page.locator('body').innerText().catch(() => '');
+        const hasCfText = bodyText.toLowerCase().includes('verify you are human') || 
+                          bodyText.toLowerCase().includes('are you a human') ||
+                          bodyText.toLowerCase().includes('cloudflare');
 
-            results.bodyText = document.body?.innerText?.substring(0, 500) || '';
+        if (!hasCfText) return;
 
-            const turnstileIframes = document.querySelectorAll('iframe[src*="turnstile"], iframe[src*="challenges.cloudflare"]');
-            if (turnstileIframes.length > 0) {
-                results.turnstileFound = true;
-                results.turnstileDetails = Array.from(turnstileIframes).map(f => ({
-                    src: f.src?.substring(0, 200),
-                    id: f.id,
-                    className: f.className,
-                    rect: JSON.parse(JSON.stringify(f.getBoundingClientRect()))
-                }));
+        console.log('indeed.cf', 'Cloudflare challenge detected, attempting bypass...');
+
+        // Try Turnstile iframe first (modern Cloudflare challenge platform)
+        const turnstileFrame = page.locator(
+            'iframe[src*="challenges.cloudflare.com"], iframe[title*="Widget containing checkbox"], iframe[src*="turnstile"]'
+        ).first();
+        if (await turnstileFrame.count() > 0) {
+            const frame = await turnstileFrame.contentFrame();
+            if (frame) {
+                const cb = frame.locator('input[type="checkbox"], label, .cb-lb, .cb-i, #challenge-stage *, [class*="cf-"]').first();
+                if (await cb.count() > 0) {
+                    await cb.click({ force: true }).catch(() => {});
+                    console.log('indeed.cf', 'Clicked Turnstile challenge checkbox');
+                    await page.waitForTimeout(5000);
+                    return;
+                }
             }
-
-            const challengeSelectors = [
-                '[id*="challenge"]', '[class*="challenge"]',
-                '[id*="turnstile"]', '[class*="turnstile"]',
-                '[id*="cf-"]', '[class*="cf-"]',
-                'input[type="checkbox"]',
-                '[role="checkbox"]',
-                '.cb-lb', '.cb-i',
-                '#challenge-stage *',
-                'iframe'
-            ];
-
-            const foundElements = new Set<Element>();
-            for (const sel of challengeSelectors) {
-                try {
-                    const els = document.querySelectorAll(sel);
-                    els.forEach(el => foundElements.add(el));
-                } catch (e) { }
-            }
-
-            results.challengeElements = Array.from(foundElements).map(el => ({
-                tag: el.tagName,
-                id: el.id,
-                className: (el as HTMLElement).className?.substring?.(0, 100) || '',
-                text: (el as HTMLElement).innerText?.substring?.(0, 100) || '',
-                type: (el as HTMLInputElement).type || '',
-                visible: (el as HTMLElement).offsetParent !== null
-            }));
-
-            return results;
-        });
-
-        const bodyLower = challengeInfo.bodyText.toLowerCase();
-        const hasCfText = bodyLower.includes('verify you are human') ||
-                          bodyLower.includes('are you a human') ||
-                          bodyLower.includes('cloudflare') ||
-                          bodyLower.includes('just a moment');
-
-        if (!hasCfText && !challengeInfo.turnstileFound) return;
-
-        console.log('indeed.cf', `Cloudflare challenge detected! Turnstile: ${challengeInfo.turnstileFound}, Elements: ${challengeInfo.challengeElements.length}`);
-        console.log('indeed.cf', `Body (first 200): "${challengeInfo.bodyText.substring(0, 200)}"`);
-
-        const title = await page.title().catch(() => 'N/A');
-        const url = page.url();
-        console.log('indeed.cf', `DEBUG title="${title}" url="${url}"`);
-        console.log('indeed.cf', 'DEBUG challengeElements:', JSON.stringify(challengeInfo.challengeElements.slice(0, 15)));
-        if (challengeInfo.turnstileDetails) {
-            console.log('indeed.cf', 'DEBUG turnstile iframes:', JSON.stringify(challengeInfo.turnstileDetails));
         }
 
-        const clickResult = await page.evaluate(() => {
-            const clickTargets = [
-                ...Array.from(document.querySelectorAll('iframe[src*="turnstile"], iframe[src*="challenges.cloudflare"]')),
-                ...Array.from(document.querySelectorAll('#challenge-stage input, #challenge-stage label, #challenge-stage button')),
-                ...Array.from(document.querySelectorAll('[role="checkbox"]')),
-                ...Array.from(document.querySelectorAll('input[type="checkbox"]')),
-                ...Array.from(document.querySelectorAll('.cb-lb, .cb-i')),
-                ...Array.from(document.querySelectorAll('[class*="turnstile"]')),
-                ...Array.from(document.querySelectorAll('[class*="challenge"] button, [class*="challenge"] input'))
-            ];
-
-            for (const el of clickTargets) {
-                try {
-                    (el as HTMLElement).click();
-                    return `clicked: ${el.tagName}#${el.id || ''}.${(el as HTMLElement).className?.split(' ')[0] || ''}`;
-                } catch (e) { }
+        // Try legacy Challenge Platform iframe
+        const cfFrame = page.locator('iframe[src*="cloudflare"], iframe[src*="challenge"]').first();
+        if (await cfFrame.count() > 0) {
+            const frame = await cfFrame.contentFrame();
+            if (frame) {
+                const cb = frame.locator('input[type="checkbox"], label, .cb-lb, .cb-i, #challenge-stage *').first();
+                if (await cb.count() > 0) {
+                    await cb.click({ force: true }).catch(() => {});
+                    console.log('indeed.cf', 'Clicked Cloudflare iframe checkbox');
+                    await page.waitForTimeout(5000);
+                    return;
+                }
             }
-            return 'no-clickable-found';
-        }).catch(() => 'eval-failed');
+        }
 
-        console.log('indeed.cf', 'DEBUG clickResult:', clickResult);
-
-        if (clickResult !== 'no-clickable-found' && clickResult !== 'eval-failed') {
-            console.log('indeed.cf', 'Waiting 8s for challenge to resolve...');
-            await page.waitForTimeout(8000);
-
-            const stillBlocked = await page.evaluate(() => {
-                const text = document.body?.innerText?.toLowerCase() || '';
-                return text.includes('verify you are human') || text.includes('cloudflare') || text.includes('just a moment');
-            });
-
-            if (!stillBlocked) {
-                console.log('indeed.cf', 'Challenge resolved after clicking element.');
+        // Try inline challenge widget on the page body
+        const inlineWidget = page.locator('#challenge-stage, div[class*="cf-"], .cf-turnstile, .cf-challenge').first();
+        if (await inlineWidget.count() > 0) {
+            const interactive = inlineWidget.locator('input[type="checkbox"], label, button').first();
+            if (await interactive.count() > 0) {
+                await interactive.click({ force: true }).catch(() => {});
+                console.log('indeed.cf', 'Clicked inline challenge widget');
+                await page.waitForTimeout(5000);
                 return;
             }
-            console.log('indeed.cf', 'Still blocked after element click.');
         }
 
-        console.log('indeed.cf', 'Trying body click fallback...');
-        await page.locator('body').click({ position: { x: 400, y: 300 } }).catch(() => { });
+        // Try direct checkbox/label click on the page
+        const checkboxes = page.locator('input[type="checkbox"]');
+        const cbCount = await checkboxes.count();
+        if (cbCount > 0) {
+            await checkboxes.first().click({ force: true }).catch(() => {});
+            console.log('indeed.cf', `Clicked ${cbCount} checkbox(es)`);
+            await page.waitForTimeout(5000);
+            return;
+        }
+
+        // Last resort: click anywhere on the page to trigger the challenge
+        await page.locator('body').click({ position: { x: 400, y: 300 } }).catch(() => {});
+        console.log('indeed.cf', 'Clicked body center as fallback');
         await page.waitForTimeout(5000);
 
-        const stillBlocked2 = await page.evaluate(() => {
-            const text = document.body?.innerText?.toLowerCase() || '';
-            return text.includes('verify you are human') || text.includes('cloudflare') || text.includes('just a moment');
-        });
+        // Check if challenge was resolved after body click
+        const stillBlocked = await page.locator('body').innerText().catch(() => '');
+        if (stillBlocked.toLowerCase().includes('verify you are human') ||
+            stillBlocked.toLowerCase().includes('cloudflare')) {
+            console.log('indeed.cf', 'Challenge still present after body click, reloading page...');
+            await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => {});
+            await page.waitForTimeout(5000);
 
-        if (stillBlocked2) {
-            console.log('indeed.cf', 'Still blocked, reloading page...');
-            await page.reload({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => { });
-            await page.waitForTimeout(8000);
+            // Check again after reload
+            const afterReload = await page.locator('body').innerText().catch(() => '');
+            if (afterReload.toLowerCase().includes('verify you are human') ||
+                afterReload.toLowerCase().includes('cloudflare')) {
+                console.log('indeed.cf', 'Challenge still present after reload — Camoufox detected. Accepting and continuing...');
+                // Try one more body click + longer wait
+                await page.locator('body').click({ position: { x: 400, y: 300 } }).catch(() => {});
+                await page.waitForTimeout(8000);
+            } else {
+                console.log('indeed.cf', 'Challenge resolved after page reload');
+            }
         } else {
-            console.log('indeed.cf', 'Challenge resolved after body click.');
+            console.log('indeed.cf', 'Challenge appears resolved after body click');
         }
     } catch (e) {
         console.log('indeed.cf', 'Cloudflare handling error (non-critical):', e);
@@ -303,41 +287,13 @@ export async function* navigateToDirectApplyUrl(ctx: any) {
             ctx._targetJk = null;
         }
 
-        // Navigate to the job page with networkidle to let Cloudflare JS execute
         console.log('indeed.navigate', `Navigating to: ${jobUrl}`);
-        await ctx.page.goto(jobUrl, { waitUntil: 'networkidle', timeout: 60000 }).catch(() => {
-            console.log('indeed.navigate', 'networkidle timeout, continuing with current page...');
-        });
-        
-        // Give Cloudflare JS challenge time to auto-resolve (can take 10-15s)
-        console.log('indeed.navigate', 'Waiting for Cloudflare challenge to resolve...');
-        for (let i = 0; i < 6; i++) {
-            await ctx.page.waitForTimeout(5000);
-            const bodyText = await ctx.page.locator('body').innerText().catch(() => '');
-            const stillBlocked = bodyText.toLowerCase().includes('verify you are human') ||
-                                 bodyText.toLowerCase().includes('just a moment') ||
-                                 bodyText.toLowerCase().includes('cloudflare');
-            if (!stillBlocked) {
-                console.log('indeed.navigate', `Cloudflare resolved after ${(i+1)*5}s`);
-                break;
-            }
-            console.log('indeed.navigate', `Still blocked after ${(i+1)*5}s, waiting...`);
-        }
-        
-        // Final check with handleCloudflareChallenge
+        await ctx.page.goto(jobUrl, { waitUntil: 'load', timeout: 30000 });
+        await ctx.page.waitForTimeout(3000);
+
+        // Handle Cloudflare challenge before anything else on the job page
         await handleCloudflareChallenge(ctx.page);
         await ctx.page.waitForTimeout(2000);
-
-        // Check if job page exists (Indeed shows "We can't find this page" for removed jobs)
-        const bodyText = await ctx.page.locator('body').innerText().catch(() => '');
-        const pageNotFound = bodyText.includes("We can't find this page") ||
-                             bodyText.includes("this page doesn't exist") ||
-                             bodyText.includes("Check the URL for any typos");
-        if (pageNotFound) {
-            console.log('indeed.navigate', 'Job page not found — listing may have been removed.');
-            yield 'job_not_found';
-            return;
-        }
 
         // Ensure overlay is ready on the job page
         if (ctx.overlay) {
@@ -405,15 +361,8 @@ export function buildSearchUrl(ctx: any): string {
 export async function* openCheckLogin(ctx: any) {
     console.log('indeed.checkLogin', 'Checking login status...');
     try {
-        // Check if we have actual auth cookies from a previous session
-        // (A fresh Chromium profile still has default files, so we can't rely on file count)
-        const preCheckCookies = await ctx.page.context().cookies();
-        const hasSavedAuth = preCheckCookies.some((c: any) =>
-          c.name === 'SHOE' || c.name.includes('PassportAuthProxy')
-        );
-        
-        if (!ctx.sessionExists && !hasSavedAuth) {
-            console.log('indeed.checkLogin', 'No previous session found. Needs login.');
+        if (!ctx.sessionExists) {
+            console.log('indeed.checkLogin', 'No active Camoufox session found. Clean profile.');
             yield 'user_needs_to_login';
             return;
         }
@@ -454,16 +403,15 @@ export async function* openCheckLogin(ctx: any) {
         if (signInBtnCount > 0) await highlight(loginBtn, '#ffa500');
 
         // Also check for Indeed specific auth cookies
-        // SHOE = US Indeed auth, PassportAuthProxy = passport auth
-        // SURF/CTK/RQ/LV = tracking/session cookies (NOT auth)
+        // Supports multiple regions: US uses SHOE/PassportAuthProxy, AU/global uses SURF/CTK/RQ
         const cookies = await ctx.page.context().cookies();
-        const realAuthCookies = cookies.filter((c: any) =>
-          c.name === 'SHOE' || c.name.includes('PassportAuthProxy')
+        const authCookieNames = ['SHOE', 'SURF', 'CTK', 'RQ'];
+        const hasAuthCookies = cookies.some((c: any) =>
+          authCookieNames.includes(c.name) || c.name.includes('PassportAuthProxy')
         );
-        const hasRealAuthCookies = realAuthCookies.length > 0;
 
-        // Check visible sign-in elements only — if there's a visible Sign In button,
-        // the user is NOT logged in, regardless of cookies (cookies could be stale/tracking)
+        // Check visible sign-in elements only — page source may have sign-in links
+        // in scripts, meta, or nav elements even when logged in.
         let visibleSignInCount = 0;
         try {
           visibleSignInCount = await ctx.page.evaluate(() => {
@@ -478,18 +426,20 @@ export async function* openCheckLogin(ctx: any) {
             return count;
           });
         } catch (e) {
-          // Fall back to locator count if evaluate fails
+          // Fall back to locator count if evaluate fails (e.g., Camoufox restrictions)
           visibleSignInCount = signInBtnCount;
         }
 
-        // User is logged in ONLY when: NO visible sign-in button AND real auth cookies present
-        const isLoggedIn = visibleSignInCount === 0 && hasRealAuthCookies;
+        const isLoggedIn = hasAuthCookies;
+        // Note: visible sign-in elements are informative only — Indeed may show
+        // "Sign in" links in the nav even when authenticated (e.g., account switching).
+        // Auth cookies are the definitive check.
 
         if (isLoggedIn) {
-            console.log('indeed.checkLogin', `Authenticated (sign-in: ${visibleSignInCount}, SHOE/PassportAuth: ${hasRealAuthCookies}).`);
+            console.log('indeed.checkLogin', `Session is authenticated (visible sign-in: ${visibleSignInCount}, auth cookies: ${hasAuthCookies}).`);
             yield 'login_not_needed';
         } else {
-            console.log('indeed.checkLogin', `Not logged in (sign-in visible: ${visibleSignInCount}, SHOE/PassportAuth: ${hasRealAuthCookies})`);
+            console.log('indeed.checkLogin', `User is not logged in. (Visible sign-in elements: ${visibleSignInCount}, Auth Cookies: ${hasAuthCookies})`);
             yield 'user_needs_to_login';
         }
     } catch (error) {
@@ -1435,7 +1385,7 @@ export async function* navigateToNextPage(ctx: any) {
 export async function* finish(ctx: any) {
     console.log('indeed.finish', `Workflow finished. Scraped total: ${ctx.state?.scrapedJobs?.length || 0}`);
     if (ctx.browser) {
-        // Only close if we launched our own browser (not shared CDP)
+        // In Camoufox we may want to keep it open based on keep_open setting, but usually we close.
         if (ctx.config?.keep_open !== true) {
             setTimeout(async () => await ctx.browser.close().catch(() => { }), 2000);
         }

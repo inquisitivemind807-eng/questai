@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "heyguiye",
+  "productName": "questai",
   "version": "0.1.0",
-  "identifier": "com.wagle.heyguiye",
+  "identifier": "com.wagle.questai",
   "build": {
     "devUrl": "http://localhost:5173",
     "beforeDevCommand": "bun run dev"
@@ -11,7 +11,7 @@
     "withGlobalTauri": true,
     "windows": [
     {
-      "title": "heyguiye",
+      "title": "questai",
       "width": 1800,
       "height": 1200,
       "decorations": true,
