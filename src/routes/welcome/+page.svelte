@@ -167,6 +167,12 @@
             <span class="font-bold text-primary">Indeed</span>
           </div>
         </div>
+        <div class="card bg-base-100 shadow-lg hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
+          <div class="card-body items-center p-6">
+            <img src="/finaljora.png" alt="Jora" class="w-16 h-16 object-contain mb-2" />
+            <span class="font-bold text-primary">Jora</span>
+          </div>
+        </div>
       </div>
     </div>
   </div>

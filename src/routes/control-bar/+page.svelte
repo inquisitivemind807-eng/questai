@@ -10,7 +10,8 @@
   
   const providers = [
     { value: 'seek', label: 'Seek' },
-    { value: 'deknil', label: 'LinkedIn' }
+    { value: 'deknil', label: 'LinkedIn' },
+    { value: 'jora', label: 'Jora' }
   ];
 
   function handleProviderChange() {

@@ -42,7 +42,7 @@
 
   // If `platform` is provided, tracker is platform-specific.
   // If omitted/undefined, tracker operates in "overview" mode across all platforms.
-  export let platform; // "linkedin" | "seek" | "indeed" | undefined
+  export let platform; // "linkedin" | "seek" | "indeed" | "jora" | undefined
   // `bots` is accepted for backward compatibility but not used here;
   // bots are configured and launched from the Choose Bot screen instead.
   export let bots = []; // e.g. ["linkedin_extract_bot", "linkedin_apply_bot"]
@@ -56,6 +56,7 @@
     linkedin: "LinkedIn",
     seek: "Seek",
     indeed: "Indeed",
+    jora: "Jora",
   };
 
   $: trackerLabel = platform ? (PLATFORM_LABELS[platform] || platform) : "All Platforms";
@@ -664,7 +665,9 @@
             ? "linkedin_apply"
             : app.platform === "indeed"
               ? "indeed_apply"
-              : app.platform;
+              : app.platform === "jora"
+                ? "jora_apply"
+                : app.platform;
       
       const configuredBotName = isPauseConfirmMode ? mappedBotName + "_pauseconfirm" : mappedBotName;
 
@@ -982,6 +985,7 @@
                   <option value="seek">Seek</option>
                   <option value="linkedin">LinkedIn</option>
                   <option value="indeed">Indeed</option>
+                  <option value="jora">Jora</option>
                 </select>
               </div>
             {/if}
@@ -1147,6 +1151,8 @@
                                   <span class="badge badge-sm border-none bg-[#007FB1] text-white text-[10px] h-4">LinkedIn</span>
                                 {:else if job.platform === 'seek'}
                                   <span class="badge badge-sm border-none bg-[#E60278] text-white text-[10px] h-4">Seek</span>
+                                {:else if job.platform === 'jora'}
+                                  <span class="badge badge-sm border-none bg-[#1A8C5E] text-white text-[10px] h-4">Jora</span>
                                 {/if}
                               {/if}
                             </div>
@@ -1407,6 +1413,7 @@
                   <option value="seek">Seek</option>
                   <option value="linkedin">LinkedIn</option>
                   <option value="indeed">Indeed</option>
+                  <option value="jora">Jora</option>
                 </select>
               </div>
             {/if}
@@ -1581,6 +1588,8 @@
                                   <span class="badge badge-sm border-none bg-[#007FB1] text-white text-[10px] h-4">LinkedIn</span>
                                 {:else if application.platform === 'seek'}
                                   <span class="badge badge-sm border-none bg-[#E60278] text-white text-[10px] h-4">Seek</span>
+                                {:else if application.platform === 'jora'}
+                                  <span class="badge badge-sm border-none bg-[#1A8C5E] text-white text-[10px] h-4">Jora</span>
                                 {/if}
                               {/if}
                             </div>
