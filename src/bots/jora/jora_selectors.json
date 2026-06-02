@@ -32,8 +32,7 @@
       "span.job-company"
     ],
     "location": [
-      "a.job-location.clickable-link",
-      "span.job-location"
+      "a.job-location.clickable-link"
     ],
     "salary": [
       "div.badge.-default-badge div.content"
@@ -47,8 +46,29 @@
     "quickApplyBadge": [
       "div.badge.-quick-apply-badge"
     ],
+    "badgesContainer": [
+      "div.badges"
+    ],
+    "seenBadge": [
+      "div.badge.-seen-job-badge"
+    ],
+    "viewedBadge": [
+      "div.badge.-viewed-job-badge"
+    ],
+    "workArrangementBadge": [
+      "div.badge.-work-arrangement-badge"
+    ],
+    "urgentHiringBadge": [
+      "div.badge.-urgent-hiring-badge"
+    ],
+    "freshnessBadgeContainer": [
+      "div.freshness-badge-container"
+    ],
+    "freshnessBadgeTimestamp": [
+      "span.freshness-badge-timestamp"
+    ],
     "jobType": [
-      "a.job-type.clickable-link"
+      "div.badge.-default-badge div.content"
     ]
   },
   "jobDetails": {

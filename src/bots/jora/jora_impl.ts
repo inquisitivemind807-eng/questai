@@ -26,7 +26,7 @@ import { HumanBehavior, StealthFeatures, DEFAULT_HUMANIZATION } from '../core/hu
 import { UniversalSessionManager, SessionConfigs } from '../core/sessionManager';
 import { UniversalOverlay } from '../core/universal_overlay';
 import type { WorkflowContext } from '../core/workflow_engine';
-import { waitForNextConfirm } from '../core/pause_confirm';
+import { waitForNextConfirm, waitForNextConfirmAsync } from '../core/pause_confirm';
 import { apiRequest } from '../core/api_client';
 import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
 import { highlightElement, highlightSelector } from '../core/highlight';
@@ -633,7 +633,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
             .catch(() => { });
         }
 
-        await waitForNextConfirm(ctx, nextLabel);
+        await waitForNextConfirmAsync(ctx, nextLabel);
       }
     }
 
