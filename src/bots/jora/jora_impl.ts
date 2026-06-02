@@ -451,6 +451,33 @@ export async function* getPageInfo(ctx: WorkflowContext): AsyncGenerator<string,
 // navigating away. Highlights stick because the page never reloads.
 // ---------------------------------------------------------------------------
 
+function parseRelativeDate(text: string): string | null {
+  if (!text) return null;
+  const clean = text.replace(/^Posted\s+/i, '').trim();
+
+  const now = Date.now();
+  const MINUTE = 60 * 1000;
+  const HOUR = 60 * MINUTE;
+  const DAY = 24 * HOUR;
+
+  const hMatch = clean.match(/^(\d+)\s*h(?:ours?)?\s*ago$/i);
+  if (hMatch) return new Date(now - parseInt(hMatch[1]) * HOUR).toISOString();
+
+  const dMatch = clean.match(/^(\d+)\s*d(?:ays?)?\s*ago$/i);
+  if (dMatch) return new Date(now - parseInt(dMatch[1]) * DAY).toISOString();
+
+  const mMatch = clean.match(/^(\d+)\s*m(?:inutes?)?\s*ago$/i);
+  if (mMatch) return new Date(now - parseInt(mMatch[1]) * MINUTE).toISOString();
+
+  const todayMatch = clean.match(/^today$/i);
+  if (todayMatch) return new Date(now).toISOString();
+
+  const yesterdayMatch = clean.match(/^yesterday$/i);
+  if (yesterdayMatch) return new Date(now - DAY).toISOString();
+
+  return null;
+}
+
 export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
   const driver: WebDriver = ctx.driver;
   const cardCount = ctx.state.cardCount || 0;
@@ -484,96 +511,204 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
         let jobId = `jora_${Date.now()}_${i}`;
         let location = 'Unknown';
         let salary = 'Not listed';
-        let postedDate = 'Unknown';
+        let postedDate: string | null = null;
         let jobType = 'Unknown';
         let isQuickApply = false;
+        let workMode = 'Unknown';
+        let description = '';
+        let externalApplyUrl: string | null = null;
+        const applicationType: 'internal' | 'external' = 'external';
 
+        // Get the job URL from the card's title link
         const titleSelectors = resolveSelector(ctx.selectors, 'jobCards.title');
         const titleEl = await findFirstInElement(card, titleSelectors);
         if (titleEl) {
-          await highlightElement(driver, titleEl, '#ff00ff');
           title = (await titleEl.getText()).trim();
           try {
             jobUrl = await titleEl.getAttribute('href') || '';
             if (jobUrl.startsWith('/')) jobUrl = `${BASE_URL}${jobUrl}`;
-          } catch {
-            // ignored
-          }
+          } catch { /* ignored */ }
         }
 
         ctx.overlay
           ?.updateJobProgress(i + 1, cardCount, `Card ${i + 1} of ${cardCount}: ${title}`, 3)
           .catch(() => { });
 
-        const companySelectors = resolveSelector(ctx.selectors, 'jobCards.company');
-        const companyEl = await findFirstInElement(card, companySelectors);
-        if (companyEl) {
-          await highlightElement(driver, companyEl, '#ffff00');
-          company = (await companyEl.getText()).trim();
-        }
+        // Open job detail page in a new tab and extract everything from there
+        if (jobUrl && jobUrl.startsWith('http')) {
+          try {
+            const mainHandle = await driver.getWindowHandle();
+            await driver.executeScript('window.open(arguments[0], "_blank");', jobUrl);
+            await driver.sleep(600);
 
-        const locationSelectors = resolveSelector(ctx.selectors, 'jobCards.location');
-        const locationEl = await findFirstInElement(card, locationSelectors);
-        if (locationEl) {
-          await highlightElement(driver, locationEl, '#ffff00');
-          location = (await locationEl.getText()).trim();
-        }
-
-        const salarySelectors = resolveSelector(ctx.selectors, 'jobCards.salary');
-        const salaryEl = await findFirstInElement(card, salarySelectors);
-        if (salaryEl) {
-          await highlightElement(driver, salaryEl, '#ffff00');
-          salary = (await salaryEl.getText()).trim();
-        }
-
-        const dateSelectors = resolveSelector(ctx.selectors, 'jobCards.listingDate');
-        const dateEl = await findFirstInElement(card, dateSelectors);
-        if (dateEl) {
-          await highlightElement(driver, dateEl, '#ffff00');
-          postedDate = (await dateEl.getText()).trim();
-        }
-
-        const jtSelectors = resolveSelector(ctx.selectors, 'jobCards.jobType');
-        const jtEl = await findFirstInElement(card, jtSelectors);
-        if (jtEl) {
-          jobType = (await jtEl.getText()).trim();
-        }
-
-        const qaSelectors = resolveSelector(ctx.selectors, 'jobCards.quickApplyBadge');
-        const qaEl = await findFirstInElement(card, qaSelectors);
-        if (qaEl) {
-          isQuickApply = true;
-        }
-
-        let description = '';
-        let externalApplyUrl: string | null = null;
-        const applicationType: 'internal' | 'external' = isQuickApply ? 'internal' : 'external';
-
-        try {
-          await driver.executeScript('arguments[0].scrollIntoView({block: "center"});', card);
-          await driver.sleep(300);
-          await driver.executeScript('arguments[0].click();', card);
-          await driver.sleep(2500);
-
-          const descSelectors = resolveSelector(ctx.selectors, 'jobDetails.description');
-          const descEl = await findFirst(driver, descSelectors);
-          if (descEl) {
-            await highlightElement(driver, descEl, '#00ff00');
-            description = (await descEl.getText()).trim();
-          }
-
-          const applySelectors = resolveSelector(ctx.selectors, 'jobDetails.externalApplyButton');
-          const applyEl = await findFirst(driver, applySelectors);
-          if (applyEl) {
-            await highlightElement(driver, applyEl, '#ff00ff');
-            try {
-              externalApplyUrl = await applyEl.getAttribute('href') || null;
-            } catch {
-              // ignored
+            const handles = await driver.getAllWindowHandles();
+            let detailHandle = '';
+            for (const h of handles) {
+              if (h !== mainHandle) { detailHandle = h; break; }
             }
+
+            if (detailHandle) {
+              await driver.switchTo().window(detailHandle);
+              await driver.sleep(2500);
+
+              // --- Extract ALL fields from the detail page ---
+
+              // Title
+              const pageTitleSelectors = resolveSelector(ctx.selectors, 'jobDetails.title') || [];
+              for (const sel of [...pageTitleSelectors, 'h1', 'h2']) {
+                try {
+                  const el = await driver.findElement(By.css(sel));
+                  if (el && await el.isDisplayed()) {
+                    title = (await el.getText()).trim();
+                    break;
+                  }
+                } catch { /* try next */ }
+              }
+
+              // Company
+              const pageCompanySelectors = resolveSelector(ctx.selectors, 'jobDetails.company') || [];
+              for (const sel of [...pageCompanySelectors, 'span[class*="company"]', 'a[class*="company"]']) {
+                try {
+                  const el = await driver.findElement(By.css(sel));
+                  if (el && await el.isDisplayed()) {
+                    company = (await el.getText()).trim();
+                    break;
+                  }
+                } catch { /* try next */ }
+              }
+
+              // Location
+              const pageLocSelectors = resolveSelector(ctx.selectors, 'jobDetails.location') || [];
+              for (const sel of [...pageLocSelectors, 'span[class*="location"]', 'a[class*="location"]']) {
+                try {
+                  const el = await driver.findElement(By.css(sel));
+                  if (el && await el.isDisplayed()) {
+                    location = (await el.getText()).trim();
+                    break;
+                  }
+                } catch { /* try next */ }
+              }
+
+              // Description
+              const descSelectors = resolveSelector(ctx.selectors, 'jobDetails.description') || [];
+              for (const sel of [...descSelectors, 'div[class*="description"]', 'div[class*="content"]']) {
+                try {
+                  const el = await driver.findElement(By.css(sel));
+                  if (el && await el.isDisplayed()) {
+                    description = (await el.getText()).trim();
+                    if (description.length > 100) break;
+                  }
+                } catch { /* try next */ }
+              }
+              if (!description) {
+                try {
+                  description = (await driver.findElement(By.css('body')).getText()).trim();
+                } catch { /* ignored */ }
+              }
+
+              // Salary — scan visible elements containing $
+              try {
+                const els = await driver.findElements(By.xpath("//*[contains(text(), '$') and (contains(text(), 'year') or contains(text(), 'annum') or contains(text(), 'month'))]"));
+                for (const el of els) {
+                  const text = (await el.getText()).trim();
+                  if (text && text.length < 100) { salary = text; break; }
+                }
+              } catch { /* ignored */ }
+
+              // Posted date — look for relative or absolute date text
+              try {
+                const dateEls = await driver.findElements(By.xpath("//*[contains(text(), 'ago') or contains(text(), 'Posted') or contains(text(), 'listed')]"));
+                for (const el of dateEls) {
+                  const text = (await el.getText()).trim();
+                  const parsed = parseRelativeDate(text);
+                  if (parsed) { postedDate = parsed; break; }
+                  // Try datetime attribute
+                  try {
+                    const dt = await el.getAttribute('datetime');
+                    if (dt) { postedDate = new Date(dt).toISOString(); break; }
+                  } catch { /* skip */ }
+                }
+              } catch { /* ignored */ }
+
+              // Job type
+              const jtSelectors = resolveSelector(ctx.selectors, 'jobCards.jobType') || [];
+              for (const sel of [...jtSelectors, 'span[class*="job-type"]', 'div[class*="job-type"]', 'span[class*="badge"]']) {
+                try {
+                  const el = await driver.findElement(By.css(sel));
+                  if (el && await el.isDisplayed()) {
+                    const text = (await el.getText()).trim();
+                    if (text && text.length < 30) { jobType = text; break; }
+                  }
+                } catch { /* try next */ }
+              }
+
+              // Work mode — Remote/Hybrid/On-site
+              try {
+                const wmEls = await driver.findElements(By.xpath("//*[(contains(text(), 'Remote') or contains(text(), 'Hybrid') or contains(text, 'On-site') or contains(text(), 'WFH')) and string-length(text()) < 30]"));
+                for (const el of wmEls) {
+                  const text = (await el.getText()).trim();
+                  if (text) { workMode = text; break; }
+                }
+              } catch { /* ignored */ }
+
+              // Quick apply badge
+              try {
+                const qaEl = await driver.findElement(By.css('div.badge.-quick-apply-badge'));
+                if (qaEl && await qaEl.isDisplayed()) isQuickApply = true;
+              } catch { /* ignored */ }
+
+              // Apply URL
+              const applySelectors = resolveSelector(ctx.selectors, 'jobDetails.externalApplyButton');
+              for (const sel of applySelectors) {
+                try {
+                  const a = await driver.findElement(By.css(sel));
+                  if (a && await a.isDisplayed()) {
+                    let href = await a.getAttribute('href') || '';
+                    const dUrl = await a.getAttribute('data-url') || await a.getAttribute('data-href') || '';
+                    href = dUrl || href;
+                    if (href && !href.startsWith('#') && !href.includes('disallow=true')) {
+                      if (href.startsWith('/')) href = `https://au.jora.com${href}`;
+                      externalApplyUrl = href;
+                      break;
+                    }
+                  }
+                } catch { /* try next */ }
+              }
+
+              if (!externalApplyUrl) {
+                const allLinks = await driver.findElements(By.css('a[href*="redirect"], a[href*="/job/"], a[href*="utm_source"], a[target="_blank"]'));
+                for (const link of allLinks) {
+                  try {
+                    const href = await link.getAttribute('href') || '';
+                    if (!href || href === '#' || href.startsWith('/j?') || href.includes('disallow=true')) continue;
+                    if (href.startsWith('/')) continue;
+                    externalApplyUrl = href;
+                    break;
+                  } catch { /* skip */ }
+                }
+              }
+
+              if (!externalApplyUrl) {
+                const allAs = await driver.findElements(By.css('a[href]'));
+                for (const a of allAs) {
+                  try {
+                    const href = await a.getAttribute('href') || '';
+                    if (!href || href === '#' || href.startsWith('/j?') || href.includes('disallow=true')) continue;
+                    if (!href.includes('jora.com') && href.startsWith('http')) {
+                      externalApplyUrl = href;
+                      break;
+                    }
+                  } catch { /* skip */ }
+                }
+              }
+
+              await driver.close();
+              await driver.switchTo().window(mainHandle);
+              await driver.sleep(300);
+            }
+          } catch (e) {
+            printLog(`Detail page tab failed for ${title}: ${e}`);
           }
-        } catch (e) {
-          printLog(`Could not open side panel for ${title}: ${e}`);
         }
 
         const job = {
@@ -589,6 +724,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
           applicationType,
           externalApplyUrl,
           isQuickApply,
+          workMode,
           platform: 'jora',
         };
         ctx.state.currentJobCards.push(job);
