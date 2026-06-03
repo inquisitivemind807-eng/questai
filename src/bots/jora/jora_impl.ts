@@ -151,6 +151,7 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
       showLogs: true,
       showPauseButton: true,
     });
+    ctx.overlay.setBotVariant(ctx.bot_name || 'jora');
 
     try {
       await ctx.overlay.showOverlay({

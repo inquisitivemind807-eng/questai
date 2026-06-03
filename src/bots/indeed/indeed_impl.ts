@@ -144,6 +144,7 @@ export async function* step0(ctx: any) {
             } catch (e) { }
 
             ctx.overlay = new UniversalOverlay(new PlaywrightDriverAdapter(ctx.page) as any, 'Indeed');
+            ctx.overlay.setBotVariant(ctx.bot_name || 'indeed');
 
             // NOTE: We don't initialize overlay yet because we might be on about:blank
             // We'll initialize it in openCheckLogin or showManualLoginPrompt

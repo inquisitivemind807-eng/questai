@@ -636,6 +636,7 @@ export async function* openCheckLogin(ctx: WorkflowContext): AsyncGenerator<stri
       ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
       ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.linkedin);
       ctx.overlay = new UniversalOverlay(driver, 'LinkedIn');
+      ctx.overlay.setBotVariant(ctx.bot_name || 'linkedin');
 
       await StealthFeatures.hideWebDriver(driver);
       await StealthFeatures.randomizeUserAgent(driver);
@@ -2699,6 +2700,7 @@ export async function* navigateToDirectApplyUrl(ctx: WorkflowContext): AsyncGene
       ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
       ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.linkedin);
       ctx.overlay = new UniversalOverlay(driver, 'LinkedIn');
+      ctx.overlay.setBotVariant(ctx.bot_name || 'linkedin');
 
       // Show overlay immediately — before any navigation
       await ctx.overlay.initialize();

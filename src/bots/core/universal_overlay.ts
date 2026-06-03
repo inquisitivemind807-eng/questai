@@ -18,6 +18,7 @@ export interface OverlayConfig {
 
 interface OverlayState {
   botName: string;
+  botVariant?: string;
   type: 'job_progress' | 'sign_in' | 'notification' | 'step_progress' | 'custom' | 'manual_review' | 'pause_confirm';
   data: {
     appliedJobs?: number;
@@ -41,6 +42,7 @@ export class UniversalOverlay {
   private driver: WebDriver;
   private overlayId: string;
   private botName: string;
+  private _botVariant: string = '';
   private initialized: boolean = false;
   private overlayUnavailable: boolean = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -51,6 +53,19 @@ export class UniversalOverlay {
     this.driver = driver;
     this.botName = botName;
     this.overlayId = overlayId;
+  }
+
+  private get botVariant(): string {
+    return this._botVariant || this.botName;
+  }
+
+  /**
+   * Set the bot variant name (e.g. 'linkedin_apply', 'seek_extract').
+   * Used by the overlay to determine the phase label (Applying vs Extracting).
+   * The display title remains the pretty botName passed to the constructor.
+   */
+  setBotVariant(variant: string): void {
+    this._botVariant = variant;
   }
 
   /**
@@ -569,7 +584,7 @@ export class UniversalOverlay {
             const totalJobs = Number(data.totalJobs || 0);
             const currentStep = String(data.currentStep || '');
             const percentage = totalJobs > 0 ? Math.max(0, Math.min(100, (appliedJobs / totalJobs) * 100)) : 0;
-            const phaseLabel = (state.botName || '').toLowerCase().indexOf('apply') !== -1 ? 'Applying' : 'Extracting';
+            const phaseLabel = ((state.botVariant || state.botName || '')).toLowerCase().indexOf('apply') !== -1 ? 'Applying' : 'Extracting';
             refs.mainContent.innerHTML =
               '<div style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:100%;box-sizing:border-box;">' +
                 '<div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;">' +
@@ -926,6 +941,7 @@ export class UniversalOverlay {
 
       const state: OverlayState = {
         botName: this.botName,
+        botVariant: this._botVariant ?? this.botName,
         type: 'job_progress',
         data: {
           appliedJobs,
@@ -995,6 +1011,7 @@ export class UniversalOverlay {
 
       const state: OverlayState = {
         botName: this.botName,
+        botVariant: this._botVariant ?? this.botName,
         type: 'job_progress',
         data: {
           appliedJobs,
@@ -1032,6 +1049,7 @@ export class UniversalOverlay {
 
     const state: OverlayState = {
       botName: this.botName,
+      botVariant: this.botVariant,
       type: 'sign_in',
       data: {
         title: 'Please Sign In',
@@ -1104,6 +1122,7 @@ export class UniversalOverlay {
 
     const state: OverlayState = {
       botName: this.botName,
+      botVariant: this.botVariant,
       type: 'manual_review',
       data: {
         title: 'Review Application',
@@ -1170,6 +1189,7 @@ export class UniversalOverlay {
 
     const state: OverlayState = {
       botName: this.botName,
+      botVariant: this.botVariant,
       type: 'pause_confirm',
       data: {
         title: 'Paused — Waiting for confirmation',
@@ -1206,6 +1226,7 @@ export class UniversalOverlay {
 
       const state: OverlayState = {
         botName: this.botName,
+        botVariant: this._botVariant ?? this.botName,
         type: 'custom',
         data: {
           title: config.title,
@@ -1352,6 +1373,7 @@ export class UniversalOverlay {
 
       const state: OverlayState = {
         botName: this.botName,
+        botVariant: this._botVariant ?? this.botName,
         type: 'custom',
         data: {
           title: `${icons[type]} ${type.charAt(0).toUpperCase() + type.slice(1)}`,

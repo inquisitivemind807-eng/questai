@@ -423,6 +423,7 @@ export async function* openJobUrl(ctx: WorkflowContext): AsyncGenerator<string, 
     ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, ctx.bot_name || 'Seek');
+    ctx.overlay.setBotVariant(ctx.bot_name || 'seek');
 
     await StealthFeatures.hideWebDriver(driver);
     await StealthFeatures.randomizeUserAgent(driver);
@@ -521,6 +522,7 @@ export async function* openHomepage(ctx: WorkflowContext): AsyncGenerator<string
     ctx.humanBehavior = new HumanBehavior(DEFAULT_HUMANIZATION);
     ctx.sessionManager = new UniversalSessionManager(driver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(driver, ctx.bot_name || 'Seek');
+    ctx.overlay.setBotVariant(ctx.bot_name || 'seek');
 
     // Register recovery callback for browser monitoring
     (driver as any).__recoverDriver = async () => {
@@ -2316,6 +2318,7 @@ async function recreateDriverAndRestoreContext(ctx: WorkflowContext): Promise<bo
     }
     ctx.sessionManager = new UniversalSessionManager(newDriver, SessionConfigs.seek);
     ctx.overlay = new UniversalOverlay(newDriver, 'Seek');
+    ctx.overlay.setBotVariant(ctx.bot_name || 'seek');
 
     // Apply stealth features
     await StealthFeatures.hideWebDriver(newDriver);
