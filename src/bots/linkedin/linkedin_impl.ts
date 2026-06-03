@@ -2039,6 +2039,89 @@ export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<st
 }
 
 /**
+ * Detect whether a job page is in a closed/removed state.
+ *
+ * State A — "No longer accepting applications":
+ *   LinkedIn shows a red alert banner with `svg#signal-error-small`.
+ * State B — "Job removed / not found":
+ *   LinkedIn shows a full error page with `svg#error-crossing-small`.
+ *
+ * Both states use stable SVG `id` attributes (not hashed CSS classes)
+ * as primary selectors, with body-text fallbacks for robustness.
+ *
+ * Returns:
+ *   "job_is_closed"   → skip this job (do NOT treat as external apply)
+ *   "job_still_open"  → genuinely external, proceed to externalApply
+ */
+export async function* checkJobClosed(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
+  try {
+    const driver = ctx.driver;
+    const jobStatusSelectors = (ctx.selectors as any)?.job_status || {};
+
+    const closedAlertCss = jobStatusSelectors.closed_alert_svg_css || "svg[id='signal-error-small']";
+    const removedPageCss = jobStatusSelectors.removed_page_svg_css || "svg[id='error-crossing-small']";
+    const closedText = jobStatusSelectors.closed_alert_text || 'No longer accepting applications';
+    const removedH2Text = jobStatusSelectors.removed_page_h2_text || 'Unable to load the page';
+
+    // State A: red alert banner — job closed, not accepting applications
+    try {
+      const closedAlertEls = await driver.findElements(By.css(closedAlertCss));
+      if (closedAlertEls.length > 0) {
+        printLog('🔴 checkJobClosed: found signal-error-small SVG (job closed alert)');
+        const bodyText: string = await driver.executeScript('return document.body.innerText || ""') as string;
+        if (bodyText.includes(closedText)) {
+          printLog(`🔴 checkJobClosed: confirmed State A — "${closedText}"`);
+          await ctx.overlay.addLogEvent(`Job closed (no longer accepting): ${ctx.current_job?.title || 'unknown'}`);
+          yield 'job_is_closed';
+          return;
+        }
+      }
+    } catch { /* SVG not found — not State A */ }
+
+    // State B: full error page — job removed / invalid job ID
+    try {
+      const removedPageEls = await driver.findElements(By.css(removedPageCss));
+      if (removedPageEls.length > 0) {
+        printLog('🔴 checkJobClosed: found error-crossing-small SVG (job removed page)');
+        await ctx.overlay.addLogEvent(`Job removed/not found: ${ctx.current_job?.title || 'unknown'}`);
+        yield 'job_is_closed';
+        return;
+      }
+    } catch { /* SVG not found — not State B */ }
+
+    // Text-only fallback (covers either state even if SVG ids ever change)
+    try {
+      const bodyText: string = await driver.executeScript('return document.body.innerText || ""') as string;
+      if (bodyText.includes(closedText) || bodyText.includes(removedH2Text)) {
+        printLog('🔴 checkJobClosed: body text fallback matched — job is closed/removed');
+        await ctx.overlay.addLogEvent(`Job closed/removed (text fallback): ${ctx.current_job?.title || 'unknown'}`);
+        yield 'job_is_closed';
+        return;
+      }
+    } catch { /* ignore script error */ }
+
+    // URL fallback: if we got redirected away from /jobs/view/ the job is gone
+    try {
+      const currentUrl = await driver.getCurrentUrl();
+      if (!currentUrl.includes('/jobs/view/')) {
+        printLog(`🔴 checkJobClosed: URL does not contain /jobs/view/ ("${currentUrl}") — treating as closed`);
+        await ctx.overlay.addLogEvent(`Job closed (unexpected redirect): ${ctx.current_job?.title || 'unknown'}`);
+        yield 'job_is_closed';
+        return;
+      }
+    } catch { /* ignore */ }
+
+    // None of the closed-state signals detected — it's a genuine external apply
+    printLog('✅ checkJobClosed: no closed/removed state detected — job still open (external apply)');
+    yield 'job_still_open';
+  } catch (error) {
+    printLog(`checkJobClosed error: ${error}`);
+    // Default to treating it as still open to avoid silently losing external jobs
+    yield 'job_still_open';
+  }
+}
+
+/**
  * Fill the contact info form (first page of Easy Apply modal).
  * LinkedIn now shows a contact form with email, phone country code,
  * and phone number before the resume upload step. This function clears
@@ -3737,6 +3820,7 @@ export const linkedinStepFunctions = {
   saveLinkedInScrapedJob,
   advanceExtractCursor,
   attemptEasyApply,
+  checkJobClosed,
   fillContactInfo,
   extractJobDetailsFromPanel,
   uploadResume,
@@ -3754,3 +3838,4 @@ export const linkedinStepFunctions = {
   finish,
   waitForNextConfirm
 };
+

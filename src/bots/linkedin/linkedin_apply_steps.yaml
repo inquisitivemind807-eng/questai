@@ -56,11 +56,20 @@ steps_config:
       no_jobs_page_found: "application_failed"
       no_job_to_process: "application_failed"
       job_card_not_found: "application_failed"
-      no_easy_apply_button_found: "external_apply"
-      failed_to_click_easy_apply: "external_apply"
+      no_easy_apply_button_found: "check_job_closed"
+      failed_to_click_easy_apply: "check_job_closed"
       easy_apply_process_error: "application_failed"
     timeout: 30
     on_timeout_event: "easy_apply_process_error"
+
+  check_job_closed:
+    step: 1.5
+    func: "checkJobClosed"
+    transitions:
+      job_is_closed: "application_failed"
+      job_still_open: "external_apply"
+    timeout: 15
+    on_timeout_event: "job_still_open"
 
   fill_contact_info:
     step: 2

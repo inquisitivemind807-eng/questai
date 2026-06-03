@@ -97,6 +97,13 @@
     "active_button_xpath": "//button[contains(@class, 'active')]",
     "next_page_button_xpath_template": "//button[@aria-label='Page {page}']"
   },
+  "job_status": {
+    "closed_alert_svg_css": "svg[id='signal-error-small']",
+    "removed_page_svg_css": "svg[id='error-crossing-small']",
+    "closed_alert_text": "No longer accepting applications",
+    "removed_page_h2_text": "Unable to load the page",
+    "removed_page_p_text": "Job id provided may not be valid or the job posting has been removed."
+  },
   "easy_apply": {
     "button_css_candidates": [
       "a[aria-label*='Easy Apply']",
