@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { invoke } from "@tauri-apps/api/core"
+    import { invoke } from "@tauri-apps/api/core";
 
     let name = $state("");
     let greetMsg = $state("");
@@ -38,9 +38,9 @@
     async function writeFile(event: Event) {
         event.preventDefault();
         try {
-            writeResult = await invoke<string>("write_file_async", { 
+            writeResult = await invoke<string>("write_file_async", {
                 filename: filename,
-                content: fileContent 
+                content: fileContent,
             });
         } catch (error) {
             writeResult = `Error: ${error}`;
@@ -50,8 +50,8 @@
     async function readFile(event: Event) {
         event.preventDefault();
         try {
-            readResult = await invoke<string>("read_file_async", { 
-                filename: filename 
+            readResult = await invoke<string>("read_file_async", {
+                filename: filename,
             });
         } catch (error) {
             readResult = `Error: ${error}`;
@@ -61,9 +61,9 @@
     async function copyFile(event: Event) {
         event.preventDefault();
         try {
-            copyResult = await invoke<string>("copy_file_async", { 
+            copyResult = await invoke<string>("copy_file_async", {
                 source: sourceFile,
-                destination: destinationFile 
+                destination: destinationFile,
             });
         } catch (error) {
             copyResult = `Error: ${error}`;
@@ -73,9 +73,9 @@
     async function renameFile(event: Event) {
         event.preventDefault();
         try {
-            renameResult = await invoke<string>("rename_file_async", { 
+            renameResult = await invoke<string>("rename_file_async", {
                 oldName: oldName,
-                newName: newName 
+                newName: newName,
             });
         } catch (error) {
             renameResult = `Error: ${error}`;
@@ -85,8 +85,8 @@
     async function deleteFileFunc(event: Event) {
         event.preventDefault();
         try {
-            deleteResult = await invoke<string>("delete_file_async", { 
-                filename: deleteFile 
+            deleteResult = await invoke<string>("delete_file_async", {
+                filename: deleteFile,
             });
         } catch (error) {
             deleteResult = `Error: ${error}`;
@@ -96,8 +96,8 @@
     async function createDirectory(event: Event) {
         event.preventDefault();
         try {
-            dirResult = await invoke<string>("create_directory_async", { 
-                dirname: dirName 
+            dirResult = await invoke<string>("create_directory_async", {
+                dirname: dirName,
             });
         } catch (error) {
             dirResult = `Error: ${error}`;
@@ -107,8 +107,8 @@
     async function getMetadata(event: Event) {
         event.preventDefault();
         try {
-            metadataResult = await invoke<string>("get_file_metadata_async", { 
-                filename: metadataFile 
+            metadataResult = await invoke<string>("get_file_metadata_async", {
+                filename: metadataFile,
             });
         } catch (error) {
             metadataResult = `Error: ${error}`;
@@ -118,17 +118,15 @@
     async function checkExists(event: Event) {
         event.preventDefault();
         try {
-            const exists = await invoke<boolean>("file_exists_async", { 
-                filename: existsFile 
+            const exists = await invoke<boolean>("file_exists_async", {
+                filename: existsFile,
             });
-            existsResult = `File ${existsFile} ${exists ? 'EXISTS' : 'DOES NOT EXIST'}`;
+            existsResult = `File ${existsFile} ${exists ? "EXISTS" : "DOES NOT EXIST"}`;
         } catch (error) {
             existsResult = `Error: ${error}`;
         }
     }
-
 </script>
-
 
 <div class="container mx-auto p-8">
     <h1 class="text-4xl font-bold text-center mb-8">🧪 Test Functions</h1>
@@ -160,14 +158,22 @@
         <div class="card bg-base-100 shadow-xl">
             <div class="card-body">
                 <h2 class="card-title">📂 Directory Reader</h2>
-                <button class="btn btn-primary" onclick={() => readDirectory("/home/wagle/finalboss")}>Read Directory</button>
+                <button
+                    class="btn btn-primary"
+                    onclick={() => readDirectory("/home/wagle/finalboss")}
+                    >Read Directory</button
+                >
                 <div class="mt-4 max-h-60 overflow-y-auto">
                     {#if output.length > 0}
                         {#each output as item}
                             <div class="alert alert-info mb-2">{item}</div>
                         {/each}
                     {:else}
-                        <div class="text-center text-base-content/70 italic py-8">No directory contents to display</div>
+                        <div
+                            class="text-center text-base-content/70 italic py-8"
+                        >
+                            No directory contents to display
+                        </div>
                     {/if}
                 </div>
             </div>
@@ -193,10 +199,13 @@
                             class="textarea textarea-bordered h-32"
                         ></textarea>
                     </div>
-                    <button type="submit" class="btn btn-primary">Write File</button>
+                    <button type="submit" class="btn btn-primary"
+                        >Write File</button
+                    >
                 </form>
                 <div class="mockup-code mt-4">
-                    <pre><code>{writeResult || "No file written yet..."}</code></pre>
+                    <pre><code>{writeResult || "No file written yet..."}</code
+                        ></pre>
                 </div>
             </div>
         </div>
@@ -268,7 +277,11 @@
                     placeholder="File to delete"
                     bind:value={deleteFile}
                 />
-                <button type="submit" style="background: linear-gradient(45deg, #ff0000, #ff6600);">Delete File</button>
+                <button
+                    type="submit"
+                    style="background: linear-gradient(45deg, #ff0000, #ff6600);"
+                    >Delete File</button
+                >
             </form>
             <div class="result-box">
                 {deleteResult || "No file deleted yet..."}
