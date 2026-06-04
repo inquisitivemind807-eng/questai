@@ -8,6 +8,14 @@
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover" data-theme="corporate">
+    <script>
+      window.addEventListener('error', (event) => {
+        document.body.innerHTML += `<div style="position:fixed;top:0;left:0;z-index:9999;background:red;color:white;padding:20px;font-size:16px;white-space:pre-wrap;width:100%;box-sizing:border-box;">Error: ${event.error ? event.error.stack : event.message}</div>`;
+      });
+      window.addEventListener('unhandledrejection', (event) => {
+        document.body.innerHTML += `<div style="position:fixed;top:0;left:0;z-index:9999;background:orange;color:white;padding:20px;font-size:16px;white-space:pre-wrap;width:100%;box-sizing:border-box;">Unhandled Promise Rejection: ${event.reason ? (event.reason.stack || event.reason) : event.reason}</div>`;
+      });
+    </script>
     <div style="display: contents">%sveltekit.body%</div>
   </body>
 </html>
