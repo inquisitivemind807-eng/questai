@@ -868,7 +868,6 @@ async fn run_bot_streaming(
 
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
 
@@ -987,7 +986,6 @@ async fn run_bot_for_job(
 
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
 
@@ -1110,7 +1108,6 @@ async fn run_bot_bulk(
 
     #[cfg(unix)]
     {
-        use std::os::unix::process::CommandExt;
         cmd.process_group(0);
     }
 
