@@ -324,14 +324,12 @@
       }
     }
     try {
-      if (await saveConfig()) {
-        alert("Configuration saved successfully!");
-      } else {
-        throw new Error("Save failed");
-      }
+      await saveConfig();
+      alert("Configuration saved successfully!");
     } catch (error) {
       console.error("Error saving configuration:", error);
-      alert("Error saving configuration. Please try again.");
+      const msg = error instanceof Error ? error.message : String(error);
+      alert(`Error saving configuration:\n${msg}\n\nNote: If this is the built app, saving config to a relative path under the installation directory is not supported due to OS write permissions.`);
     } finally {
       isSubmitting = false;
     }
@@ -339,11 +337,11 @@
 
   async function loadConfig() {
     try {
-      const content = await invoke<string>("read_file_async", {
-        filename: "src/bots/user-bots-config.json",
-      });
-      const config = JSON.parse(content);
-      if (config.formData) formData = { ...formData, ...config.formData };
+      const raw = await invoke<string | null>("read_user_config");
+      if (raw) {
+        const config = JSON.parse(raw);
+        if (config.formData) formData = { ...formData, ...config.formData };
+      }
       await loadUploadedResumes();
       if (
         formData.resumeFileName &&
@@ -367,27 +365,15 @@
   }
 
   async function saveConfig() {
+    let config: Record<string, unknown> = { formData: {} };
     try {
-      await invoke("create_directory_async", { dirname: "src/bots" }).catch(
-        () => {},
-      );
-      let config = { formData: {} };
-      try {
-        config = JSON.parse(
-          await invoke<string>("read_file_async", {
-            filename: "src/bots/user-bots-config.json",
-          }),
-        );
-      } catch {}
-      config.formData = formData;
-      await invoke("write_file_async", {
-        filename: "src/bots/user-bots-config.json",
-        content: JSON.stringify(config, null, 2),
-      });
-      return true;
-    } catch (error) {
-      return false;
-    }
+      const raw = await invoke<string | null>("read_user_config");
+      if (raw) config = JSON.parse(raw);
+    } catch {}
+    config.formData = formData;
+    await invoke("write_user_config", {
+      content: JSON.stringify(config, null, 2),
+    });
   }
 
   async function validateUploadedResumeForCurrentUser() {

@@ -12,7 +12,7 @@ use tauri::Emitter;
 static RUNNING_BOTS: LazyLock<Mutex<HashMap<String, u32>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-const APP_NAME: &str = "FinalBoss";
+const APP_NAME: &str = "questai";
 const MANAGED_FILES_INDEX_VERSION: u32 = 1;
 const MAX_MANAGED_FILES_PER_USER: usize = 10_000;
 const MAX_MANAGED_FILE_CONTENT_BYTES: usize = 10 * 1024 * 1024;
@@ -660,6 +660,37 @@ async fn create_directory_async(dirname: &str) -> Result<String, String> {
         Ok(_) => Ok(format!("Successfully created directory {}", path.display())),
         Err(e) => Err(format!("Failed to create directory: {}", e)),
     }
+}
+
+fn get_user_config_path() -> Result<PathBuf, String> {
+    let root = get_app_data_root()?;
+    Ok(root.join("user-bots-config.json"))
+}
+
+#[tauri::command]
+async fn read_user_config() -> Result<Option<String>, String> {
+    let path = get_user_config_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(|e| format!("Failed to read user config: {}", e))?;
+    Ok(Some(content))
+}
+
+#[tauri::command]
+async fn write_user_config(content: String) -> Result<(), String> {
+    let path = get_user_config_path()?;
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+    tokio::fs::write(&path, content)
+        .await
+        .map_err(|e| format!("Failed to write user config: {}", e))?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1829,7 +1860,9 @@ pub fn run() {
             export_managed_files_backup,
             import_managed_files_backup,
             get_managed_files_quota,
-            rebuild_managed_files_index
+            rebuild_managed_files_index,
+            read_user_config,
+            write_user_config
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

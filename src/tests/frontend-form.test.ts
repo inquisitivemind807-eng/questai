@@ -13,11 +13,9 @@ describe('Frontend Form Page', () => {
     // Mock successful config operations by default
     mockInvoke.mockImplementation((command: string) => {
       switch (command) {
-        case 'read_file_async':
+        case 'read_user_config':
           return Promise.resolve('{"formData": {"email": "tester@example.com"}}');
-        case 'create_directory_async':
-          return Promise.resolve();
-        case 'write_file_async':
+        case 'write_user_config':
           return Promise.resolve();
         case 'get_managed_files':
           return Promise.resolve([]);
@@ -309,9 +307,9 @@ describe('Frontend Form Page', () => {
       const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       
-      // Mock write_file_async to fail
+      // Mock write_user_config to fail
       mockInvoke.mockImplementation((command: string) => {
-        if (command === 'write_file_async') {
+        if (command === 'write_user_config') {
           return Promise.reject(new Error('Write failed'));
         }
         return Promise.resolve();
@@ -330,7 +328,7 @@ describe('Frontend Form Page', () => {
       await user.click(submitButton);
 
       await waitFor(() => {
-        expect(alertSpy).toHaveBeenCalledWith('Error saving configuration. Please try again.');
+        expect(alertSpy).toHaveBeenCalledWith(expect.stringContaining('Error saving configuration'));
       });
 
       expect(consoleSpy).toHaveBeenCalledWith('Error saving configuration:', expect.any(Error));
@@ -349,7 +347,7 @@ describe('Frontend Form Page', () => {
       };
 
       mockInvoke.mockImplementation((command: string) => {
-        if (command === 'read_file_async') {
+        if (command === 'read_user_config') {
           return Promise.resolve(JSON.stringify(existingConfig));
         }
         return Promise.resolve();
@@ -367,12 +365,10 @@ describe('Frontend Form Page', () => {
         expect(minSalaryInput).toBeInTheDocument();
       });
 
-      expect(mockInvoke).toHaveBeenCalledWith('read_file_async', {
-        filename: 'src/bots/user-bots-config.json'
-      });
+      expect(mockInvoke).toHaveBeenCalledWith('read_user_config');
     });
 
-    it('creates directory if it does not exist', async () => {
+    it('calls write_user_config with config on submit', async () => {
       const user = userEvent.setup();
       const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {});
       
@@ -389,7 +385,9 @@ describe('Frontend Form Page', () => {
       await user.click(submitButton);
 
       await waitFor(() => {
-        expect(mockInvoke).toHaveBeenCalledWith('create_directory_async', { dirname: 'src/bots' });
+        expect(mockInvoke).toHaveBeenCalledWith('write_user_config', expect.objectContaining({
+          content: expect.stringContaining('formData')
+        }));
       });
 
       alertSpy.mockRestore();
@@ -784,8 +782,7 @@ describe('Frontend Form Page', () => {
       });
 
       // Verify the saved data structure
-      expect(mockInvoke).toHaveBeenCalledWith('write_file_async', expect.objectContaining({
-        filename: 'src/bots/user-bots-config.json',
+      expect(mockInvoke).toHaveBeenCalledWith('write_user_config', expect.objectContaining({
         content: expect.stringContaining('react, typescript, node')
       }));
 
