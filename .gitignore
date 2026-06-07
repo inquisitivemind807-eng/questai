@@ -38,6 +38,9 @@ jobs/
 apitestjsons/
 data/
 
+# Agent diagnostic/repair files
+src/bots/agent/
+
 # Logs and debug files (may contain sensitive data)
 logs/
 *.log
