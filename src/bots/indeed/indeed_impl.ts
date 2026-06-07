@@ -418,12 +418,13 @@ export async function* openCheckLogin(ctx: any) {
           visibleSignInCount = await ctx.page.evaluate(() => {
             const els = document.querySelectorAll("a[href*='/auth'], a[href*='/account/login'], a");
             let count = 0;
-            els.forEach(el => {
-              const text = (el.textContent || '').trim().toLowerCase();
-              if ((text === 'sign in' || text === 'sign in') && el.offsetParent !== null) {
-                count++;
-              }
-            });
+             els.forEach(el => {
+               const htmlEl = el as HTMLElement;
+               const text = (htmlEl.textContent || '').trim().toLowerCase();
+               if (text === 'sign in' && htmlEl.offsetParent !== null) {
+                 count++;
+               }
+             });
             return count;
           });
         } catch (e) {
@@ -883,29 +884,56 @@ export async function* extractJobDetails(ctx: any) {
         }
 
         ctx.state.currentJobCards = [];
+        ctx.state.seenJobKeys = ctx.state.seenJobKeys || new Set<string>();
 
         for (let i = 0; i < cardCount; i++) {
+            if (ctx.page.isClosed()) {
+                console.error('indeed.extract', '🛑 Target closed during extraction loop. Aborting loop.');
+                break;
+            }
+
             const card = cards.nth(i);
             await highlight(card, '#00ffff');
             try {
                 let title = 'Unknown', company = 'Unknown', jobId = Date.now().toString(), url = '';
                 let location = 'Unknown', salary = 'Not listed', postedDate = 'Unknown';
+                let extractedJk: string | null = null;
 
                 try {
-                    const titleLink = card.locator('h2.jobTitle a, h2 a').first();
-                    if (await titleLink.count() > 0) {
-                        await highlight(titleLink, '#ff00ff');
-                        title = await titleLink.innerText();
-                        // Clean " - job post" suffix often seen on Indeed
+                    // Primary: a[data-jk] is Indeed's current card link with the job key baked in
+                    const jkLink = card.locator('a[data-jk]').first();
+                    if (await jkLink.count() > 0) {
+                        await highlight(jkLink, '#ff00ff');
+                        extractedJk = await jkLink.getAttribute('data-jk') || null;
+                        url = await jkLink.getAttribute('href') || '';
+
+                        // Title text lives in a span[title] inside the link
+                        const titleSpan = jkLink.locator('span[title]').first();
+                        if (await titleSpan.count() > 0) {
+                            title = (await titleSpan.getAttribute('title')) || await titleSpan.innerText();
+                        } else {
+                            // Fallback: use the link's own text
+                            title = await jkLink.innerText();
+                        }
                         title = title.replace(/\s*-\s*job\s+post$/i, '').trim();
-                        url = await titleLink.getAttribute('href') || '';
-                        jobId = await titleLink.getAttribute('data-jk') || jobId;
+                    } else {
+                        // Legacy fallback: older Indeed markup
+                        const titleLink = card.locator('h2.jobTitle a, h2 a').first();
+                        if (await titleLink.count() > 0) {
+                            await highlight(titleLink, '#ff00ff');
+                            title = await titleLink.innerText();
+                            title = title.replace(/\s*-\s*job\s+post$/i, '').trim();
+                            url = await titleLink.getAttribute('href') || '';
+                            extractedJk = await titleLink.getAttribute('data-jk') || null;
+                        }
+                    }
+
+                    // Try to extract jk from the URL if we still don't have it
+                    if (!extractedJk && url) {
+                        const jkMatch = url.match(/(?:jk=|vjk=)([a-f0-9]+)/i);
+                        if (jkMatch) extractedJk = jkMatch[1];
                     }
                 } catch (e) { }
-
-                const totalProgress = (ctx.state.scrapedJobs?.length || 0) + i + 1;
-                const totalTarget = ctx.state.totalJobs || cardCount;
-                ctx.overlay?.updateJobProgress(totalProgress, totalTarget, `Extracting: ${title}`, 3).catch(() => { });
 
                 try {
                     const compEl = card.locator('[data-testid="company-name"]').first();
@@ -914,6 +942,23 @@ export async function* extractJobDetails(ctx: any) {
                         company = await compEl.innerText();
                     }
                 } catch (e) { }
+
+                if (!extractedJk) {
+                    extractedJk = await card.getAttribute('data-jk').catch(() => null);
+                }
+
+                // Dedup: prefer jk (globally unique), fallback to title+company
+                const dedupKey = extractedJk || `${title}-${company}`;
+                if (ctx.state.seenJobKeys.has(dedupKey)) {
+                    console.log('indeed.extract', `Skipping duplicate card: ${dedupKey} (${title})`);
+                    continue;
+                }
+                ctx.state.seenJobKeys.add(dedupKey);
+                jobId = extractedJk || jobId;
+
+                const totalProgress = (ctx.state.scrapedJobs?.length || 0) + ctx.state.currentJobCards.length + 1;
+                const totalTarget = ctx.state.totalJobs || cardCount;
+                ctx.overlay?.updateJobProgress(totalProgress, totalTarget, `Extracting: ${title}`, 3).catch(() => { });
 
                 try {
                     const locEl = card.locator('[data-testid="text-location"]').first();

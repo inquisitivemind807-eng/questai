@@ -14,8 +14,8 @@
         "dateFilter": "button[id*='filter-dateposted']"
     },
     "jobCards": {
-        "container": "div.job_seen_beacon, div[data-testid='slider_item']",
-        "title": "h2.jobTitle, h2",
+        "container": "div.job_seen_beacon, td.resultContent, div[data-testid='slider_item']",
+        "title": "a[data-jk] span[title], a[data-jk], h2.jobTitle a, h2 a",
         "company": "span[data-testid='company-name']",
         "location": "div[data-testid='text-location']",
         "applyButton": "button:has-text(\"Apply\"), [data-testid=\"indeedApply\"]"
