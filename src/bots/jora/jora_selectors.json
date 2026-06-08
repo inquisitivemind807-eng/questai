@@ -81,7 +81,19 @@
     "title": [
       "div.job-detail-panel h2.job-title",
       "div[class*=\"detail\"] h2",
-      "div[class*=\"panel\"] h2"
+      "div[class*=\"panel\"] h2",
+      "h1[class*=\"job-title\"]",
+      "h1[class*=\"title\"]",
+      "main h1",
+      "article h1",
+      "div[class*=\"header\"] h1",
+      "div[class*=\"header\"] h2"
+    ],
+    "titleBlocklist": [
+      "Related job searches",
+      "Similar jobs",
+      "Related searches",
+      "You might also like"
     ],
     "company": [
       "div.job-detail-panel span.job-company",

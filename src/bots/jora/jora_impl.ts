@@ -531,6 +531,8 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
           } catch { /* ignored */ }
         }
 
+        const cardTitle = title;
+
         ctx.overlay
           ?.updateJobProgress(i + 1, cardCount, `Card ${i + 1} of ${cardCount}: ${title}`, 3)
           .catch(() => { });
@@ -555,13 +557,20 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
               // --- Extract ALL fields from the detail page ---
 
               // Title
+              const titleBlocklist = resolveSelector(ctx.selectors, 'jobDetails.titleBlocklist') || [];
+              const blockedTitles = new Set(titleBlocklist.map((t: string) => t.toLowerCase().trim()));
               const pageTitleSelectors = resolveSelector(ctx.selectors, 'jobDetails.title') || [];
               for (const sel of [...pageTitleSelectors, 'h1', 'h2']) {
                 try {
                   const el = await driver.findElement(By.css(sel));
                   if (el && await el.isDisplayed()) {
-                    title = (await el.getText()).trim();
-                    break;
+                    const detailTitle = (await el.getText()).trim();
+                    if (detailTitle && !blockedTitles.has(detailTitle.toLowerCase())) {
+                      if (cardTitle === 'Unknown' || !cardTitle || detailTitle.length > cardTitle.length) {
+                        title = detailTitle;
+                      }
+                      break;
+                    }
                   }
                 } catch { /* try next */ }
               }
