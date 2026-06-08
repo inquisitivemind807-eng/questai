@@ -121,10 +121,15 @@ export async function* step0(ctx: any) {
             const winWidth = isHeadless ? 1920 : 1280;
             const winHeight = isHeadless ? 1080 : 900;
 
+            // NOTE: Camoufox's `window` option only constrains the fingerprint's
+            // screen dimensions for anti-detection spoofing — it does NOT control
+            // the actual OS window size. To physically resize the Firefox window,
+            // we must pass -width / -height as raw Firefox binary args via `args`.
             const browser = await Camoufox({
                 headless: isHeadless,
                 user_data_dir: sessionsDir,
-                window: [winWidth, winHeight]
+                window: [winWidth, winHeight],
+                args: [`-width`, `${winWidth}`, `-height`, `${winHeight}`],
             });
             ctx.browser = browser;
 
@@ -1260,8 +1265,30 @@ export async function* attemptEasyApply(ctx: any) {
             await ctx.page.waitForTimeout(500);
 
             await highlight(applyBtn, '#00ff00');
-            await applyBtn.click({ force: true });
-            await ctx.page.waitForTimeout(5000);
+
+            // First try the standard Playwright click (respects overlays)
+            await applyBtn.click({ force: true }).catch(() => {});
+            await ctx.page.waitForTimeout(1500);
+
+            // Detect if a modal/iframe opened (the apply flow starts)
+            const modalOpened = await ctx.page.evaluate(() => {
+                return !!document.querySelector(
+                    '.ia-Modal, .ia-container, iframe[src*="smartapply"], iframe[src*="indeedapply"], [id*="indeedapply"]'
+                );
+            }).catch(() => false);
+
+            if (!modalOpened) {
+                // Fallback: dispatch a JS-level click event, which bypasses DOM overlays
+                // that intercept pointer events (e.g. Indeed's cookie/promo banners)
+                console.log('indeed.apply', 'Modal not detected after Playwright click, trying JS dispatchEvent fallback...');
+                await applyBtn.evaluate((el: HTMLElement) => {
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                }).catch(() => {});
+                await ctx.page.waitForTimeout(3500);
+            } else {
+                await ctx.page.waitForTimeout(3500);
+            }
+
             yield 'modal_opened_successfully';
         } else {
             console.warn('indeed.apply', 'Easy Apply button not found on standalone job page.');
