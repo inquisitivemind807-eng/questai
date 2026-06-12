@@ -282,7 +282,7 @@ export class BotStarter {
       workflow_engine.setContext('bot_name', bot_name);
       workflow_engine.setContext('sessionId', sessionId);
 
-      const extractLimit = Number(process.env.BOT_EXTRACT_LIMIT || config?.extractLimit || config?.extract_limit || config?.formData?.maxJobsToProcess || 0);
+      const extractLimit = Number(process.env.BOT_EXTRACT_LIMIT || config?.maxJobsToProcess || config?.extractLimit || config?.extract_limit || config?.formData?.maxJobsToProcess || 0);
       if (extractLimit > 0) {
         workflow_engine.setContext('extract_limit', extractLimit);
       }

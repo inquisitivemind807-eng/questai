@@ -32,7 +32,7 @@
     "@types/selenium-webdriver": "^4.1.28",
     "autoprefixer": "^10.4.21",
     "baseline-browser-mapping": "^2.10.31",
-    "camoufox-js": "^0.7.0",
+    "camoufox-js": "0.7.0",
     "caniuse-lite": "^1.0.30001793",
     "chart.js": "^4.5.1",
     "daisyui": "^5.1.23",

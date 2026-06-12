@@ -30,6 +30,29 @@ import { waitForNextConfirmAsync } from '../core/pause_confirm';
 import { recordJobApplicationToBackend, getJobDirPathFromJobFile } from '../core/job_application_recorder';
 
 /**
+ * Resolve the extraction limit from config, checking multiple possible
+ * field names (maxJobsToProcess, extractLimit, extract_limit, etc.).
+ * Returns 0 if no limit is configured (= unlimited).
+ */
+function getIndeedExtractLimit(ctx: any): number {
+    const cfg: any = ctx?.config || {};
+    const candidates = [
+        cfg.maxJobsToProcess,
+        cfg.extractLimit,
+        cfg.extract_limit,
+        cfg?.formData?.maxJobsToProcess,
+        cfg?.formData?.extractLimit
+    ];
+    for (const raw of candidates) {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && parsed > 0) {
+            return Math.floor(parsed);
+        }
+    }
+    return 0;
+}
+
+/**
  * Visual helper: highlight a Playwright locator with an outline and
  * box-shadow. Does NOT affect layout (uses outline, not border).
  * Silently swallows all errors — never blocks the bot.
@@ -141,7 +164,13 @@ export async function* step0(ctx: any) {
 
             // Camoufox with user_data_dir persists context, so it returns a BrowserContext.
             const pages = await browser.pages();
-            ctx.page = pages.length > 0 ? pages[0] : await browser.newPage();
+
+            // Close any restored tabs from previous session to prevent stale URLs
+            for (const p of pages) {
+                await p.close().catch(() => {});
+            }
+            ctx.page = await browser.newPage();
+            await ctx.page.goto('about:blank').catch(() => {});
 
             // Match viewport to window dimensions
             try {
@@ -1196,6 +1225,13 @@ export async function* extractJobDetails(ctx: any) {
                 
                 await waitForNextConfirmAsync(ctx, nextLabel);
             }
+
+            const extractLimit = getIndeedExtractLimit(ctx);
+            const currentTotal = (ctx.state.scrapedJobs?.length || 0) + ctx.state.currentJobCards.length;
+            if (extractLimit > 0 && currentTotal >= extractLimit) {
+                console.log('indeed.extract', `✅ Reached extraction limit of ${extractLimit} jobs. Stopping loop.`);
+                break;
+            }
         }
 
         yield 'proceed_to_process_jobs';
@@ -1434,6 +1470,14 @@ export async function* applicationFailed(ctx: any) {
 export async function* navigateToNextPage(ctx: any) {
     console.log('indeed.pagination', 'Proceeding to next page...');
     try {
+        const extractLimit = getIndeedExtractLimit(ctx);
+        const extractedCount = ctx.state.scrapedJobs?.length || 0;
+        if (extractLimit > 0 && extractedCount >= extractLimit) {
+            console.log('indeed.pagination', `✅ Extraction limit of ${extractLimit} jobs reached. Stopping pagination.`);
+            yield 'finish';
+            return;
+        }
+
         const nextBtnSel = ctx.selectors.pagination?.nextButton || "a[data-testid='pagination-page-next'], a[aria-label='Next Page'], a[aria-label='Next']";
         const nextBtn = ctx.page.locator(nextBtnSel).first();
         if (await nextBtn.count() > 0) {

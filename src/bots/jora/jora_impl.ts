@@ -51,6 +51,29 @@ const userLog = (message: string) => {
 // Selector helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Resolve the extraction limit from config, checking multiple possible
+ * field names (maxJobsToProcess, extractLimit, extract_limit, etc.).
+ * Returns 0 if no limit is configured (= unlimited).
+ */
+function getJoraExtractLimit(ctx: any): number {
+  const cfg: any = ctx?.config || {};
+  const candidates = [
+    cfg.maxJobsToProcess,
+    cfg.extractLimit,
+    cfg.extract_limit,
+    cfg?.formData?.maxJobsToProcess,
+    cfg?.formData?.extractLimit
+  ];
+  for (const raw of candidates) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed);
+    }
+  }
+  return 0;
+}
+
 function resolveSelector(selectors: any, path: string): string[] {
   const keys = path.split('.');
   let current = selectors;
@@ -781,6 +804,13 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
 
         await waitForNextConfirmAsync(ctx, nextLabel);
       }
+
+      const extractLimit = getJoraExtractLimit(ctx);
+      const currentTotal = (ctx.state.scrapedJobs?.length || 0) + ctx.state.currentJobCards.length;
+      if (extractLimit > 0 && currentTotal >= extractLimit) {
+        printLog(`✅ Reached extraction limit of ${extractLimit} jobs. Stopping loop.`);
+        break;
+      }
     }
 
     yield 'proceed_to_process_jobs';
@@ -951,6 +981,14 @@ export async function* navigateToNextPage(ctx: WorkflowContext): AsyncGenerator<
   printLog('Proceeding to next page of Jora results...');
 
   try {
+    const extractLimit = getJoraExtractLimit(ctx);
+    const extractedCount = ctx.state.scrapedJobs?.length || 0;
+    if (extractLimit > 0 && extractedCount >= extractLimit) {
+      printLog(`✅ Extraction limit of ${extractLimit} jobs reached. Stopping pagination.`);
+      yield 'finish';
+      return;
+    }
+
     const nextPage = (ctx.state.currentPage || 1) + 1;
     const url = buildPaginationUrl(ctx, nextPage);
 
