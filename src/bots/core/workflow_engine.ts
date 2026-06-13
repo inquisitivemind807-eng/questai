@@ -199,6 +199,7 @@ export class WorkflowEngine {
     }
 
     try {
+      this.context._current_step_start_ms = Date.now();
       const generator = stepFunction(this.context);
       
       let result: string;
@@ -238,6 +239,8 @@ export class WorkflowEngine {
           skippedJobs: this.context.skipped_jobs || 0,
         }
       });
+
+      this.context._steps_executed.push(stepName);
 
       // Use bot's overlay if available, otherwise create fallback
       const activeOverlay = this.context.overlay || this.overlay;
@@ -291,8 +294,48 @@ export class WorkflowEngine {
         sessionId: this.context.sessionId,
         botName: this.context.bot_name
       });
+
+      this.context._steps_executed.push(stepName);
+      const err = error instanceof Error ? error : new Error(String(error));
+      const failureType = this.classifyFailure(err, stepName, stepConfig);
+      this.context._steps_failed.push({
+        step: stepName,
+        failure_type: failureType,
+        error: err.message,
+        timestamp: Date.now()
+      });
       throw error;
     }
+  }
+
+  private classifyFailure(error: Error, stepName: string, stepConfig: WorkflowStep): string {
+    const stepDuration = Date.now() - (this.context._current_step_start_ms || 0);
+    if (typeof stepConfig.timeout === 'number' && stepConfig.timeout > 0 && stepDuration >= stepConfig.timeout * 1000) {
+      return 'TIMEOUT';
+    }
+
+    const errorMsg = error.message.toLowerCase();
+
+    if (errorMsg.includes('nosuchelement') || errorMsg.includes('no such element') || errorMsg.includes('unable to locate')) {
+      return 'SELECTOR_STALE';
+    }
+    if (errorMsg.includes('not interactable') || errorMsg.includes('click intercepted') || errorMsg.includes('staleelement')) {
+      return 'SELECTOR_WRONG';
+    }
+    if (errorMsg.includes('econnrefused') || errorMsg.includes('fetch failed') || errorMsg.includes('401') || errorMsg.includes('browser has crashed')) {
+      return 'INFRA_FAILURE';
+    }
+    if (errorMsg.includes('429') || errorMsg.includes('rate limit') || errorMsg.includes('unusual activity') || errorMsg.includes('security check') || errorMsg.includes('challenge') || errorMsg.includes('cloudflare')) {
+      return 'ANTI_BOT';
+    }
+    if (stepName.includes('login') || errorMsg.includes('login') || errorMsg.includes('sign in') || errorMsg.includes('verification') || errorMsg.includes('captcha')) {
+      return 'AUTH_BROKEN';
+    }
+    if (errorMsg.includes('transition') || errorMsg.includes('unexpected') || errorMsg.includes('not found in configuration')) {
+      return 'FLOW_CHANGED';
+    }
+
+    return 'SELECTOR_STALE';
   }
 
   /**
@@ -361,6 +404,11 @@ export class WorkflowEngine {
     const maxSteps = 1200; // Prevent infinite loops - limit workflow steps
     let stepCount = 0;
 
+    // Initialize tracking arrays for run history
+    this.context._steps_executed = [];
+    this.context._steps_failed = [];
+    this.context._run_start_ms = Date.now();
+
     while (currentStepName !== 'done' && stepCount < maxSteps && !this.aborted) {
       stepCount++;
 
@@ -423,6 +471,9 @@ export class WorkflowEngine {
       // Small delay between steps
       await new Promise(resolve => setTimeout(resolve, 100));
     }
+
+    this.context._workflow_completed = true;
+    this.context._total_step_count = stepCount;
 
     if (stepCount >= maxSteps) {
       console.warn('❌ Maximum step count reached, stopping workflow');

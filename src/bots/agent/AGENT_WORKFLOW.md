@@ -68,6 +68,32 @@ User: "check linkedin"
 
 ---
 
+## 🆕 Phase 0 — Run History Trend Analysis (NEW)
+
+Before running any diagnostic test, analyze the run history to avoid redundant work.
+
+### Instructions
+1. Read `src/bots/agent/run_history.jsonl` (if it exists)
+2. Parse all JSON lines into an array of run entries
+3. Filter to entries matching the target bot variant (e.g., `linkedin_extract`, `seek_apply`)
+4. Produce a trend summary:
+   - Last run: when, what result, what failed
+   - Last 5 runs: pass/fail/crash distribution
+   - Most common failure_type across all runs
+   - Any step that failed in 100% of runs (design issue, not a bug)
+   - Session/auth status from preflight
+
+### Decision: Skip or Run?
+- If the same failure_type has occurred in 3+ consecutive runs with the same failed_at_step → **SKIP the test** and proceed directly to Phase 4 (repair) with trend context
+- If the last run was `all_pass` and no code changes since → **SKIP** unless > 3 days since last run
+- If auth is broken (AUTH_BROKEN in last run) → **SKIP** and notify user to re-authenticate
+- Otherwise → **RUN** the test (proceed to Phase 1)
+
+### If Skipping
+Report: "Skipping test run — {reason}. Last {n} runs show persistent {failure_type} at {step}. Proceeding directly to repair phase."
+
+---
+
 ## Phase 1 — Pre-Flight Health Check
 
 Before touching any bot code, verify the infrastructure:
@@ -115,6 +141,29 @@ MongoDB query pattern (once DB access is wired):
 ```js
 db.applied_jobs.findOne({ job_id: candidateId, platform: "linkedin" })
 ```
+
+### 🆕 Cross-reference with run history
+- Query MongoDB for unapplied Easy Apply jobs
+- Cross-ref with `run_history.jsonl` — exclude jobs that have been tested in the last 3 runs
+- Pick the freshest untested Easy Apply job
+- If no untested EA jobs remain → "All Easy Apply jobs have been tested recently. Pick the oldest unapplied job or run extract-only."
+
+---
+
+## 🆕 Phase 2.5 — Config Sanity Checks (NEW)
+
+Before running the bot, validate its configuration.
+
+### Checks
+1. **Keywords & Location**: If `config.formData.keywords` is empty or `config.formData.locations` is empty → warn "Empty search terms — bot may produce 0 results"
+2. **Salary**: If `config.formData.minSalary` is a raw number (not formatted for the platform) → warn "minSalary may produce unexpected search queries"
+3. **botMode mismatch**: If config has `superbot: true` but mode is `review` → warn "superbot config active but running in review mode — bots will NOT auto-apply"
+4. **BOT_EXTRACT_LIMIT**: Check env var — if set, note it overrides `--limit=`
+5. **Config staleness**: If `config_form.yaml` or `*_selectors.json` hasn't been modified in > 14 days → warn "Config may be stale"
+6. **Git state**: Uncommitted changes? Open repair branches? → flag them
+
+### Output
+Produce a brief sanity report. If any warnings, ask: "Proceed anyway? (y/n)"
 
 ---
 
@@ -348,6 +397,13 @@ async function* markAlreadyApplied(ctx: WorkflowContext) {
   Bot is ready to run in production mode ✅
 ═══════════════════════════════════════════════
 ```
+
+### 🆕 Include trend context in report
+- Compare this run's failures against historical patterns
+- If a step failed in this run AND in previous runs → flag as "PERSISTENT" (design issue)
+- If a step failed for the first time → flag as "REGRESSION" (new bug)
+- If a previously-failing step now passes → flag as "FIX CONFIRMED"
+- Show failure_type distribution from run history for context
 
 ---
 
