@@ -134,6 +134,16 @@ export async function* step0(ctx: any) {
         process.env.LIBGL_ALWAYS_SOFTWARE = '1';
         process.env.MOZ_ACCELERATED = '0';
 
+        // Clean stale session data that can cause startup crashes or restored tabs
+        const sessionStorePath = path.join(sessionsDir, 'sessionstore.jsonlz4');
+        if (fs.existsSync(sessionStorePath)) {
+            fs.unlinkSync(sessionStorePath);
+        }
+        const parentLockPath = path.join(sessionsDir, '.parentlock');
+        if (fs.existsSync(parentLockPath)) {
+            fs.unlinkSync(parentLockPath);
+        }
+
         ctx.sessionExists = fs.readdirSync(sessionsDir).filter(file => !['screenshots', 'logs', 'resume', 'temp'].includes(file)).length > 0;
 
         try {
@@ -152,7 +162,7 @@ export async function* step0(ctx: any) {
                 headless: isHeadless,
                 user_data_dir: sessionsDir,
                 window: [winWidth, winHeight],
-                args: [`-width`, `${winWidth}`, `-height`, `${winHeight}`],
+                geoip: false,
             });
             ctx.browser = browser;
 
@@ -164,13 +174,19 @@ export async function* step0(ctx: any) {
 
             // Camoufox with user_data_dir persists context, so it returns a BrowserContext.
             const pages = await browser.pages();
+            ctx.page = pages.length > 0 ? pages[0] : await browser.newPage();
 
-            // Close any restored tabs from previous session to prevent stale URLs
-            for (const p of pages) {
-                await p.close().catch(() => {});
+            // Redirect away from any bogus startup URL (e.g. 0.0.5.0) to Indeed
+            const startupUrl = ctx.page.url();
+            if (startupUrl === 'about:blank' || startupUrl.includes('0.0.5.0') || !startupUrl.includes('indeed.com')) {
+                const searchUrl = buildSearchUrl(ctx);
+                console.log('indeed.step0', `Redirecting from ${startupUrl} to ${searchUrl}`);
+                try {
+                    await ctx.page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+                } catch (e) {
+                    console.log('indeed.step0', 'Initial redirect failed, continuing...');
+                }
             }
-            ctx.page = await browser.newPage();
-            await ctx.page.goto('about:blank').catch(() => {});
 
             // Match viewport to window dimensions
             try {
@@ -179,9 +195,6 @@ export async function* step0(ctx: any) {
 
             ctx.overlay = new UniversalOverlay(new PlaywrightDriverAdapter(ctx.page) as any, 'Indeed');
             ctx.overlay.setBotVariant(ctx.bot_name || 'indeed');
-
-            // NOTE: We don't initialize overlay yet because we might be on about:blank
-            // We'll initialize it in openCheckLogin or showManualLoginPrompt
 
             console.log('indeed.step0', `Camoufox stealth engine ready. Profile: ${sessionsDir}`);
         } catch (error) {

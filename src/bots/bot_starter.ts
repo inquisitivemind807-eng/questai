@@ -231,6 +231,7 @@ export class BotStarter {
       await emergencyCleanup('unhandledRejection');
     });
 
+    const runStartMs = Date.now();
     try {
       print_log(`[DEV] 🚀 Starting bot runner for: ${bot_name}`);
       logger.info('bot.start', 'Bot runner started', { bot_name, headless, keep_open });
@@ -288,7 +289,6 @@ export class BotStarter {
       }
       print_log(`[BOT_EVENT] ${JSON.stringify({ type: 'info', timestamp: Date.now(), message: `Bot started: ${bot_info.display_name}`, data: { botId: workflow_engine.getBotId(), botName: bot_name, extractLimit: extractLimit || null } })}`);
 
-      const runStartMs = Date.now();
       await workflow_engine.run();
 
       // 8. Handle post-execution
@@ -322,8 +322,9 @@ export class BotStarter {
         error: error instanceof Error ? error.message : String(error),
         stack: error instanceof Error ? error.stack : undefined
       });
+      const mode = bot_name.includes('_apply') ? 'apply' : 'extract';
       try {
-        await this.writeRunLog(context, bot_name, 'unknown', 'crashed', error instanceof Error ? error.message : String(error), runStartMs);
+        await this.writeRunLog(context, bot_name, mode, 'crashed', error instanceof Error ? error.message : String(error), runStartMs);
       } catch (_) {
         // logging failure should never mask the original error
       }
@@ -452,10 +453,13 @@ export class BotStarter {
       };
 
       const dir = path.dirname(fileURLToPath(import.meta.url));
-      fs.mkdirSync(path.join(dir, 'agent'), { recursive: true });
-      fs.appendFileSync(path.join(dir, 'agent', 'run_history.jsonl'), JSON.stringify(logObject) + '\n');
-    } catch (_) {
-      // logging failure should never crash the bot
+      const logsDir = path.join(dir, 'agent', 'logs');
+      fs.mkdirSync(logsDir, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const filename = `${bot_name}_${mode}_${timestamp}.jsonl`;
+      fs.appendFileSync(path.join(logsDir, filename), JSON.stringify(logObject) + '\n');
+    } catch (e) {
+      console.error('[writeRunLog] Failed to write run log:', e);
     }
   }
 
