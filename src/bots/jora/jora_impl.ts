@@ -16,8 +16,7 @@
  *   - Pagination: URL parameter p=N
  *
  * Workflow YAMLs that use this file:
- *   jora_extract_steps.yaml, jora_extract_pauseconfirm_steps.yaml,
- *   jora_apply_steps.yaml, jora_apply_pauseconfirm_steps.yaml
+ *   jora_extract_steps.yaml, jora_extract_pauseconfirm_steps.yaml
  */
 
 import { WebDriver, By, until } from 'selenium-webdriver';
@@ -168,12 +167,8 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
     await StealthFeatures.hideWebDriver(driver);
     await StealthFeatures.randomizeUserAgent(driver);
     ctx.driver = driver;
-    ctx.behavior = new HumanBehavior(driver, DEFAULT_HUMANIZATION);
-    ctx.overlay = new UniversalOverlay(driver, 'Jora', {
-      showProgress: true,
-      showLogs: true,
-      showPauseButton: true,
-    });
+    ctx.behavior = new HumanBehavior(DEFAULT_HUMANIZATION);
+    ctx.overlay = new UniversalOverlay(driver, 'Jora');
     ctx.overlay.setBotVariant(ctx.bot_name || 'jora');
 
     try {
@@ -188,12 +183,6 @@ export async function* step0(ctx: WorkflowContext): AsyncGenerator<string, void,
     }
 
     printLog('Jora Chrome driver ready.');
-  }
-
-  if (ctx.config?.directApplyUrl) {
-    userLog('Direct apply URL detected, entering apply pipeline');
-    yield 'direct_apply_requested';
-    return;
   }
 
   userLog('Starting Jora extraction pipeline');
@@ -836,140 +825,6 @@ export async function* processJobs(ctx: WorkflowContext): AsyncGenerator<string,
     .catch(() => { });
 
   yield 'jobs_saved';
-}
-
-// ---------------------------------------------------------------------------
-// Apply pipeline steps
-// ---------------------------------------------------------------------------
-
-/**
- * Attempt to find the "Apply" button on a Jora job detail page.
- * Jora is an aggregator — the Apply button links to the external
- * employer site. There is no on-platform application form.
- */
-export async function* attemptEasyApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  const driver: WebDriver = ctx.driver;
-  printLog('Looking for Apply button on Jora job page...');
-
-  try {
-    await driver.sleep(3000);
-
-    const applySelectors = resolveSelector(ctx.selectors, 'jobDetails.externalApplyButton');
-    const applyBtn = await findVisible(driver, applySelectors);
-
-    if (applyBtn) {
-      await driver.executeScript('arguments[0].scrollIntoView({block: "center"});', applyBtn);
-      await driver.sleep(500);
-      await highlightElement(driver, applyBtn, '#00ff00');
-      ctx.state.externalApplyUrl = await applyBtn.getAttribute('href');
-      printLog(`Found external apply URL: ${ctx.state.externalApplyUrl}`);
-      yield 'modal_opened_successfully';
-    } else {
-      printLog('Apply button not found — may be an expired listing');
-      yield 'no_easy_apply_button_found';
-    }
-  } catch (error) {
-    printLog(`Failed to find Apply button: ${error}`);
-    yield 'failed_to_click_easy_apply';
-  }
-}
-
-/**
- * Jora does not have an on-platform application form.
- * This step is a no-op — always transitions to submit.
- */
-export async function* answerQuestions(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  printLog('Jora has no on-platform questions to answer. Proceeding...');
-  yield 'finished_answering_questions';
-}
-
-/**
- * Transition step for the submit flow.
- */
-export async function* submitApplication(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  printLog('Finishing Jora application submission flow.');
-  yield 'save_applied_job';
-}
-
-/**
- * Record the job application to the backend.
- * Since Jora is an aggregator, the "application" is really just
- * recording that we navigated to the external apply URL.
- */
-export async function* saveAppliedJob(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  printLog('Recording Jora job application to backend...');
-
-  try {
-    const driver: WebDriver = ctx.driver;
-    const jobId = ctx.config?.jobId || ctx.state?.currentJobId || `jora_${Date.now()}`;
-    const jobFilePath = path.join(process.cwd(), 'src', 'bots', 'jora', 'jobs', `${jobId}.json`);
-    const jobDirPath = getJobDirPathFromJobFile(jobFilePath, jobId);
-
-    if (!fs.existsSync(jobFilePath)) {
-      const dir = path.dirname(jobFilePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-
-      const currentUrl = await driver.getCurrentUrl();
-      const minimalJob = {
-        jobId,
-        platform: 'jora',
-        title: ctx.state?.currentJobTitle || 'Jora Job',
-        company: ctx.state?.currentJobCompany || 'Unknown Company',
-        url: currentUrl,
-        externalApplyUrl: ctx.state?.externalApplyUrl || null,
-        timestamp: new Date().toISOString(),
-      };
-      fs.writeFileSync(jobFilePath, JSON.stringify(minimalJob, null, 2));
-    }
-
-    const result = await recordJobApplicationToBackend({
-      jobFilePath,
-      jobDirPath,
-      platform: 'jora',
-    });
-
-    if (result.ok) {
-      printLog(`Recorded application to DB (ID: ${result.id})`);
-      if (ctx.overlay) {
-        await ctx.overlay.addLogEvent('Application recorded successfully').catch(() => { });
-      }
-    } else {
-      printLog(`Failed to record application: ${result.error}`);
-    }
-  } catch (error) {
-    printLog(`Error in saveAppliedJob: ${error}`);
-  }
-
-  yield 'finish';
-}
-
-/**
- * Handle external (off-platform) applications.
- * Opens the external link in a new tab for the user.
- */
-export async function* externalApply(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  const driver: WebDriver = ctx.driver;
-  printLog('Opening external apply URL for Jora job...');
-
-  try {
-    if (ctx.state?.externalApplyUrl) {
-      printLog(`Opening external URL: ${ctx.state.externalApplyUrl}`);
-      await driver.get(ctx.state.externalApplyUrl);
-      await driver.sleep(3000);
-    }
-  } catch (error) {
-    printLog(`Failed to open external apply link: ${error}`);
-  }
-
-  yield 'application_failed';
-}
-
-/**
- * Mark the current application attempt as failed.
- */
-export async function* applicationFailed(ctx: WorkflowContext): AsyncGenerator<string, void, unknown> {
-  printLog('Jora application flow hit a roadblock.');
-  yield 'application_marked_failed';
 }
 
 // ---------------------------------------------------------------------------

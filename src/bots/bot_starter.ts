@@ -573,7 +573,7 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
               : platform === 'indeed'
                 ? 'indeed_apply'
                 : platform === 'jora'
-                  ? 'jora_apply'
+                  ? 'jora'
                   : platform;
 
         let botModeConfig = mode;
@@ -656,7 +656,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 
       if (response.bot) {
         let jobUrl: string | undefined;
-        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'indeed' || response.bot === 'seek' || response.bot === 'jora') {
+        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'indeed' || response.bot === 'seek') {
           const urlResponse = await prompts({
             type: 'text',
             name: 'url',
@@ -725,15 +725,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
       } catch (error) {
         const isIndeed = bot_name.startsWith('indeed');
         console.error(`${isIndeed ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
-        process.exit(1);
-      }
-    } else if (job_url && bot_name.startsWith('jora')) {
-      try {
-        print_log(`🚀 Starting DIRECT APPLY bot runner for Jora Job: ${job_url}`);
-        const applyBotName = bot_name === 'jora' ? 'jora_apply' : bot_name;
-        await run_bot(applyBotName, { directApplyUrl: job_url, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
-      } catch (error) {
-        console.error('Jora Direct Apply execution failed:', error);
         process.exit(1);
       }
     } else if (is_test_mode && bot_name === 'seek') {

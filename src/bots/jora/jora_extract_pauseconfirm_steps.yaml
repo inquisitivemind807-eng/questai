@@ -8,7 +8,6 @@ steps_config:
     step: 0
     func: "step0"
     transitions:
-      direct_apply_requested: "finish"
       step0_complete: "open_check_login"
       ctx_failed: "start"
     timeout: 30
