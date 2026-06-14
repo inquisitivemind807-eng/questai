@@ -565,7 +565,13 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
 
             if (detailHandle) {
               await driver.switchTo().window(detailHandle);
-              await driver.sleep(2500);
+              await driver.sleep(2000);
+              // Wait for page content to render — key element indicator
+              try {
+                await driver.wait(until.elementLocated(By.css('h1, h2, div#job-meta, div[class*="description"]')), 5000);
+              } catch {
+                // Page may not have all elements yet; proceed with what we have
+              }
 
               // --- Extract ALL fields from the detail page ---
 
@@ -726,10 +732,22 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
               }
 
               // Extract source site name
+              // Use explicit wait — the detail page can take >2.5s to render #job-meta
               try {
                 const sourceMetaSelectors = resolveSelector(ctx.selectors, 'jobDetails.sourceMeta');
                 if (sourceMetaSelectors.length > 0) {
-                  const sourceMeta = await findFirst(driver, sourceMetaSelectors);
+                  let sourceMeta: any = null;
+                  // Try with WebDriverWait first (up to 5s) then fall back to findFirst
+                  for (const sel of sourceMetaSelectors) {
+                    try {
+                      sourceMeta = await driver.wait(until.elementLocated(By.css(sel)), 5000);
+                      if (sourceMeta) break;
+                    } catch { /* try next selector */ }
+                  }
+                  // Fallback: findFirst without wait
+                  if (!sourceMeta) {
+                    sourceMeta = await findFirst(driver, sourceMetaSelectors);
+                  }
                   if (sourceMeta) {
                     const siteNameSelectors = resolveSelector(ctx.selectors, 'jobDetails.sourceSiteName');
                     if (siteNameSelectors.length > 0) {
