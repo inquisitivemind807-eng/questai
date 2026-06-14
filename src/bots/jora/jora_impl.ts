@@ -530,6 +530,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
         let workMode = 'Unknown';
         let description = '';
         let externalApplyUrl: string | null = null;
+        let siteName: string | null = null;
         const applicationType: 'internal' | 'external' = 'external';
 
         // Get the job URL from the card's title link
@@ -724,6 +725,23 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
                 }
               }
 
+              // Extract source site name
+              try {
+                const sourceMetaSelectors = resolveSelector(ctx.selectors, 'jobDetails.sourceMeta');
+                if (sourceMetaSelectors.length > 0) {
+                  const sourceMeta = await findFirst(driver, sourceMetaSelectors);
+                  if (sourceMeta) {
+                    const siteNameSelectors = resolveSelector(ctx.selectors, 'jobDetails.sourceSiteName');
+                    if (siteNameSelectors.length > 0) {
+                      const siteNameEl = await findFirstInElement(sourceMeta, siteNameSelectors);
+                      if (siteNameEl) {
+                        siteName = (await siteNameEl.getText()).trim();
+                      }
+                    }
+                  }
+                }
+              } catch { /* ignored */ }
+
               await driver.close();
               await driver.switchTo().window(mainHandle);
               await driver.sleep(300);
@@ -745,6 +763,7 @@ export async function* extractJobDetails(ctx: WorkflowContext): AsyncGenerator<s
           jobType,
           applicationType,
           externalApplyUrl,
+          siteName,
           isQuickApply,
           workMode,
           platform: 'jora',

@@ -116,6 +116,14 @@
       "div.job-detail-panel div:not([class*=\"header\"])",
       "div.job-abstract"
     ],
+    "sourceMeta": [
+      "div#job-meta",
+      "div.font-xsmall#job-meta"
+    ],
+    "sourceSiteName": [
+      "span.site",
+      "div#job-meta span.site"
+    ],
     "externalApplyButton": [
       "a.rounded-button.-primary[target=\"_blank\"]",
       "a.rounded-button.-primary[href*=\"/redirect\"]",
