@@ -56,7 +56,7 @@ The system was built to track all bots within a session, but failed to account f
 The table renderer injects `jobType` and `workMode` badges (lines 1133–1146) into the "Job Details" column as inline badges below the company name. For the "Type" column (lines 1161–1175), it shows `applicationType` (internal/external). On LinkedIn, `applicationType` is often missing, so the column shows "—". The deletion logic on line 662 uses `confirm()` which is a blocking browser popup.
 
 **Side Effects & Dependencies:**
-Modifying the table columns affects layout across LinkedIn, Seek, and Indeed trackers since they all share `JobTrackerBase`.
+Modifying the table columns affects layout across LinkedIn, Seek, and Jora trackers since they all share `JobTrackerBase`.
 
 **Original Intent vs. Breakdown:**
 Intended to show as much info as possible at a glance, but resulted in a cluttered and inconsistent UI across different platforms.
