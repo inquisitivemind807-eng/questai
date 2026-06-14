@@ -52,7 +52,7 @@ export function getClientRootDir(clientEmail: string): string {
  * Resolve the job directory for a specific platform and job ID:
  * `clients/{email}/jobs/{platform}/{jobId}/`.
  */
-export function getClientJobDir(clientEmail: string, platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string {
+export function getClientJobDir(clientEmail: string, platform: 'seek' | 'linkedin' | 'other', jobId: string): string {
   return path.join(getClientRootDir(clientEmail), 'jobs', platform, String(jobId));
 }
 
@@ -64,7 +64,7 @@ export function ensureDir(dirPath: string): void {
 }
 
 /** Legacy job directory path: `jobs/{platform}/{jobId}/`. */
-export function getLegacyJobDir(platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string {
+export function getLegacyJobDir(platform: 'seek' | 'linkedin' | 'other', jobId: string): string {
   return path.join(process.cwd(), 'jobs', platform, String(jobId));
 }
 
@@ -73,7 +73,7 @@ export function getLegacyJobDir(platform: 'seek' | 'linkedin' | 'indeed' | 'othe
  * Uses the client directory if a client email is available;
  * otherwise falls back to the legacy path.
  */
-export function getJobArtifactDir(ctx: any, platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string {
+export function getJobArtifactDir(ctx: any, platform: 'seek' | 'linkedin' | 'other', jobId: string): string {
   const clientEmail = getClientEmailFromContext(ctx);
   if (clientEmail) {
     const dir = getClientJobDir(clientEmail, platform, jobId);
@@ -90,7 +90,7 @@ export function getJobArtifactDir(ctx: any, platform: 'seek' | 'linkedin' | 'ind
  * Useful for reading files that may have been written by older bot
  * versions (includes the new canonical path and multiple legacy paths).
  */
-export function getJobArtifactCandidates(ctx: any, platform: 'seek' | 'linkedin' | 'indeed' | 'other', jobId: string): string[] {
+export function getJobArtifactCandidates(ctx: any, platform: 'seek' | 'linkedin' | 'other', jobId: string): string[] {
   const dirs: string[] = [];
   const clientEmail = getClientEmailFromContext(ctx);
   if (clientEmail) {

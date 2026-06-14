@@ -4,7 +4,7 @@
  * Selenium + Chrome implementation for Jora.com.au.
  *
  * Jora is an Australian job search aggregator — it indexes jobs from
- * Seek, Indeed, company career sites, and other sources. There is no
+ * Seek, company career sites, and other sources. There is no
  * on-platform application form; clicking "Apply" opens the external
  * employer site in a new tab.
  *

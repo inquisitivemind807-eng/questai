@@ -13,7 +13,7 @@
  * - CDP (Chrome DevTools Protocol) port allocation
  * - Emergency Chrome process killing (SIGINT/SIGTERM handler)
  *
- * NOTE: Indeed bot uses Playwright + Camoufox, NOT this module.
+ * NOTE: Not all bots use this module.
  */
 
 import { Builder, WebDriver } from 'selenium-webdriver';

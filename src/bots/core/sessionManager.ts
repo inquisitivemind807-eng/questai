@@ -1,8 +1,8 @@
 /**
  * Universal Session Manager
  * ------------------------------------------------------------------
- * Manages login-state detection across job platforms (Seek, LinkedIn,
- * Indeed). Looks for known CSS selectors, DOM indicators, and auth
+ * Manages login-state detection across job platforms (Seek, LinkedIn).
+ * Looks for known CSS selectors, DOM indicators, and auth
  * cookies to determine whether the user is authenticated.  Provides
  * a `waitForLogin` loop and a red login banner injected into the page
  * to guide the user through manual authentication.
@@ -231,34 +231,6 @@ export const SessionConfigs = {
       'feed',
       'mynetwork',
       'jobs/search'
-    ]
-  },
-
-  indeed: {
-    signInSelectors: [
-      'a[data-tn-element="header-signin-link"]',
-      '.gnav-SignIn',
-      'a[href*="account/login"]',
-      'a[href*="auth"]',
-      'button:has-text("Sign in")',
-      'button:has-text("Log in")'
-    ],
-    userMenuSelectors: [
-      '.gnav-AccountMenu',
-      '.np-dropdown',
-      '[data-testid="gnav-AccountMenu"]',
-      '.gnav-UserMenu',
-      '[data-testid="user-menu"]',
-      'button[aria-label*="account"]',
-      'button[aria-label*="profile"]'
-    ],
-    loggedInIndicators: [
-      'prefs',
-      'account',
-      'saved-jobs',
-      'profile',
-      'dashboard',
-      'my-indeed'
     ]
   }
 };

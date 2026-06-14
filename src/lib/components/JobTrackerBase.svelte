@@ -42,7 +42,7 @@
 
   // If `platform` is provided, tracker is platform-specific.
   // If omitted/undefined, tracker operates in "overview" mode across all platforms.
-  export let platform; // "linkedin" | "seek" | "indeed" | "jora" | undefined
+  export let platform; // "linkedin" | "seek" | "jora" | undefined
   // `bots` is accepted for backward compatibility but not used here;
   // bots are configured and launched from the Choose Bot screen instead.
   export let bots = []; // e.g. ["linkedin_extract_bot", "linkedin_apply_bot"]
@@ -55,7 +55,6 @@
   const PLATFORM_LABELS = {
     linkedin: "LinkedIn",
     seek: "Seek",
-    indeed: "Indeed",
     jora: "Jora",
   };
 
@@ -663,11 +662,9 @@
           ? "seek_apply"
           : app.platform === "linkedin"
             ? "linkedin_apply"
-            : app.platform === "indeed"
-              ? "indeed_apply"
-              : app.platform === "jora"
-                ? "jora_apply"
-                : app.platform;
+            : app.platform === "jora"
+              ? "jora_apply"
+              : app.platform;
       
       const configuredBotName = isPauseConfirmMode ? mappedBotName + "_pauseconfirm" : mappedBotName;
 
@@ -984,7 +981,6 @@
                   <option value="">All</option>
                   <option value="seek">Seek</option>
                   <option value="linkedin">LinkedIn</option>
-                  <option value="indeed">Indeed</option>
                   <option value="jora">Jora</option>
                 </select>
               </div>
@@ -1145,9 +1141,7 @@
                                 {job.title || "—"}
                               </div>
                               {#if !platform}
-                                {#if job.platform === 'indeed'}
-                                  <span class="badge badge-sm border-none bg-[#003A9B] text-white text-[10px] h-4">Indeed</span>
-                                {:else if job.platform === 'linkedin'}
+                                {#if job.platform === 'linkedin'}
                                   <span class="badge badge-sm border-none bg-[#007FB1] text-white text-[10px] h-4">LinkedIn</span>
                                 {:else if job.platform === 'seek'}
                                   <span class="badge badge-sm border-none bg-[#E60278] text-white text-[10px] h-4">Seek</span>
@@ -1412,7 +1406,6 @@
                   <option value="">All</option>
                   <option value="seek">Seek</option>
                   <option value="linkedin">LinkedIn</option>
-                  <option value="indeed">Indeed</option>
                   <option value="jora">Jora</option>
                 </select>
               </div>
@@ -1582,9 +1575,7 @@
                                 {application.title || "—"}
                               </div>
                               {#if !platform}
-                                {#if application.platform === 'indeed'}
-                                  <span class="badge badge-sm border-none bg-[#003A9B] text-white text-[10px] h-4">Indeed</span>
-                                {:else if application.platform === 'linkedin'}
+                                {#if application.platform === 'linkedin'}
                                   <span class="badge badge-sm border-none bg-[#007FB1] text-white text-[10px] h-4">LinkedIn</span>
                                 {:else if application.platform === 'seek'}
                                   <span class="badge badge-sm border-none bg-[#E60278] text-white text-[10px] h-4">Seek</span>

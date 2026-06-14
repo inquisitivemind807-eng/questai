@@ -15,7 +15,7 @@
  *   - Set up emergency cleanup (SIGINT/SIGTERM/exception handlers)
  *   - Handle CLI flags: --url, --jobs, --mode, --limit, --headless, etc.
  *   - Support bulk orchestration (--jobs=id1,id2,id3)
- *   - URL normalization per platform (Seek, LinkedIn, Indeed, Jora)
+ *   - URL normalization per platform (Seek, LinkedIn, Jora)
  *
  * Event streaming:
  *   All bot progress is emitted as [BOT_EVENT] JSON lines on stdout.
@@ -81,14 +81,6 @@ const normalizeSeekJobUrl = (rawUrl: string): string => {
     }
   } catch {
     // Keep original URL if parsing fails.
-  }
-  return rawUrl;
-};
-
-const normalizeIndeedJobUrl = (rawUrl: string): string => {
-  if (!rawUrl) return rawUrl;
-  if (rawUrl.startsWith('/')) {
-    return `https://www.indeed.com${rawUrl}`;
   }
   return rawUrl;
 };
@@ -570,9 +562,7 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
             ? 'seek_apply'
             : platform === 'linkedin'
               ? 'linkedin_apply'
-              : platform === 'indeed'
-                ? 'indeed_apply'
-                : platform === 'jora'
+              : platform === 'jora'
                   ? 'jora'
                   : platform;
 
@@ -586,9 +576,7 @@ export async function bulk_run_jobs(jobIds: string[], mode: string, superbot: bo
         const normalizedDirectApplyUrl =
           platform === 'seek' && typeof job.url === 'string'
             ? normalizeSeekJobUrl(job.url)
-            : platform === 'indeed' && typeof job.url === 'string'
-              ? normalizeIndeedJobUrl(job.url)
-              : platform === 'linkedin' && typeof job.url === 'string'
+            : platform === 'linkedin' && typeof job.url === 'string'
                 ? normalizeLinkedInJobUrl(job.url)
                 : platform === 'jora' && typeof job.url === 'string'
                   ? job.url // Jora uses raw URLs; add normalizer when available
@@ -656,7 +644,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 
       if (response.bot) {
         let jobUrl: string | undefined;
-        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'indeed' || response.bot === 'seek') {
+        if (response.bot.includes('_apply') || response.bot === 'linkedin' || response.bot === 'seek') {
           const urlResponse = await prompts({
             type: 'text',
             name: 'url',
@@ -711,20 +699,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         console.error('Direct Apply execution failed:', error);
         process.exit(1);
       }
-    } else if (job_url && (bot_name.startsWith('linkedin') || bot_name.startsWith('indeed'))) {
+    } else if (job_url && bot_name.startsWith('linkedin')) {
       try {
-        const isIndeed = bot_name.startsWith('indeed');
-        const platformName = isIndeed ? 'Indeed' : 'LinkedIn';
-        const defaultApplyName = isIndeed ? 'indeed_apply' : 'linkedin_apply';
-        
-        print_log(`🚀 Starting DIRECT APPLY bot runner for ${platformName} Job: ${job_url}`);
-        const normalizedUrl = isIndeed ? normalizeIndeedJobUrl(job_url) : normalizeLinkedInJobUrl(job_url);
-        const applyBotName = (bot_name === 'linkedin' || bot_name === 'indeed') ? defaultApplyName : bot_name;
-        
+        print_log(`🚀 Starting DIRECT APPLY bot runner for LinkedIn Job: ${job_url}`);
+        const normalizedUrl = normalizeLinkedInJobUrl(job_url);
+        const applyBotName = bot_name === 'linkedin' ? 'linkedin_apply' : bot_name;
         await run_bot(applyBotName, { directApplyUrl: normalizedUrl, botMode: mode, targetJobId: target_job_id }, { headless, keep_open });
       } catch (error) {
-        const isIndeed = bot_name.startsWith('indeed');
-        console.error(`${isIndeed ? 'Indeed' : 'LinkedIn'} Direct Apply execution failed:`, error);
+        console.error('LinkedIn Direct Apply execution failed:', error);
         process.exit(1);
       }
     } else if (is_test_mode && bot_name === 'seek') {

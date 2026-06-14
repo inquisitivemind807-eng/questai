@@ -3,7 +3,7 @@
  * ------------------------------------------------------------------
  * Selenium + Chrome implementation for Seek.com.au. This is the
  * original and most mature bot — many patterns here were later
- * adapted for LinkedIn and Indeed.
+ * adapted for LinkedIn.
  *
  * The Seek bot has the richest feature set:
  *   - Job extraction (search page scraping)

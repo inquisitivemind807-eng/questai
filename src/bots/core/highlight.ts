@@ -5,8 +5,8 @@
  * around DOM elements during bot interaction. Makes it easy to see
  * what the bot is clicking, typing into, or extracting.
  *
- * Originally inspired by the Indeed bot's Playwright highlight()
- * (`indeed_impl.ts`), adapted for Selenium's `driver.executeScript()`.
+ * Originally inspired by Playwright's highlight() utility,
+ * adapted for Selenium's `driver.executeScript()`.
  *
  * Uses CSS `outline` (not `border`) so it never shifts layout.
  * All errors are silently swallowed — highlighting is cosmetic only.
@@ -76,7 +76,7 @@ export async function highlightSelector(
 }
 
 /**
- * Color palette matching the Indeed bot conventions:
+ * Color palette:
  *
  *   #ff0000 — Red     — default / errors
  *   #ff4444 — Red     — wrong buttons, dismissals

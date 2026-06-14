@@ -2,7 +2,7 @@
  * Bot Registry — Auto-Discovery & Validation
  * ------------------------------------------------------------------
  * Scans the `src/bots/` directory tree for platform bot folders
- * (seek/, linkedin/, indeed/). Each folder is validated by checking
+ * (seek/, linkedin/). Each folder is validated by checking
  * for the three required artifacts:
  *
  *   1. `{bot}_impl.ts`     — the step function implementations

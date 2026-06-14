@@ -21,7 +21,7 @@ export interface ApiCallTokenRecord {
 
 /** Contract payload for POST /api/job-applications (matches corpus-rag API). */
 export interface JobApplicationPayload {
-  platform: 'seek' | 'linkedin' | 'indeed' | 'jora' | 'other';
+  platform: 'seek' | 'linkedin' | 'jora' | 'other';
   platformJobId: string;
   title: string;
   company: string;
@@ -60,7 +60,7 @@ export interface RecordJobApplicationInput {
   /** Path to the per-application dir (e.g. .../jobs/jobId) containing cover_letter_response.json, qna.json, resume.* */
   jobDirPath: string;
   /** Platform for the payload; defaults to 'seek' if omitted. */
-  platform?: 'seek' | 'linkedin' | 'indeed' | 'jora' | 'other';
+  platform?: 'seek' | 'linkedin' | 'jora' | 'other';
 }
 
 const printLog = (msg: string) => console.log(msg);
@@ -75,14 +75,12 @@ function readJsonFile(filePath: string): any | null {
   }
 }
 
-function getCandidateJobDirs(primaryDir: string, platform: 'seek' | 'linkedin' | 'indeed' | 'jora' | 'other', jobId: string): string[] {
+function getCandidateJobDirs(primaryDir: string, platform: 'seek' | 'linkedin' | 'jora' | 'other', jobId: string): string[] {
   const dirs = [primaryDir];
   if (platform === 'linkedin') {
     dirs.push(path.join(process.cwd(), 'jobs', 'linkedinjobs', jobId));
   } else if (platform === 'seek') {
     dirs.push(path.join(process.cwd(), 'src', 'bots', 'seek', 'jobs', jobId));
-  } else if (platform === 'indeed') {
-    dirs.push(path.join(process.cwd(), 'src', 'bots', 'indeed', 'jobs', jobId));
   }
   return Array.from(new Set(dirs));
 }
@@ -302,12 +300,10 @@ export function buildJobApplicationPayload(input: RecordJobApplicationInput): Jo
   // Platform detection logic: input -> jobData -> filePath -> fallback
   let platform = inputPlatform;
   if (!platform) {
-    if (jobData.platform && ['seek', 'linkedin', 'indeed', 'jora', 'other'].includes(jobData.platform)) {
+    if (jobData.platform && ['seek', 'linkedin', 'jora', 'other'].includes(jobData.platform)) {
       platform = jobData.platform;
     } else if (jobFilePath.includes('linkedinjobs')) {
       platform = 'linkedin';
-    } else if (jobFilePath.includes('indeed')) {
-      platform = 'indeed';
     } else if (jobFilePath.includes('jora')) {
       platform = 'jora';
     } else {

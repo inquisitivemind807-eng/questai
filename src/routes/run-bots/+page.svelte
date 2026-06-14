@@ -8,7 +8,6 @@
   let bots = [
     { id: "linkedin_extract_bot", name: "LinkedIn Bot", image: "/finallinkedin.png" },
     { id: "seek_extract_bot", name: "Seek Bot", image: "/finalseek.png" },
-    { id: "indeed", name: "Indeed Bot", image: "/finalindeed.png" },
     { id: "jora_extract_bot", name: "Jora Bot", image: "/finaljora.png" },
   ];
 
@@ -41,7 +40,6 @@
       // Ensure we map to the correct internal bot names
       if (cleanBotName === "linkedin") finalBotName = "linkedin_extract";
       if (cleanBotName === "seek") finalBotName = "seek_extract";
-      if (cleanBotName === "indeed") finalBotName = "indeed_extract";
       if (cleanBotName === "jora") finalBotName = "jora_extract";
 
       if (isPauseConfirmMode && finalBotName.includes("extract")) {
@@ -51,7 +49,7 @@
       const params = /** @type {any} */ ({ botName: finalBotName });
       let limit = 10; // Default as requested
       
-      if (finalBotName.includes("extract") || finalBotName === "indeed" || finalBotName === "indeed_bot") {
+      if (finalBotName.includes("extract")) {
         params.extractLimit = limit;
         params.extract_limit = limit;
       }
@@ -92,7 +90,11 @@
           on:click={() => handleBotClick(bot.id)}
         >
           <figure class="h-64 overflow-hidden relative">
-            <img src={bot.image} alt={bot.name} class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" />
+            <img 
+              src={bot.image} 
+              alt={bot.name} 
+              class="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" 
+            />
             <div class="absolute inset-0 bg-primary/5 group-hover:bg-transparent transition-colors duration-300"></div>
           </figure>
           
@@ -150,3 +152,6 @@
     <button type="button" class="modal-backdrop" aria-label="Close" on:click={() => (showConfigError = false)}></button>
   </div>
 {/if}
+
+<style>
+</style>

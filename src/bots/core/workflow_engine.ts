@@ -15,7 +15,7 @@
  *   - Max-step guard to prevent infinite loops (default 1200)
  *
  * This file is the single most important piece of infrastructure in
- * the bot system. All bots (Seek, LinkedIn, Indeed) depend on it.
+ * the bot system. All bots (Seek, LinkedIn) depend on it.
  */
 
 import * as fs from 'fs';

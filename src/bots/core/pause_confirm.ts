@@ -17,7 +17,7 @@ async function evalInBrowser(ctx: any, script: string): Promise<any> {
     return ctx.driver.executeScript(script);
   }
   if (ctx.page?.evaluate) {
-    // Playwright path (Indeed bot)
+    // Playwright path
     return ctx.page.evaluate(new Function(script) as () => any);
   }
   throw new Error('[PauseConfirm] No browser runtime available (ctx.driver and ctx.page are both absent)');

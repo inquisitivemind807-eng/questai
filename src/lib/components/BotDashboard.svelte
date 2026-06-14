@@ -64,11 +64,9 @@
     ? "/linkedin-job-tracker"
     : platform.includes("seek")
       ? "/seek-job-tracker"
-      : platform.includes("indeed")
-        ? "/indeed-job-tracker"
-        : platform.includes("jora")
-          ? "/jora-job-tracker"
-          : ""; // Default fallback
+      : platform.includes("jora")
+        ? "/jora-job-tracker"
+        : ""; // Default fallback
 
   $: completionTitle = isApplyBot
     ? "Application Batch Complete!"

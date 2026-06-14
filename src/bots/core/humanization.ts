@@ -12,7 +12,6 @@
  * - Stealth browser property overrides (navigator.webdriver, plugins, etc.)
  *
  * Used by LinkedIn and Seek bots (Selenium/Chrome).
- * Indeed uses Camoufox (Playwright), which has its own humanization.
  */
 
 import { WebDriver, WebElement } from 'selenium-webdriver';

@@ -232,11 +232,6 @@
                   </a>
                 </li>
                 <li>
-                  <a href="/indeed-job-tracker" class="pl-11 {$page.url.pathname === '/indeed-job-tracker' ? 'active-tab' : ''}">
-                    Indeed
-                  </a>
-                </li>
-                <li>
                   <a href="/jora-job-tracker" class="pl-11 {$page.url.pathname === '/jora-job-tracker' ? 'active-tab' : ''}">
                     Jora
                   </a>
